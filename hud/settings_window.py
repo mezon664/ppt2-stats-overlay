@@ -53,6 +53,7 @@ TARGET_KEYS = {
 }
 TARGET_ORDER = ("stats", "clock", "event", "summary")
 STYLE_ORDER = ("band", "pop", "gauge", "text", "versus")
+OPENER_DISPLAY_ORDER = ("board", "hold", "namebar", "top")
 
 TEXT = {
     "title": {"ja": "PPT2 Stats Overlay - 表示設定", "en": "PPT2 Stats Overlay - Display settings"},
@@ -82,6 +83,11 @@ TEXT = {
     "target.event": {"ja": "イベント履歴", "en": "Event history"},
     "target.summary": {"ja": "試合結果", "en": "Summary"},
     "show_opener": {"ja": "開幕テンプレ名を表示（認識できたとき）", "en": "Show the opener name (when recognized)"},
+    "opener_display": {"ja": "開幕テンプレの表示", "en": "Opener display"},
+    "od.board": {"ja": "A 盤面の上に大きく（数秒）", "en": "A  Big over the board (a few seconds)"},
+    "od.hold": {"ja": "B HOLDの下に小さく（試合中ずっと）", "en": "B  Small under HOLD (whole match)"},
+    "od.namebar": {"ja": "C 名前の帯の上（試合中ずっと）", "en": "C  On the name bar (whole match)"},
+    "od.top": {"ja": "D 上の中央に両者まとめて（試合中ずっと）", "en": "D  Both at the top center (whole match)"},
     "show_summary": {"ja": "試合が終わったら試合結果（まとめ）を表示", "en": "Show a match summary when a match ends"},
     "up": {"ja": "上へ", "en": "Up"}, "down": {"ja": "下へ", "en": "Down"},
     "left": {"ja": "左へ", "en": "Left"}, "right": {"ja": "右へ", "en": "Right"},
@@ -164,6 +170,11 @@ class SettingsWindow(QtWidgets.QWidget):
         self.event_log_count = self._spin(lo, hi, "")
         row("event_log_count", self.event_log_count)
 
+        self.opener_display = QtWidgets.QComboBox()
+        for key in OPENER_DISPLAY_ORDER:
+            self.opener_display.addItem("", key)
+        row("opener_display", self.opener_display)
+
         self.position_section = self._build_offset_controls(drag_available)
 
         self.reset_button = QtWidgets.QPushButton()
@@ -188,6 +199,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.language.currentIndexChanged.connect(self._language_changed)
         self.position.currentIndexChanged.connect(self._changed)
         self.style.currentIndexChanged.connect(self._changed)
+        self.opener_display.currentIndexChanged.connect(self._changed)
         for w in (self.scale, self.event_log_count):
             w.valueChanged.connect(self._changed)
         self.opacity.valueChanged.connect(self._changed)
@@ -216,6 +228,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_event_log.setText(t("show_event_log"))
         self.show_summary.setText(t("show_summary"))
         self.show_opener.setText(t("show_opener"))
+        for i, key in enumerate(OPENER_DISPLAY_ORDER):
+            self.opener_display.setItemText(i, t("od." + key))
         self.event_log_count.setSuffix(t("count_suffix"))
         self.position_section.setTitle(t("adjust"))
         self.move_label.setText(t("move_what"))
@@ -384,6 +398,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
         self.show_opener.setChecked(d["show_opener"])
+        self.opener_display.setCurrentIndex(self.opener_display.findData(d["opener_display"]))
+        self.opener_display.setEnabled(d["show_opener"])
         self.event_log_count.setValue(d["event_log_count"])
         self.event_log_count.setEnabled(d["show_event_log"])
         self.retranslate()
@@ -403,6 +419,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
             "show_opener": self.show_opener.isChecked(),
+            "opener_display": self.opener_display.currentData(),
             "event_log_count": self.event_log_count.value(),
         }
         for key, (kx, ky) in TARGET_KEYS.items():
@@ -413,6 +430,7 @@ class SettingsWindow(QtWidgets.QWidget):
         if self._loading:
             return
         self.event_log_count.setEnabled(self.show_event_log.isChecked())
+        self.opener_display.setEnabled(self.show_opener.isChecked())
         self.display_changed.emit(self.values())
         self._save_timer.start()
 

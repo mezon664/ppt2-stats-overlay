@@ -241,6 +241,14 @@ SOFT = (220, 228, 245)
 # fading out over the last POPUP_FADE_S.
 POPUP_S = 4.0
 POPUP_FADE_S = 1.0
+# Where each opener display sits (reference px).
+BOARD_CENTER_X = {"left": 313, "right": 918}     # "board": centered on the board...
+OPENER_BOARD_TOP_Y = 150                          # ...in its upper part (empty during the opening)
+HOLD_RIGHT_X = {"left": 191, "right": 797}       # "hold": right edge of each HOLD box...
+OPENER_HOLD_TOP_Y = 172                           # ...just below it
+NAMEBAR_RIGHT_X, NAMEBAR_LEFT_X = 466, 762        # "namebar": end of the bar away from the avatar
+NAMEBAR_TOP_Y = 608                                # in the gap between the score digits and the name bar
+OPENER_TOP_CENTER_X, OPENER_TOP_Y = 617, 14       # "top": both players, top center
 
 
 def elide(text, px, weight, width):
@@ -674,27 +682,36 @@ class SummaryBlock(Band):
                 draw_text(p, x, base, text, self.VALUE_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
 
 
-class OpenerPopup(Band):
-    """The recognized opener, shown for POPUP_S seconds right above the
-    player's stats: a small "開幕" label over the name in large type, in a box
-    matching the chosen style with the player's color as an accent."""
+class OpenerBadge(Band):
+    """The recognized opener (開幕テンプレ), drawn for display.opener_display:
+      "board"   big over the player's own board for POPUP_S seconds (A)
+      "hold"    small under the HOLD box, rest of the match (B)
+      "namebar" one line on the player's name bar, rest of the match (C)
+      "top"     both players at the top center, rest of the match (D)
+    side is "left" / "right", or "both" for "top". The box follows the chosen
+    style, with the player's color as the accent."""
+
+    NAME_PX = {"board": 28, "hold": 15, "top": 18}
+    LABEL_PX = {"board": 13, "hold": 10, "top": 11}
+    NAMEBAR_PX = 12
 
     def __init__(self, parent, side):
         super().__init__(parent, fade=None)
         self.side = side
+        self.mode = "board"
         self.style = "band"
         self.u = 1.0
         self.language = "ja"
-        self.name = ""
+        self.names = {"left": None, "right": None}
         self.alpha = 1.0
 
-    def configure(self, style, language, u):
-        self.style, self.language, self.u = style, language, u
+    def configure(self, mode, style, language, u):
+        self.mode, self.style, self.language, self.u = mode, style, language, u
         self._resize()
 
-    def set_name(self, name, alpha):
-        if name != self.name:
-            self.name = name
+    def set_names(self, names, alpha=1.0):
+        if names != self.names:
+            self.names = dict(names)
             self._resize()
         self.alpha = alpha
         self.update()
@@ -702,43 +719,89 @@ class OpenerPopup(Band):
     def _label(self):
         return UI_TEXT[self.language]["s_opener"]
 
+    def _namebar_text(self):
+        sep = "：" if self.language == "ja" else ": "
+        return f"{self._label()}{sep}{self.names.get(self.side) or ''}"
+
     def _resize(self):
-        u = self.u
-        w = max(text_width(18 * u, BOLD, self.name or ""), text_width(10 * u, BOLD, self._label())) + 30 * u
-        self.setFixedSize(int(w), int(42 * u))
+        u, m = self.u, self.mode
+        if m == "namebar":
+            w, h = text_width(self.NAMEBAR_PX * u, BOLD, self._namebar_text()) + 22 * u, 20 * u
+        elif m == "top":
+            l, r = self.names["left"] or "--", self.names["right"] or "--"
+            w = (text_width(18 * u, BOLD, l) + text_width(18 * u, BOLD, r)
+                 + text_width(13 * u, BOLD, "vs") + 52 * u)
+            w, h = max(w, 200 * u), 50 * u
+        else:
+            name = self.names.get(self.side) or ""
+            w = max(text_width(self.NAME_PX[m] * u, BOLD, name),
+                    text_width(self.LABEL_PX[m] * u, BOLD, self._label())) + (44 if m == "board" else 24) * u
+            h = (68 if m == "board" else 42) * u
+        self.setFixedSize(int(w), int(h))
         self.update()
 
+    def _accents(self, a):
+        sides = ("left", "right") if self.side == "both" else (self.side,)
+        out = []
+        for sd in sides:
+            c = QtGui.QColor(*PLAYER_COLORS[sd])
+            c.setAlphaF(a)
+            out.append(c)
+        return out
+
     def paintEvent(self, event):
-        st, u = self.style, self.u
+        st, u, m = self.style, self.u, self.mode
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         a = self.alpha * (0.45 if self.dim else 1.0)
         r = QtCore.QRectF(self.rect())
-        accent = QtGui.QColor(*PLAYER_COLORS[self.side])
-        accent.setAlphaF(a)
+        accents = self._accents(a)
+        radius = r.height() / 2 if m == "namebar" else (10 if m == "board" else 6) * u
         p.setPen(QtCore.Qt.PenStyle.NoPen)
         if st == "pop":
+            fill = accents[0] if len(accents) == 1 else QtGui.QColor(*POP_CLOCK_RGB, int(255 * a))
             rim = QtGui.QColor(255, 255, 255)
             rim.setAlphaF(a)
-            p.setBrush(accent)
+            p.setBrush(fill)
             p.setPen(QtGui.QPen(rim, 2.5 * u))
             inner = r.adjusted(1.5 * u, 1.5 * u, -1.5 * u, -1.5 * u)
-            p.drawRoundedRect(inner, 12 * u, 12 * u)
+            p.drawRoundedRect(inner, min(radius, inner.height() / 2), min(radius, inner.height() / 2))
         elif st != "text":
             band = QtGui.QColor(*BAND_RGB)
-            band.setAlphaF(max(self.opacity, 0.75) * a)
+            band.setAlphaF(max(self.opacity, 0.78) * a)
             p.setBrush(band)
-            radius = 0 if st == "gauge" else 5 * u
-            p.drawRoundedRect(r, radius, radius)
-            if st == "gauge":
-                p.fillRect(QtCore.QRectF(0, r.height() - 3 * u, r.width(), 3 * u), accent)
-            else:   # player-color bar down the left edge
-                p.fillRect(QtCore.QRectF(0, 0, 4 * u, r.height()), accent)
+            rr = 0 if st == "gauge" else radius
+            p.drawRoundedRect(r, rr, rr)
+            if m == "namebar":   # accent ring around the pill
+                p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                p.setPen(QtGui.QPen(accents[0], 2 * u))
+                p.drawRoundedRect(r.adjusted(1 * u, 1 * u, -1 * u, -1 * u), rr, rr)
+            else:                # accent bar along the bottom (split for both players)
+                bar_h = 3 * u
+                n = len(accents)
+                for i, c in enumerate(accents):
+                    p.fillRect(QtCore.QRectF(r.width() * i / n, r.height() - bar_h, r.width() / n, bar_h), c)
         outline = 1.6 * u if st == "text" else 0
-        label_color = (235, 242, 255) if st == "pop" else PLAYER_TEXT_COLORS[self.side]
-        x = 14 * u if st not in ("pop", "text") else 12 * u
-        draw_text(p, x, 14 * u, self._label(), 10 * u, BOLD, label_color, "left", outline, a)
-        draw_text(p, x, 34 * u, self.name or "", 18 * u, BOLD, WHITE, "left", outline, a)
+        W, H = r.width(), r.height()
+        if m == "namebar":
+            draw_text(p, W / 2, H / 2 + 4.2 * u, self._namebar_text(), self.NAMEBAR_PX * u, BOLD, WHITE,
+                      "center", outline, a)
+        elif m == "top":
+            draw_text(p, W / 2, 15 * u, self._label(), 11 * u, BOLD, SOFT, "center", outline, a)
+            draw_text(p, 14 * u, 38 * u, self.names["left"] or "--", 18 * u, BOLD,
+                      PLAYER_TEXT_COLORS["left"], "left", outline, a)
+            draw_text(p, W / 2, 37 * u, "vs", 13 * u, BOLD, SOFT, "center", outline, a)
+            draw_text(p, W - 14 * u, 38 * u, self.names["right"] or "--", 18 * u, BOLD,
+                      PLAYER_TEXT_COLORS["right"], "right", outline, a)
+        else:
+            label_color = (235, 242, 255) if st == "pop" else PLAYER_TEXT_COLORS[self.side]
+            name = self.names.get(self.side) or ""
+            if m == "board":
+                draw_text(p, W / 2, 20 * u, self._label(), self.LABEL_PX[m] * u, BOLD, label_color, "center", outline, a)
+                draw_text(p, W / 2, 54 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "center", outline, a)
+            else:   # hold
+                draw_text(p, 12 * u, 14 * u, self._label(), self.LABEL_PX[m] * u, BOLD, label_color, "left", outline, a)
+                draw_text(p, 12 * u, 33 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "left", outline, a)
 
 
 class HudWindow(QtWidgets.QWidget):
@@ -762,7 +825,7 @@ class HudWindow(QtWidgets.QWidget):
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
         self.summary = SummaryBlock(self)
-        self.popups = {"left": OpenerPopup(self, "left"), "right": OpenerPopup(self, "right")}
+        self.badges = {sd: OpenerBadge(self, sd) for sd in ("left", "right", "both")}
         self.events = {"left": EventBlock(self, "left"), "right": EventBlock(self, "right")}
         self.clock = ClockBlock(self)
         self.edit_hint = QtWidgets.QLabel(
@@ -836,9 +899,9 @@ class HudWindow(QtWidgets.QWidget):
         self.clock.configure(d["style"], u)
         self.summary.opacity = d["background_opacity"]
         self.summary.configure(d["style"], d["language"], u)
-        for pop in self.popups.values():
-            pop.opacity = d["background_opacity"]
-            pop.configure(d["style"], d["language"], u)
+        for badge in self.badges.values():
+            badge.opacity = d["background_opacity"]
+            badge.configure(d["opener_display"], d["style"], d["language"], u)
         self._place()
 
     def _place(self):
@@ -875,25 +938,41 @@ class HudWindow(QtWidgets.QWidget):
         clock_top = CLOCK_BOTTOM_Y * s - self.clock.height()   # default spot (the versus block uses it)
         self.clock.move(int((CLOCK_CENTER_X + d["clock_offset_x"]) * s - self.clock.width() / 2),
                         int(clock_top + d["clock_offset_y"] * s))
-        # opener popups: a few seconds after recognition, right above that
-        # player's stats (and events), hugging the board side like they do
-        for side in ("left", "right"):
-            pop = self.popups[side]
-            info = (self._last_state.get(side) or {})
-            age, name = info.get("opener_age_s"), info.get("opener")
-            show = (d["show_opener"] and name and age is not None and age < POPUP_S
-                    and not self._last_state.get("frozen"))
-            pop.setVisible(bool(show))
-            if not show:
-                continue
-            pop.set_name(name, min(1.0, (POPUP_S - age) / POPUP_FADE_S))
-            anchor_x = (STAT_ANCHOR_X[mode][side] + d["offset_x"]) * s
-            tops = [(STAT_BOTTOM_Y + d["offset_y"]) * s]
-            for w in (self.stats[side], self.events[side]):
-                if w.isVisibleTo(self):
-                    tops.append(w.y())
-            x = anchor_x - pop.width() if mode == "left" else anchor_x
-            pop.move(int(x), int(min(tops) - 4 * u - pop.height()))
+        # opener (開幕テンプレ): where display.opener_display says (see OpenerBadge)
+        omode = d["opener_display"]
+        st = self._last_state
+        names = {sd: (st.get(sd) or {}).get("opener") for sd in ("left", "right")}
+        for badge in self.badges.values():
+            badge.setVisible(False)
+        if d["show_opener"] and omode == "top":
+            if any(names.values()):
+                badge = self.badges["both"]
+                badge.set_names(names)
+                badge.setVisible(True)
+                badge.move(int(OPENER_TOP_CENTER_X * s - badge.width() / 2), int(OPENER_TOP_Y * s))
+        elif d["show_opener"]:
+            for side in ("left", "right"):
+                if not names[side]:
+                    continue
+                alpha = 1.0
+                if omode == "board":   # only for a few seconds after it's recognized
+                    age = (st.get(side) or {}).get("opener_age_s")
+                    if age is None or age >= POPUP_S or st.get("frozen"):
+                        continue
+                    alpha = min(1.0, (POPUP_S - age) / POPUP_FADE_S)
+                badge = self.badges[side]
+                badge.set_names(names, alpha)
+                badge.setVisible(True)
+                if omode == "board":
+                    x = BOARD_CENTER_X[side] * s - badge.width() / 2
+                    y = OPENER_BOARD_TOP_Y * s
+                elif omode == "hold":   # right edge under the HOLD box, growing away from the board
+                    x = HOLD_RIGHT_X[side] * s - badge.width()
+                    y = OPENER_HOLD_TOP_Y * s
+                else:                   # namebar: at the end of the bar away from the avatar
+                    x = (NAMEBAR_RIGHT_X * s - badge.width()) if side == "left" else NAMEBAR_LEFT_X * s
+                    y = NAMEBAR_TOP_Y * s
+                badge.move(int(x), int(y))
         # summary: while a finished match is on screen (or always while
         # positioning, so it can be found and dragged)
         show_summary = d["show_summary"] and (self._summary_ready() or self.edit_mode)
@@ -969,7 +1048,7 @@ class HudWindow(QtWidgets.QWidget):
         # Dim rather than hide when capture is down: the numbers shown are the
         # last real measurement, not a fabricated live one.
         for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
-                     *self.popups.values()):
+                     *self.badges.values()):
             band.dim = stale
             band.update()
         self._place()

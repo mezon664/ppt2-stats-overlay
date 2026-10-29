@@ -76,16 +76,36 @@
       calc(-1.6 * var(--u)) 0 0 #1b2440, calc(1.6 * var(--u)) 0 0 #1b2440;
   }
 
-  /* opener (開幕テンプレ) name line above the stats */
-  .opener { font-size: calc(10 * var(--u)); font-weight: 700; line-height: calc(15 * var(--u));
-    white-space: nowrap; }   /* the block widens (away from the board) to fit it */
-  .p-left .opener, .vop .l { color: var(--t-left); } .p-right .opener, .vop .r { color: var(--t-right); }
-  .stat.hug-r .opener { text-align: right; }
-  .st-pop .opener, .st-text .opener { text-shadow: calc(-1.2 * var(--u)) 0 0 #1b2440, calc(1.2 * var(--u)) 0 0 #1b2440,
-      0 calc(-1.2 * var(--u)) 0 #1b2440, 0 calc(1.2 * var(--u)) 0 #1b2440; padding: 0 calc(4 * var(--u)); }
-  .vop { display: flex; justify-content: space-between; gap: calc(6 * var(--u)); font-size: calc(10 * var(--u));
-    font-weight: 700; line-height: calc(15 * var(--u)); }
-  .vop span { max-width: 48%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* --- opener (開幕テンプレ), display.opener_display: om-board (A, a few
+     seconds over the board), om-hold (B), om-namebar (C), om-top (D) --- */
+  .ob { box-sizing: border-box; white-space: nowrap; font-weight: 700; color: #fff;
+    background: rgba(12,22,60,max(0.78, var(--band-a))); border-radius: calc(6 * var(--u)); }
+  #ob-left { --acc: var(--p-left); --lab: var(--t-left); }
+  #ob-right { --acc: var(--p-right); --lab: var(--t-right); }
+  .ob .olab { color: var(--lab, rgb(220,228,245)); }
+  .ob:not(#ob-both) { box-shadow: inset 0 calc(-3 * var(--u)) 0 var(--acc); }
+  body.om-board .ob { padding: calc(4 * var(--u)) calc(22 * var(--u)) calc(8 * var(--u)); border-radius: calc(10 * var(--u)); text-align: center; }
+  body.om-board .olab { font-size: calc(13 * var(--u)); line-height: calc(22 * var(--u)); }
+  body.om-board .oname { font-size: calc(28 * var(--u)); line-height: calc(36 * var(--u)); }
+  body.om-hold .ob { padding: calc(3 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u)); }
+  body.om-hold .olab { font-size: calc(10 * var(--u)); line-height: calc(14 * var(--u)); }
+  body.om-hold .oname { font-size: calc(15 * var(--u)); line-height: calc(20 * var(--u)); }
+  body.om-namebar .ob { height: calc(20 * var(--u)); line-height: calc(17 * var(--u)); padding: 0 calc(10 * var(--u));
+    font-size: calc(12 * var(--u)); border-radius: 999px; box-shadow: none; border: calc(2 * var(--u)) solid var(--acc); }
+  #ob-both { padding: calc(4 * var(--u)) calc(14 * var(--u)) calc(8 * var(--u)); min-width: calc(200 * var(--u));
+    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) bottom / 100% calc(3 * var(--u)) no-repeat,
+                rgba(12,22,60,max(0.78, var(--band-a))); }
+  #ob-both .olab { text-align: center; font-size: calc(11 * var(--u)); line-height: calc(16 * var(--u)); }
+  #ob-both .orow { display: flex; align-items: baseline; justify-content: space-between; gap: calc(10 * var(--u)); font-size: calc(18 * var(--u)); }
+  #ob-both .ol { color: var(--t-left); } #ob-both .or { color: var(--t-right); }
+  #ob-both .ovs { font-size: calc(13 * var(--u)); color: rgb(220,228,245); }
+  body.style-gauge .ob { border-radius: 0 !important; }
+  body.style-pop .ob:not(#ob-both) { background: var(--acc); box-shadow: none; border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(14 * var(--u)); }
+  body.style-pop .ob .olab { color: rgb(235,242,255); }
+  body.style-text .ob { background: none !important; box-shadow: none; border-color: transparent; }
+  body.style-text .ob div, body.style-text .ob span {
+    text-shadow: calc(-1.6 * var(--u)) 0 0 #1b2440, calc(1.6 * var(--u)) 0 0 #1b2440,
+      0 calc(-1.6 * var(--u)) 0 #1b2440, 0 calc(1.6 * var(--u)) 0 #1b2440; }
   .summary .sop { font-size: calc(12 * var(--u)); max-width: 36%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* --- versus: one block between the boards --- */
@@ -182,6 +202,9 @@
   <div class="abs stat" id="stat-right"></div>
   <div class="abs versus hidden" id="versus"></div>
   <div class="abs summary hidden" id="summary"></div>
+  <div class="abs ob hidden" id="ob-left"></div>
+  <div class="abs ob hidden" id="ob-right"></div>
+  <div class="abs ob hidden" id="ob-both"></div>
 
 <script>
 // Layout in reference px (1232x692 game client) — same numbers as hud/overlay.py.
@@ -190,6 +213,13 @@ const STAT_ANCHOR_X = { left: { left: 186, right: 790 }, right: { left: 448, rig
 const STAT_BOTTOM_Y = 562, EVENT_GAP = 2, VERSUS_GAP = 4;
 const CLOCK_CENTER_X = 617, CLOCK_BOTTOM_Y = 576;
 const SUMMARY_TOP_Y = 120;
+// opener displays (same numbers as hud/overlay.py)
+const POPUP_S = 4.0, POPUP_FADE_S = 1.0;
+const BOARD_CENTER_X = { left: 313, right: 918 }, OPENER_BOARD_TOP_Y = 150;
+const HOLD_RIGHT_X = { left: 191, right: 797 }, OPENER_HOLD_TOP_Y = 172;
+const NAMEBAR_RIGHT_X = 466, NAMEBAR_LEFT_X = 762, NAMEBAR_TOP_Y = 608;
+const OPENER_TOP_CENTER_X = 617, OPENER_TOP_Y = 14;
+const OPENER_DISPLAYS = ["board", "hold", "namebar", "top"];
 const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
   ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
   ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
@@ -211,7 +241,7 @@ const UI_TEXT = {
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
 const DEFAULTS = { style: "band", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
-  summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true,
+  summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true, opener_display: "board",
   background_opacity: 0.85, show_apm: true, show_pps: true, show_app: true, show_clock: true,
   show_event_log: false, event_log_count: 3 };
 
@@ -232,8 +262,7 @@ function values(data) {
 }
 
 function statRowsHtml(st, side, v) {
-  const head = display.show_opener && v.opener ? `<div class="opener">${esc(v.opener)}</div>` : "";
-  return head + shownKeys().map((key) => {
+  return shownKeys().map((key) => {
     const lab = `<span class="lab">${key.toUpperCase()}</span>`;
     const val = `<span class="val num">${fmt(key, v[key])}</span>`;
     if (st === "pop") return `<div class="row"><span class="pill">${lab}${val}</span></div>`;
@@ -246,9 +275,7 @@ function statRowsHtml(st, side, v) {
 }
 
 function versusHtml(left, right) {
-  const head = display.show_opener && (left.opener || right.opener)
-    ? `<div class="vop"><span class="l">${esc(left.opener || "")}</span><span class="r">${esc(right.opener || "")}</span></div>` : "";
-  return head + shownKeys().map((key) => {
+  return shownKeys().map((key) => {
     const a = left[key] || 0, b = right[key] || 0, total = a + b;
     const split = total > 0
       ? `<div class="a" style="width:${(a / total * 100).toFixed(1)}%"></div><div class="b" style="flex:1"></div>`
@@ -313,6 +340,39 @@ function layout() {
   vs.style.left = ((CLOCK_CENTER_X + d.offset_x) * k - vs.offsetWidth / 2) + "px";
   vs.style.top = (vb + d.offset_y * k - vs.offsetHeight) + "px";
 
+  // opener (開幕テンプレ): where display.opener_display says
+  const om = OPENER_DISPLAYS.includes(d.opener_display) ? d.opener_display : "board";
+  for (const m of OPENER_DISPLAYS) document.body.classList.toggle("om-" + m, m === om);
+  const st0 = lastState || {};
+  const names = { left: (st0.left || {}).opener, right: (st0.right || {}).opener };
+  for (const id of ["ob-left", "ob-right", "ob-both"]) $(id).classList.add("hidden");
+  if (d.show_opener && om === "top" && (names.left || names.right)) {
+    const ob = $("ob-both");
+    ob.classList.remove("hidden");
+    ob.style.opacity = 1;
+    ob.style.left = (OPENER_TOP_CENTER_X * k - ob.offsetWidth / 2) + "px";
+    ob.style.top = (OPENER_TOP_Y * k) + "px";
+  } else if (d.show_opener && om !== "top") {
+    for (const side of ["left", "right"]) {
+      if (!names[side]) continue;
+      let alpha = 1;
+      if (om === "board") {
+        const age = (st0[side] || {}).opener_age_s;
+        if (age == null || age >= POPUP_S || st0.frozen) continue;
+        alpha = Math.min(1, (POPUP_S - age) / POPUP_FADE_S);
+      }
+      const ob = $("ob-" + side);
+      ob.classList.remove("hidden");
+      ob.style.opacity = alpha;
+      let x, y;
+      if (om === "board") { x = BOARD_CENTER_X[side] * k - ob.offsetWidth / 2; y = OPENER_BOARD_TOP_Y * k; }
+      else if (om === "hold") { x = HOLD_RIGHT_X[side] * k - ob.offsetWidth; y = OPENER_HOLD_TOP_Y * k; }
+      else { x = side === "left" ? NAMEBAR_RIGHT_X * k - ob.offsetWidth : NAMEBAR_LEFT_X * k; y = NAMEBAR_TOP_Y * k; }
+      ob.style.left = x + "px";
+      ob.style.top = y + "px";
+    }
+  }
+
   // summary: while a finished match is on screen
   const sm = $("summary");
   const ready = lastState && lastState.frozen && (lastState.match_elapsed_s || 0) > 0;
@@ -336,6 +396,16 @@ function render(state) {
   renderSide("right", state.right);
   $("versus").innerHTML = versusHtml(values(state.left), values(state.right));
   $("summary").innerHTML = summaryHtml(state);
+  const lab = ui().s_opener, sep = display.language === "en" ? ": " : "：";
+  for (const side of ["left", "right"]) {
+    const name = esc(((state[side] || {}).opener) || "");
+    $("ob-" + side).innerHTML = display.opener_display === "namebar"
+      ? `<span class="olab">${lab}${sep}</span><span class="oname">${name}</span>`
+      : `<div class="olab">${lab}</div><div class="oname">${name}</div>`;
+  }
+  $("ob-both").innerHTML = `<div class="olab">${lab}</div><div class="orow">` +
+    `<span class="ol">${esc((state.left || {}).opener || "--")}</span><span class="ovs">vs</span>` +
+    `<span class="or">${esc((state.right || {}).opener || "--")}</span></div>`;
   // Match clock is game time: it stops while paused and resumes after.
   const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
   $("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;

@@ -57,3 +57,10 @@ def test_language_defaults_to_japanese_and_accepts_english():
     assert display_settings({})["language"] == "ja"
     assert display_settings({"display": {"language": "en"}})["language"] == "en"
     assert display_settings({"display": {"language": "fr"}})["language"] == "ja"
+
+
+def test_opener_display_choices():
+    assert display_settings({})["opener_display"] == "board"
+    for m in ("board", "hold", "namebar", "top"):
+        assert display_settings({"display": {"opener_display": m}})["opener_display"] == m
+    assert display_settings({"display": {"opener_display": "side"}})["opener_display"] == "board"

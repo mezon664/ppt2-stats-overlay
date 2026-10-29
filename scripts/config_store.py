@@ -39,7 +39,12 @@ DISPLAY_DEFAULTS = {
     "show_clock": True,          # match time, above the マッチポイント banner
     "show_event_log": False,     # recent clears / REN breaks above the stats
     "show_summary": True,        # both players' totals between the boards when a match ends
-    "show_opener": True,         # recognized opener (開幕テンプレ) name above the stats
+    "show_opener": True,         # show the recognized opener (開幕テンプレ)
+    # where: "board"   big over the player's own board, for a few seconds (A)
+    #        "hold"    small under the HOLD box, for the rest of the match (B)
+    #        "namebar" on the player's name bar, for the rest of the match (C)
+    #        "top"     both players at the top center, for the rest of the match (D)
+    "opener_display": "board",
     "event_log_count": 3,        # 1 - 5
 }
 
@@ -63,7 +68,9 @@ STATS_POSITIONS = ("left", "right")
 STYLES = ("band", "pop", "gauge", "text", "versus")
 # allowed values for the text options
 LANGUAGES = ("ja", "en")
-DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES}
+OPENER_DISPLAYS = ("board", "hold", "namebar", "top")
+DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES,
+                   "opener_display": OPENER_DISPLAYS}
 
 DEFAULTS = {
     "server": {"host": "127.0.0.1", "port": 8765, "broadcast_hz": 10},
