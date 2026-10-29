@@ -1,6 +1,6 @@
 # 引き継ぎメモ（PPT2 Stats Overlay）
 
-新しいセッションはまずこのファイルを読むこと。最終更新: 2026-10-29
+新しいセッションはまずこのファイルを読むこと。最終更新: 2026-10-30
 
 ## このプロジェクト
 ぷよぷよテトリス2（PC版）の対戦画面を**画面認識だけ**で読み取り、APM / PPS / APP、消去・T-SPIN・REN・パフェ、
@@ -18,7 +18,7 @@
 - 終了: タスクトレイのアイコン →「終了」（サーバーも止まる）。
 - 設定画面: 起動時に自動で開く／トレイアイコンをダブルクリック。設定は `config/overlay_settings.json`（gitに入れない。初期値は `scripts/config_store.py`）。
 - サーバーログ: `logs/server.log`
-- テスト: `.venv\Scripts\python.exe -m pytest tests -q`（現在 169 件すべて成功）
+- テスト: `.venv\Scripts\python.exe -m pytest tests -q`（現在 191 件すべて成功）
 - 再起動の仕方（作業後）: data_server / launch.py の python プロセスを止めて `start.bat` を実行。
 - git: リポジトリあり（main）。コミットには `Co-Authored-By: Claude ...` を付けてきた。
 
@@ -43,7 +43,8 @@
 ## 検証用の録画（gitに入っていない: `debug_frames/`）
 `debug_frames/burst*` は 約10fps の連番画像（ファイル名 `f_NNNN_tT.png`）。
 - `burst`（ポーズ48秒を含む）、`burst2`（1→2→3→4段消し）、`burst_ren`（12連続消し）、`burst_break`（REN途切れ）、
-  `burst_boundary`（試合の区切り4回・TETRISパフェ・合掌TSD・りねパフェ(左凸)を含む）、`burst_pc`（2段パフェ・パフェ積み）
+  `burst_boundary`（試合の区切り4回・TETRISパフェ・合掌TSD・りねパフェ(左凸)を含む）、`burst_pc`（2段パフェ・パフェ積み）、
+  `burst_hold`（新しい試合の最初のHOLD使用を両サイド含む。HOLD誤カウント修正の検証に使用）
 - 再生して結果を見る: `tools/validation/validate_burst_*.py`（`.venv\Scripts\python.exe tools\validation\validate_burst_boundary.py`）
 - サイズ違いの検証: `tools/validation/size_check.py burst_boundary 1920 1080`
 - 開幕判定の瞬間の画像を保存: `tools/validation/opener_frames.py burst_pc`
@@ -70,9 +71,24 @@
 2. **Switch版・他の端末への対応（OBS上だけでも可）**：方針案はユーザーに説明済み、返事待ち。
    - 案: OBS の仮想カメラでキャプチャーボードの映像だけを出し、サーバーが `cv2.VideoCapture` で読む（または OBS のウインドウプロジェクターを窓キャプチャ）。HUDは使わず OBS 表示のみ。
    - 要確認: キャプチャーボードの有無、OBS のバージョン。キャプチャーボード経由の色・画質で認識が変わるので Switch の録画で検証が必要。
-3. 配布準備の残り: exe 化（PyInstaller 等）、説明書、英語版ゲームの「やった!」対応（録画が必要）、フルスクリーン/1080p実機の確認。
-4. 細かい既知の点: HOLD が空の時の最初のHOLDで NEXT が進み、1個多く数える（PPS がわずかに多め）。
+3. 配布準備の残り: exe 化（PyInstaller 等）、説明書（フルスクリーン非対応を明記）、英語版ゲームの「やった!」対応（録画が必要）、1080p実機の確認。
+4. ~~HOLD が空の時の最初のHOLDで NEXT が進み、1個多く数える~~ → 修正済み（`scripts/hold_tracker.py` 新規、`live_pipeline.py` の `PlayerPipeline._discard_hold_advance`）。
+   HOLD枠の塗りつぶし判定で「空→埋まった」瞬間を検出し、その瞬間と重なるNEXT進みを1個だけ取り消す（PPS・REN途切れ判定の両方に影響していた）。
+   `burst_hold` の実録画で検証済み（左右とも狙った1個だけ減ることを確認、テストは `tests/test_hold_tracker.py` / `tests/test_hold_pps_fix.py`）。実戦での最終確認はまだ。
+   HOLDが「一度も空に見えていない」（途中から認識開始）場合は何もしない（誤って本物の設置を消していた不具合を修正済み）。
+   **試合開始直後の1個目も誤カウントしていた**（ゴー!が消えて0.16〜0.27秒で必ずNEXTが1つ進む＝最初のミノの出現。burst_boundaryの4試合×両側すべて）
+   → `NextQueueTracker(discard_first_shift=True)` で最初の1回だけ数えない。ゴー!で試合開始した時だけ有効（起動直後・ウインドウサイズ変更・ゴー!が見えない時の代替経路では無効）。
 5. 実戦で未確認: パフェ積み(端あけ)、りねパフェの判定、APP と試合結果まとめの実戦表示。
+6. 文字の太さを設定 `display.text_weight` で選べるようにした（normal=700/600, bold=800/700, extra_bold=900/800。初期値 extra_bold＝ユーザー指定）。
+   HUD は `hud/overlay.py` の `TEXT_WEIGHT_PRESETS`/`set_text_weight`、OBS は `--fw-bold`/`--fw-semi`、設定画面に「文字の太さ」。
+   帯のグラデーションを濃くする案は試したが、ユーザーが元のほうが良いとのことで戻した。
+7. **フルスクリーンは非対応（調査済み・ユーザー了承済み）**。フルスクリーンを検出したら
+   「フルスクリーンでは認識できません (ゲームをウインドウモードにしてください)」を返す（`live_capture.FULLSCREEN_REASON`、HUD/OBSに表示）。
+   調べたこと（2026-10-30、2560x1440）: ゲームの窓は画面全体・タイトルなし・最前面固定、解像度は変わらない。
+   - mss / PrintWindow は真っ黒（明るさ0）。Desktop Duplication（dxcam）はほぼ毎回「アクセス喪失」で、試合画面は一度も取れず。
+   - ゲームの上に窓を出すと（フォーカスを奪わなくても）ゲームがフルスクリーンから外れて最小化される。透過クリック素通しのHUDは重なり順では上でも描画されない。
+   - 抜け道はゲーム描画への割り込み（Discordオーバーレイ/OBSゲームキャプチャ方式）だけで、プロジェクトの約束で不可。dxcam は入れて試したあと削除済み。
+   - ついでに入れたもの: ウインドウサイズが変わっても0.5秒続くまで使わない（`live_capture.SizeSettler`）。一瞬のサイズぶれで試合の数値がリセットされていたため。
 
 ## ユーザーへの連絡でよく使うこと
 - 録画を頼むとき: 「録画して」と言ってもらえれば `capture_burst.py` で始める。

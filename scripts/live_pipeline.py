@@ -21,6 +21,7 @@ from capture_profile import scale_box, REFERENCE_PROFILE
 from match_boundary import MatchBoundaryDetector
 from flash_clear_detector import FlashClearDetector, MAX_LINES_PER_EVENT
 from queue_tracker import NextQueueTracker
+from hold_tracker import HoldTracker
 from gameplay_gate import GameplayGate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -38,6 +39,12 @@ CLEAR_TYPE_LABEL_JA = {
 }
 
 EVENT_LOG_MAX = 15  # recent entries kept per side, for on-screen verification of what was recognized
+
+# How close a queue advance's own timestamp must be to HoldTracker's first-use
+# timestamp to be discarded as that same event (see PlayerPipeline._discard_hold_advance).
+# Generous: on the real recording the two were 0-0.13s apart, debounced separately
+# (STABLE_READS on each tracker), but one or the other can land on a later frame.
+HOLD_ADJUST_WINDOW_S = 1.0
 
 # Lines each banner type clears, checked against the clear flash's lit rows.
 BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3}
@@ -122,6 +129,12 @@ class PlayerPipeline:
 
     debug_dump_dir: str = None
     clock_start_t: float = None  # see APMWindowTracker's start_t docstring
+    # True only right at a confirmed match start (GO! disappearing): passed
+    # through to NextQueueTracker so it discards its first queue shift (the
+    # first piece spawning, not a placement — see queue_tracker.py). False
+    # everywhere else (startup, a window resize, the GO!-timeout fallback),
+    # where the tracker's first observed shift is a real placement.
+    discard_first_shift: bool = False
 
     # A flash with no banner anywhere nearby only falls through to a plain
     # clear_N event after this much time has passed without one showing up —
@@ -157,7 +170,14 @@ class PlayerPipeline:
         self.event_log = []  # newest first; for on-screen "what was recognized" verification
         self.flash_detector = FlashClearDetector(self.side, profile=self.profile,
                                                   debug_dump_dir=self.debug_dump_dir)
-        self.queue_tracker = NextQueueTracker(self.side, profile=self.profile)
+        self.queue_tracker = NextQueueTracker(self.side, profile=self.profile,
+                                               discard_first_shift=self.discard_first_shift)
+        self.hold_tracker = HoldTracker(self.side, profile=self.profile)
+        # Game time of a HOLD-caused queue advance not yet matched to one of
+        # queue_tracker's own timestamps (see _discard_hold_advance below) —
+        # HoldTracker can confirm the first use on a frame where queue_tracker
+        # hasn't reported the matching advance yet (debounced separately).
+        self._pending_hold_adjust_t = None
         self.opener_detector = OpenerDetector(self.side, profile=self.profile)
         self._first_t = None        # first frame this pipeline saw (match start when no GO! time)
         self.opener_t = None        # game time the opener was recognized (for the short popup)
@@ -317,6 +337,11 @@ class PlayerPipeline:
         # its banner grace period, and applying the break first would let that
         # clear count as REN 1 of a new chain instead of ending the old one.
         placements = self.queue_tracker.update(frame, t)
+        hold_first_use_t = self.hold_tracker.update(frame, t)
+        if hold_first_use_t is not None:
+            self._pending_hold_adjust_t = hold_first_use_t
+        if self._pending_hold_adjust_t is not None:
+            placements = self._discard_hold_advance(placements, t)
         if self._first_t is None:
             self._first_t = t
         start = self.clock_start_t if self.clock_start_t is not None else self._first_t
@@ -393,6 +418,29 @@ class PlayerPipeline:
                     ev["ren_count"] = ren
                 ev["btb"] = is_b2b_eligible(self.table, ev["clear_type"]) and b2b >= min_streak
         return accepted
+
+    def _discard_hold_advance(self, placements, t):
+        """Drops the one queue advance caused by HoldTracker's confirmed
+        first-use event, from `placements` and from queue_tracker's own
+        count — see hold_tracker.py for why that advance isn't a placement.
+        queue_tracker and HoldTracker debounce independently, so the matching
+        advance can show up on a later frame than the one that confirmed the
+        hold (or the same frame, or — rarely — earlier); this keeps waiting
+        across frames until one lands within HOLD_ADJUST_WINDOW_S, or gives up
+        quietly past that window rather than discarding an unrelated, later
+        placement."""
+        if placements:
+            i = min(range(len(placements)),
+                    key=lambda idx: abs(placements[idx] - self._pending_hold_adjust_t))
+            if abs(placements[i] - self._pending_hold_adjust_t) <= HOLD_ADJUST_WINDOW_S:
+                log.info("[%s] t=%.2f discarding placement at t=%.2f (first HOLD use, not a lock)",
+                         self.side, t, placements[i])
+                placements = placements[:i] + placements[i + 1:]
+                self.queue_tracker.pieces_placed -= 1
+                self._pending_hold_adjust_t = None
+        if self._pending_hold_adjust_t is not None and t - self._pending_hold_adjust_t > HOLD_ADJUST_WINDOW_S:
+            self._pending_hold_adjust_t = None  # no matching advance arrived; give up
+        return placements
 
     def _apply_ready_breaks(self):
         """Applies queued REN breaks in time order, each only once every clear
@@ -567,12 +615,14 @@ class MatchPipeline:
         # show these banners (e.g. a draw), not as the primary trigger anymore.
         self.boundary_detector = MatchBoundaryDetector(profile=self.profile or REFERENCE_PROFILE)
 
-    def _recreate_pipelines(self, clock_start_t=None):
+    def _recreate_pipelines(self, clock_start_t=None, discard_first_shift=False):
         templates = load_templates()
         self.left = PlayerPipeline(side="left", templates=templates, profile=self.profile,
-                                    debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t)
+                                    debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t,
+                                    discard_first_shift=discard_first_shift)
         self.right = PlayerPipeline(side="right", templates=templates, profile=self.profile,
-                                     debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t)
+                                     debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t,
+                                     discard_first_shift=discard_first_shift)
 
     def rebuild_for_profile(self, profile):
         """Re-creates both side trackers for a new capture profile (e.g. the game
@@ -608,10 +658,15 @@ class MatchPipeline:
         and the APM calculation's own internal clock are anchored exactly there —
         see APMWindowTracker's start_t docstring for why this matters. Left as
         None for the board-empty fallback path, which has no such precise moment
-        to offer (less precise by nature, not the primary signal)."""
+        to offer (less precise by nature, not the primary signal).
+
+        That same precise moment is also what makes queue_tracker's
+        discard_first_shift correct (see its docstring): known only for the
+        GO!-disappeared edge, never for the fallback path, where the queues
+        have typically already moved before this reset even fires."""
         log.info("resetting match state (%s)%s", reason,
                   f" clock_start_t={clock_start_t:.2f}" if clock_start_t is not None else "")
-        self._recreate_pipelines(clock_start_t=clock_start_t)
+        self._recreate_pipelines(clock_start_t=clock_start_t, discard_first_shift=clock_start_t is not None)
         self._awaiting_go_since = None
         self._probe_queues = None
         self._probe_advances = 0

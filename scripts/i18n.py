@@ -22,6 +22,7 @@ REN_BREAK_EN = "REN ended (no clear)"
 _CAPTURE_EN = (
     ("ゲームのウインドウが見つかりません", "Game window not found (is the game running?)"),
     ("ゲームが最小化されています", "The game is minimized (keep its window on screen)"),
+    ("フルスクリーンでは認識できません", "Can't read the game in fullscreen (switch the game to windowed mode)"),
     ("ウインドウのサイズを取得できません", "Can't get the game window size"),
     ("ウインドウサイズを取得できません", "Can't get the game window size"),
     ("ウインドウのアスペクト比が未対応です", "Unsupported window shape (use a 16:9 window)"),

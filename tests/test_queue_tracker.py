@@ -62,3 +62,28 @@ def test_two_placements_between_readings():
     tr = NextQueueTracker("left")
     placed = feed(tr, ["TJISO", "TJISO", "ISOLZ", "ISOLZ"])
     assert placed == [0.2, 0.2]
+
+
+def test_discard_first_shift_swallows_only_the_first_advance():
+    # A confirmed match start (see queue_tracker.py docstring): the tracker's
+    # first-ever shift is the first piece spawning, not a placement, so it's
+    # dropped — but the next one counts normally.
+    tr = NextQueueTracker("left", discard_first_shift=True)
+    placed = feed(tr, ["TJISO", "TJISO", "JISOL", "JISOL", "JISOL", "ISOLZ", "ISOLZ"])
+    assert placed == [0.5]  # the TJISO->JISOL shift is swallowed; ISOLZ counts
+    assert tr.pieces_placed == 1
+
+
+def test_discard_first_shift_off_by_default():
+    tr = NextQueueTracker("left")  # discard_first_shift defaults to False
+    placed = feed(tr, ["TJISO", "TJISO", "JISOL", "JISOL", "JISOL"])
+    assert placed == [0.2]
+    assert tr.pieces_placed == 1
+
+
+def test_discard_first_shift_only_applies_once():
+    tr = NextQueueTracker("left", discard_first_shift=True)
+    placed = feed(tr, ["TJISO", "TJISO", "JISOL", "JISOL", "JISOL",
+                        "ISOLZ", "ISOLZ", "SOLZT", "SOLZT"])
+    assert placed == [0.5, 0.7]
+    assert tr.pieces_placed == 2

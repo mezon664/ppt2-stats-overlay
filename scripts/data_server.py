@@ -88,6 +88,8 @@ def capture_loop_live(fps_target=15):
                 "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),
             }
             PIPELINE.process_frame(frame, time.monotonic() - t0)
+        elif reason is None:
+            pass  # window size still settling (live_capture.SizeSettler): keep the last status
         else:
             CAPTURE_STATUS = {"ok": False, "message": reason, "message_en": capture_message_en(reason)}
         elapsed = time.monotonic() - loop_start

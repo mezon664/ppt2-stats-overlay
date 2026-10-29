@@ -19,6 +19,7 @@
   }
   :root {
     --u: 1px; --band: rgba(12,22,60,0.85); --clear: rgba(12,22,60,0);
+    --fw-bold: 900; --fw-semi: 800;  /* display.text_weight, set by script (TEXT_WEIGHTS) */
     --p-left: rgb(59,142,234); --p-right: rgb(229,72,77);
     --t-left: rgb(140,200,255); --t-right: rgb(255,154,158);
   }
@@ -31,12 +32,12 @@
   .stat { box-sizing: border-box; }
   .stat .row { display: flex; align-items: baseline; gap: calc(4 * var(--u)); }
   .stat.hug-r .row { justify-content: flex-end; }
-  .lab { font-weight: 700; }
+  .lab { font-weight: var(--fw-bold); }
 
   .st-band { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); }
   .st-band .row { height: calc(21 * var(--u)); }
   .st-band .lab { font-size: calc(12 * var(--u)); }
-  .st-band .val { font-size: calc(17 * var(--u)); font-weight: 600; }
+  .st-band .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
   .st-band.hug-r, .st-gauge.hug-r { background: linear-gradient(to right, var(--clear) 0%, var(--band) 55%, var(--band) 100%); }
   .st-band.hug-l, .st-gauge.hug-l { background: linear-gradient(to right, var(--band) 0%, var(--band) 45%, var(--clear) 100%); }
 
@@ -51,12 +52,12 @@
   .st-pop.p-left .pill { background: var(--p-left); }
   .st-pop.p-right .pill { background: var(--p-right); }
   .st-pop .lab { font-size: calc(11 * var(--u)); color: rgb(225,236,255); }
-  .st-pop .val { font-size: calc(16 * var(--u)); font-weight: 700; }
+  .st-pop .val { font-size: calc(16 * var(--u)); font-weight: var(--fw-bold); }
 
   .st-gauge { min-width: calc(104 * var(--u)); padding: calc(3 * var(--u)) calc(6 * var(--u)); }
   .st-gauge .row { height: calc(27 * var(--u)); flex-wrap: wrap; justify-content: space-between !important; align-content: flex-start; }
   .st-gauge .lab { font-size: calc(11 * var(--u)); color: rgb(220,228,245); }
-  .st-gauge .val { font-size: calc(15 * var(--u)); font-weight: 600; }
+  .st-gauge .val { font-size: calc(15 * var(--u)); font-weight: var(--fw-semi); }
   .st-gauge .bar { flex-basis: 100%; height: calc(4.5 * var(--u)); border-radius: 999px;
     background: rgba(255,255,255,0.24); display: flex; overflow: hidden; margin-top: calc(1 * var(--u)); }
   .st-gauge.hug-r .bar { justify-content: flex-end; }   /* grows from the board side */
@@ -67,7 +68,7 @@
   .st-text { min-width: calc(104 * var(--u)); padding: calc(1 * var(--u)) calc(5 * var(--u)); }
   .st-text .row { height: calc(23 * var(--u)); }
   .st-text .lab { font-size: calc(12 * var(--u)); }
-  .st-text .val { font-size: calc(20 * var(--u)); font-weight: 600; }
+  .st-text .val { font-size: calc(20 * var(--u)); font-weight: var(--fw-semi); }
   .st-text .lab, .st-text .val {
     text-shadow:
       calc(-1.6 * var(--u)) calc(-1.6 * var(--u)) 0 #1b2440, calc(1.6 * var(--u)) calc(-1.6 * var(--u)) 0 #1b2440,
@@ -78,7 +79,7 @@
 
   /* --- opener (開幕テンプレ), display.opener_display: om-board (A, a few
      seconds over the board), om-hold (B), om-namebar (C), om-top (D) --- */
-  .ob { box-sizing: border-box; white-space: nowrap; font-weight: 700; color: #fff;
+  .ob { box-sizing: border-box; white-space: nowrap; font-weight: var(--fw-bold); color: #fff;
     background: rgba(12,22,60,max(0.78, var(--band-a))); border-radius: calc(6 * var(--u)); }
   #ob-left { --acc: var(--p-left); --lab: var(--t-left); }
   #ob-right { --acc: var(--p-right); --lab: var(--t-right); }
@@ -113,8 +114,8 @@
     background: var(--band); border-radius: calc(4 * var(--u)); }
   .versus .vrow { height: calc(34 * var(--u)); position: relative; }
   .versus .vlab { position: absolute; left: 0; right: 0; top: calc(1 * var(--u)); text-align: center;
-    font-size: calc(10 * var(--u)); font-weight: 700; color: rgb(220,228,245); }
-  .versus .vals { display: flex; justify-content: space-between; font-size: calc(15 * var(--u)); font-weight: 700;
+    font-size: calc(10 * var(--u)); font-weight: var(--fw-bold); color: rgb(220,228,245); }
+  .versus .vals { display: flex; justify-content: space-between; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold);
     line-height: calc(19 * var(--u)); }
   .versus .l { color: var(--t-left); } .versus .r { color: var(--t-right); }
   .versus .split { display: flex; height: calc(6 * var(--u)); border-radius: calc(3 * var(--u)); overflow: hidden;
@@ -125,7 +126,7 @@
      stats do — same looks as the HUD's EventBlock / ClockBlock --- */
   .events {
     padding: calc(2 * var(--u)) calc(6 * var(--u)) calc(2 * var(--u)) calc(11 * var(--u));
-    font-size: calc(10 * var(--u)); font-weight: 600; color: #e4e4e7;
+    font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #e4e4e7;
     line-height: calc(14 * var(--u));
     text-align: right; white-space: nowrap; box-sizing: border-box;
     background: linear-gradient(to right, var(--clear) 0%, var(--band) 45%, var(--band) 100%);
@@ -159,9 +160,9 @@
   body.style-pop .clockbox { background: rgb(30,42,85); border: calc(2.5 * var(--u)) solid #fff;
     border-radius: calc(12 * var(--u)); padding: calc(2 * var(--u)) calc(12 * var(--u)); }
   body.style-text .clockbox { background: none; padding: 0 calc(4 * var(--u)); }
-  .clock { font-size: calc(18 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums; }
-  .state { font-size: calc(10 * var(--u)); font-weight: 600; color: #fde68a; }
-  .status { font-size: calc(10 * var(--u)); font-weight: 600; color: #fca5a5; }
+  .clock { font-size: calc(18 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
+  .state { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #fde68a; }
+  .status { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #fca5a5; }
   body.style-text .clockbox div, body.style-text .events {
     text-shadow:
       calc(-1.3 * var(--u)) calc(-1.3 * var(--u)) 0 #1b2440, calc(1.3 * var(--u)) calc(-1.3 * var(--u)) 0 #1b2440,
@@ -172,10 +173,10 @@
   /* --- end-of-match summary (same looks as the HUD's SummaryBlock) --- */
   .summary { width: calc(212 * var(--u)); box-sizing: border-box; padding: calc(4 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
     background: rgba(12,22,60,max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
-  .summary .stitle { text-align: center; font-size: calc(15 * var(--u)); font-weight: 700; line-height: calc(28 * var(--u)); }
+  .summary .stitle { text-align: center; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); line-height: calc(28 * var(--u)); }
   .summary .srow { display: flex; align-items: baseline; justify-content: space-between; height: calc(20 * var(--u)); }
-  .summary .slab { font-size: calc(12 * var(--u)); font-weight: 600; color: rgb(220,228,245); }
-  .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 25%; }
+  .summary .slab { font-size: calc(12 * var(--u)); font-weight: var(--fw-semi); color: rgb(220,228,245); }
+  .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; min-width: 25%; }
   .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); text-align: right; }
   body.style-gauge .summary { border-radius: 0;
     background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(12,22,60,max(0.5, var(--band-a))); }
@@ -226,6 +227,8 @@ const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
   ["tspin", "s_tspin", 0], ["perfect_clear", "s_pc", 0]];
 const GAUGE_MAX = { apm: 120, pps: 4, app: 1 };   // value that fills a gauge bar
 const STYLES = ["band", "pop", "gauge", "text", "versus"];
+// display.text_weight -> [bold, semi] font-weight (same as hud/overlay.py TEXT_WEIGHT_PRESETS)
+const TEXT_WEIGHTS = { normal: [700, 600], bold: [800, 700], extra_bold: [900, 800] };
 // The overlay's own text, by display.language (event text comes from the
 // server in both languages: "text" / "text_en").
 const UI_TEXT = {
@@ -239,7 +242,7 @@ const UI_TEXT = {
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
-const DEFAULTS = { style: "band", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
+const DEFAULTS = { style: "band", text_weight: "extra_bold", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
   summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true, opener_display: "board",
   background_opacity: 0.85, show_apm: true, show_pps: true, show_app: true, show_clock: true,
@@ -305,6 +308,9 @@ function layout() {
   document.documentElement.style.setProperty("--u", (k * d.scale) + "px");
   document.documentElement.style.setProperty("--band", `rgba(12,22,60,${d.background_opacity})`);
   document.documentElement.style.setProperty("--band-a", d.background_opacity);
+  const [fwBold, fwSemi] = TEXT_WEIGHTS[d.text_weight] || TEXT_WEIGHTS.extra_bold;
+  document.documentElement.style.setProperty("--fw-bold", fwBold);
+  document.documentElement.style.setProperty("--fw-semi", fwSemi);
   const mode = d.stats_position === "right" ? "right" : "left";
   document.body.classList.toggle("pos-right", mode === "right");
   for (const s of STYLES) document.body.classList.toggle("style-" + s, s === st);

@@ -20,6 +20,15 @@ twice in a row AND is the previous reading shifted up — and an advance is
 timestamped at the first frame its new reading appeared, not when it was
 confirmed (a fast piece can clear one frame after spawning; stamping late
 would hand that flash to the wrong piece).
+
+A match's very first queue shift is not a placement either, same idea as the
+HOLD case (see hold_tracker.py): confirmed on every match boundary in
+debug_frames/burst_boundary (4/4, both sides, 8/8) — a clean 1-shift lands
+0.16-0.27s after the tracker's first reading, every single time, far too
+fast to be a real placement. That's the first piece SPAWNING (leaving the
+NEXT display to become the piece in play), not locking. Only the first
+confirmed shift of a tracker's life is treated this way; every shift after
+it is a real placement exactly as the comment above describes.
 """
 import logging
 
@@ -56,7 +65,7 @@ def count_advances(old, new):
 
 
 class NextQueueTracker:
-    def __init__(self, side, profile=None):
+    def __init__(self, side, profile=None, discard_first_shift=False):
         self.side = side
         self.profile = profile or REFERENCE_PROFILE
         self.template = scale_template(cv2.imread(str(NEXT_TEMPLATE_PATH)), self.profile)
@@ -68,6 +77,13 @@ class NextQueueTracker:
         self._candidate_reads = 0
         self.pieces_placed = 0
         self.last_reading = None
+        # The match's first confirmed shift is the first piece spawning, not
+        # a lock — see the module docstring. Only set when the caller knows
+        # this tracker was created right at a confirmed match start (not at
+        # startup mid-match, a window resize, or the GO!-timeout fallback,
+        # where the tracker's first observed shift is a real placement).
+        # Cleared after that one shift either way.
+        self._first_shift_pending = discard_first_shift
 
     def _read(self, frame):
         x1, y1, x2, y2 = self.window
@@ -119,5 +135,9 @@ class NextQueueTracker:
             return []
         if k:
             self.stable = seq
-            self.pieces_placed += k
+            if self._first_shift_pending:
+                self._first_shift_pending = False
+                k -= 1  # that shift was the first piece spawning, not a placement
+            if k:
+                self.pieces_placed += k
         return [self._candidate_t] * k

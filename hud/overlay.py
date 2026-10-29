@@ -186,7 +186,18 @@ PLAYER_TEXT_COLORS = {"left": (140, 200, 255), "right": (255, 154, 158)}  # ligh
 GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0}
 OUTLINE_RGB = (27, 36, 64)
 
-BOLD, SEMI = QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.DemiBold
+# display.text_weight -> (BOLD, SEMI). Same numbers as obs/overlay.html's TEXT_WEIGHTS.
+TEXT_WEIGHT_PRESETS = {
+    "normal": (QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.DemiBold),
+    "bold": (QtGui.QFont.Weight.ExtraBold, QtGui.QFont.Weight.Bold),
+    "extra_bold": (QtGui.QFont.Weight.Black, QtGui.QFont.Weight.ExtraBold),
+}
+BOLD, SEMI = TEXT_WEIGHT_PRESETS["extra_bold"]
+
+
+def set_text_weight(name):
+    global BOLD, SEMI
+    BOLD, SEMI = TEXT_WEIGHT_PRESETS.get(name, TEXT_WEIGHT_PRESETS["extra_bold"])
 
 
 def _font(px, weight):
@@ -880,6 +891,7 @@ class HudWindow(QtWidgets.QWidget):
         w, h = self._size
         s = self._scale
         d = self.display
+        set_text_weight(d["text_weight"])
         u = s * d["scale"]
         mode = d["stats_position"]
         shown = [k for k in StatBlock.KEYS if d[f"show_{k}"]]
