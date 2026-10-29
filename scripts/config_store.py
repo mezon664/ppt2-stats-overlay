@@ -39,6 +39,7 @@ DISPLAY_DEFAULTS = {
     "show_clock": True,          # match time, above the マッチポイント banner
     "show_event_log": False,     # recent clears / REN breaks above the stats
     "show_summary": True,        # both players' totals between the boards when a match ends
+    "show_opener": True,         # recognized opener (開幕テンプレ) name above the stats
     "event_log_count": 3,        # 1 - 5
 }
 

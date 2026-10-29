@@ -1,0 +1,90 @@
+{
+ "_about": "First-bag shapes of openers, as the shape tags (テト譜/fumen) of each opener's page on テトリステンプレ整理Wiki. Only the board shapes are taken; names and shapes belong to the wiki and the openers' authors. Add an opener by adding its page's shape tags here. \"display\" is the shorter name shown on screen.",
+ "source": "テトリステンプレ整理Wiki https://w.atwiki.jp/sasasa123/",
+ "openers": [
+  {
+   "name": "迷走砲",
+   "page": "https://w.atwiki.jp/sasasa123/pages/340.html",
+   "shapes": [
+    "v115@GhA8BeA8BeA8AeF8AeJ8AeE8JeAgH",
+    "v115@9gA8IeC8AeA8BeA8BeF8AeH8AeD8JeAgH",
+    "v115@+gB8FeD8BeA8AeF8AeJ8AeE8JeAgH",
+    "v115@9gA8FeB8AeC8AeA8BeI8AeH8AeD8JeAgH",
+    "v115@+gB8FeD8DeF8CeH8BeD8JeAgH",
+    "v115@9gA8FeB8AeC8DeG8CeG8BeD8JeAgH"
+   ],
+   "display": "迷走砲"
+  },
+  {
+   "name": "合掌TSDパフェ",
+   "page": "https://w.atwiki.jp/sasasa123/pages/166.html",
+   "shapes": [
+    "v115@9gC8FeC8CeH8AeK8BeC8JeAgH",
+    "v115@9gA8FeH8CeH8AeF8BeE8JeAgH"
+   ],
+   "display": "合掌TSD"
+  },
+  {
+   "name": "開幕パフェ積み(中あけ型)",
+   "page": "https://w.atwiki.jp/sasasa123/pages/143.html",
+   "shapes": [
+    "v115@9gD8DeF8CeG8BeH8CeC8JeAgH",
+    "v115@9gB8DeG8CeH8BeG8CeD8JeAgH",
+    "v115@9gC8EeE8DeF8CeG8DeC8JeAgH",
+    "v115@9gB8EeF8DeG8CeF8DeC8JeAgH",
+    "v115@9gC8DeF8CeG8BeH8CeD8JeAgH",
+    "v115@9gC8DeG8CeH8BeG8CeC8JeAgH"
+   ],
+   "display": "パフェ積み(中あけ)"
+  },
+  {
+   "name": "開幕パフェ積み(端あけ型)",
+   "page": "https://w.atwiki.jp/sasasa123/pages/1093.html",
+   "shapes": [
+    "v115@BhF8CeG8BeH8CeG8JeAgH",
+    "v115@9gF8DeG8CeH8BeG8MeAgH",
+    "v115@ChE8DeF8CeG8DeF8JeAgH",
+    "v115@9gE8EeF8DeG8CeF8NeAgH"
+   ],
+   "display": "パフェ積み(端あけ)"
+  },
+  {
+   "name": "りねパフェ(右凸)",
+   "page": "https://w.atwiki.jp/sasasa123/pages/135.html",
+   "shapes": [
+    "v115@9gA8CeB8DeB8AeC8BeH8AeI8AeC8JeAgH",
+    "v115@BhB8CeC8BeC8AeE8AeI8AeF8JeAgH"
+   ],
+   "display": "りねパフェ(右凸)"
+  },
+  {
+   "name": "りねパフェ(左凸)",
+   "page": "https://w.atwiki.jp/sasasa123/pages/1136.html",
+   "shapes": [
+    "v115@9gA8CeB8DeB8AeC8AeB8AeF8AeI8AeC8JeAgH",
+    "v115@BhB8CeA8AeB8AeC8AeE8AeI8AeF8JeAgH"
+   ],
+   "display": "りねパフェ(左凸)"
+  },
+  {
+   "name": "りねパフェ(Oホールド)",
+   "page": "https://w.atwiki.jp/sasasa123/pages/1137.html",
+   "shapes": [
+    "v115@9gA8CeB8DeB8AeC8DeF8CeG8AeC8JeAgH",
+    "v115@BhB8CeA8DeC8AeC8CeI8AeF8JeAgH",
+    "v115@9gA8CeB8BeD8AeC8BeH8CeG8AeC8JeAgH",
+    "v115@9gB8BeB8CeC8BeC8AeC8CeI8AeF8JeAgH"
+   ],
+   "display": "りねパフェ(Oホールド)"
+  },
+  {
+   "name": "T土台りねパフェ",
+   "page": "https://w.atwiki.jp/sasasa123/pages/131.html",
+   "shapes": [
+    "v115@9gC8GeD8AeA8BeH8AeI8AeC8JeAgH",
+    "v115@EhE8BeA8AeG8AeI8AeF8JeAgH"
+   ],
+   "display": "T土台りねパフェ"
+  }
+ ]
+}

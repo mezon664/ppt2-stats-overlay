@@ -81,6 +81,7 @@ TEXT = {
     "target.clock": {"ja": "試合時間", "en": "Match time"},
     "target.event": {"ja": "イベント履歴", "en": "Event history"},
     "target.summary": {"ja": "試合結果", "en": "Summary"},
+    "show_opener": {"ja": "開幕テンプレ名を表示（認識できたとき）", "en": "Show the opener name (when recognized)"},
     "show_summary": {"ja": "試合が終わったら試合結果（まとめ）を表示", "en": "Show a match summary when a match ends"},
     "up": {"ja": "上へ", "en": "Up"}, "down": {"ja": "下へ", "en": "Down"},
     "left": {"ja": "左へ", "en": "Left"}, "right": {"ja": "右へ", "en": "Right"},
@@ -155,8 +156,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_clock = QtWidgets.QCheckBox()
         self.show_event_log = QtWidgets.QCheckBox()
         self.show_summary = QtWidgets.QCheckBox()
+        self.show_opener = QtWidgets.QCheckBox()
         for cb in (self.show_apm, self.show_pps, self.show_app, self.show_clock, self.show_event_log,
-                   self.show_summary):
+                   self.show_opener, self.show_summary):
             form.addRow("", cb)
         lo, hi = DISPLAY_RANGES["event_log_count"]
         self.event_log_count = self._spin(lo, hi, "")
@@ -190,7 +192,7 @@ class SettingsWindow(QtWidgets.QWidget):
             w.valueChanged.connect(self._changed)
         self.opacity.valueChanged.connect(self._changed)
         for cb in (self.show_apm, self.show_pps, self.show_app, self.show_clock, self.show_event_log,
-                   self.show_summary):
+                   self.show_opener, self.show_summary):
             cb.toggled.connect(self._changed)
         self.retranslate()
 
@@ -213,6 +215,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_clock.setText(t("show_clock"))
         self.show_event_log.setText(t("show_event_log"))
         self.show_summary.setText(t("show_summary"))
+        self.show_opener.setText(t("show_opener"))
         self.event_log_count.setSuffix(t("count_suffix"))
         self.position_section.setTitle(t("adjust"))
         self.move_label.setText(t("move_what"))
@@ -380,6 +383,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_clock.setChecked(d["show_clock"])
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
+        self.show_opener.setChecked(d["show_opener"])
         self.event_log_count.setValue(d["event_log_count"])
         self.event_log_count.setEnabled(d["show_event_log"])
         self.retranslate()
@@ -398,6 +402,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "show_clock": self.show_clock.isChecked(),
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
+            "show_opener": self.show_opener.isChecked(),
             "event_log_count": self.event_log_count.value(),
         }
         for key, (kx, ky) in TARGET_KEYS.items():

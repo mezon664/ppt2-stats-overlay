@@ -14,6 +14,7 @@ import cv2
 from banner_detect import BannerTracker, load_templates
 from attack_calc import load_table, compute_attack, is_b2b_eligible
 from i18n import CLEAR_TYPE_LABEL_EN, REN_BREAK_EN
+from opener_detect import OpenerDetector
 from apm_tracker import APMWindowTracker
 from board_read import board_is_clear, LEFT_BOX, RIGHT_BOX
 from capture_profile import scale_box, REFERENCE_PROFILE
@@ -93,6 +94,21 @@ def format_ren_break_entry(t):
     }
 
 
+def format_opener_entry(t, name):
+    """Event log entry for a recognized opener (same shape as the others)."""
+    return {
+        "t": round(t, 2),
+        "label": "開幕",
+        "lines": 0,
+        "btb": False,
+        "ren_count": 0,
+        "ren_source": "opener",
+        "opener": name,
+        "text": f"開幕：{name}",
+        "text_en": f"Opener: {name}",
+    }
+
+
 @dataclass
 class PlayerPipeline:
     side: str
@@ -142,6 +158,7 @@ class PlayerPipeline:
         self.flash_detector = FlashClearDetector(self.side, profile=self.profile,
                                                   debug_dump_dir=self.debug_dump_dir)
         self.queue_tracker = NextQueueTracker(self.side, profile=self.profile)
+        self.opener_detector = OpenerDetector(self.side, profile=self.profile)
         self._clear_flash_times = []   # flash edges with 1-4 lit rows not yet attributed to a placement
         self._banner_flash_times = []  # the same flashes, each usable to back one banner event
         self.rejected_banner_count = 0
@@ -297,7 +314,13 @@ class PlayerPipeline:
         # applied now: a plain clear just before it may still be waiting out
         # its banner grace period, and applying the break first would let that
         # clear count as REN 1 of a new chain instead of ending the old one.
-        for placed_t in self.queue_tracker.update(frame, t):
+        placements = self.queue_tracker.update(frame, t)
+        opener = self.opener_detector.on_placements(frame, len(placements))
+        if opener:
+            self.event_log.insert(0, format_opener_entry(t, opener))
+            del self.event_log[EVENT_LOG_MAX:]
+            log.info("[%s] t=%.2f opener: %s", self.side, t, opener)
+        for placed_t in placements:
             prev = self._last_placement_t
             cleared = any((prev is None or f > prev) and f <= placed_t for f in self._clear_flash_times)
             if not cleared:
@@ -401,6 +424,7 @@ class PlayerPipeline:
             "capture_ok": self.last_frame_ok_t is not None and (now - self.last_frame_ok_t) < 2.0,
             "confirmed_flash_clear_count": self.confirmed_flash_clear_count,
             "perfect_clear_count": self.perfect_clear_count,
+            "opener": self.opener_detector.name,   # 開幕テンプレ, once recognized
             # totals for the end-of-match summary
             "match_stats": {
                 "lines_sent": self.apm.total_lines,

@@ -33,14 +33,14 @@
   .stat.hug-r .row { justify-content: flex-end; }
   .lab { font-weight: 700; }
 
-  .st-band { width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); }
+  .st-band { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); }
   .st-band .row { height: calc(21 * var(--u)); }
   .st-band .lab { font-size: calc(12 * var(--u)); }
   .st-band .val { font-size: calc(17 * var(--u)); font-weight: 600; }
   .st-band.hug-r, .st-gauge.hug-r { background: linear-gradient(to right, var(--clear) 0%, var(--band) 55%, var(--band) 100%); }
   .st-band.hug-l, .st-gauge.hug-l { background: linear-gradient(to right, var(--band) 0%, var(--band) 45%, var(--clear) 100%); }
 
-  .st-pop { width: calc(104 * var(--u)); padding: calc(1 * var(--u)) 0; }
+  .st-pop { min-width: calc(104 * var(--u)); padding: calc(1 * var(--u)) 0; }
   .st-pop .row { height: calc(26 * var(--u)); align-items: center; }
   .st-pop .pill {
     display: inline-flex; align-items: baseline; gap: calc(5 * var(--u));
@@ -53,7 +53,7 @@
   .st-pop .lab { font-size: calc(11 * var(--u)); color: rgb(225,236,255); }
   .st-pop .val { font-size: calc(16 * var(--u)); font-weight: 700; }
 
-  .st-gauge { width: calc(104 * var(--u)); padding: calc(3 * var(--u)) calc(6 * var(--u)); }
+  .st-gauge { min-width: calc(104 * var(--u)); padding: calc(3 * var(--u)) calc(6 * var(--u)); }
   .st-gauge .row { height: calc(27 * var(--u)); flex-wrap: wrap; justify-content: space-between !important; align-content: flex-start; }
   .st-gauge .lab { font-size: calc(11 * var(--u)); color: rgb(220,228,245); }
   .st-gauge .val { font-size: calc(15 * var(--u)); font-weight: 600; }
@@ -64,7 +64,7 @@
   .st-gauge.p-left .bar i { background: var(--p-left); }
   .st-gauge.p-right .bar i { background: var(--p-right); }
 
-  .st-text { width: calc(104 * var(--u)); padding: calc(1 * var(--u)) calc(5 * var(--u)); }
+  .st-text { min-width: calc(104 * var(--u)); padding: calc(1 * var(--u)) calc(5 * var(--u)); }
   .st-text .row { height: calc(23 * var(--u)); }
   .st-text .lab { font-size: calc(12 * var(--u)); }
   .st-text .val { font-size: calc(20 * var(--u)); font-weight: 600; }
@@ -75,6 +75,18 @@
       0 calc(-1.6 * var(--u)) 0 #1b2440, 0 calc(1.6 * var(--u)) 0 #1b2440,
       calc(-1.6 * var(--u)) 0 0 #1b2440, calc(1.6 * var(--u)) 0 0 #1b2440;
   }
+
+  /* opener (開幕テンプレ) name line above the stats */
+  .opener { font-size: calc(10 * var(--u)); font-weight: 700; line-height: calc(15 * var(--u));
+    white-space: nowrap; }   /* the block widens (away from the board) to fit it */
+  .p-left .opener, .vop .l { color: var(--t-left); } .p-right .opener, .vop .r { color: var(--t-right); }
+  .stat.hug-r .opener { text-align: right; }
+  .st-pop .opener, .st-text .opener { text-shadow: calc(-1.2 * var(--u)) 0 0 #1b2440, calc(1.2 * var(--u)) 0 0 #1b2440,
+      0 calc(-1.2 * var(--u)) 0 #1b2440, 0 calc(1.2 * var(--u)) 0 #1b2440; padding: 0 calc(4 * var(--u)); }
+  .vop { display: flex; justify-content: space-between; gap: calc(6 * var(--u)); font-size: calc(10 * var(--u));
+    font-weight: 700; line-height: calc(15 * var(--u)); }
+  .vop span { max-width: 48%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .summary .sop { font-size: calc(10 * var(--u)); max-width: 36%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* --- versus: one block between the boards --- */
   .versus { width: calc(150 * var(--u)); box-sizing: border-box; padding: calc(3 * var(--u)) calc(7 * var(--u));
@@ -178,8 +190,8 @@ const STAT_ANCHOR_X = { left: { left: 186, right: 790 }, right: { left: 448, rig
 const STAT_BOTTOM_Y = 562, EVENT_GAP = 2, VERSUS_GAP = 4;
 const CLOCK_CENTER_X = 617, CLOCK_BOTTOM_Y = 576;
 const SUMMARY_TOP_Y = 120;
-const SUMMARY_ROWS = [   // [key, label, decimals]
-  ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
+const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
+  ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
   ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
   ["tspin", "s_tspin", 0], ["perfect_clear", "s_pc", 0]];
 const GAUGE_MAX = { apm: 120, pps: 4, app: 1 };   // value that fills a gauge bar
@@ -188,18 +200,18 @@ const STYLES = ["band", "pop", "gauge", "text", "versus"];
 // server in both languages: "text" / "text_en").
 const UI_TEXT = {
   ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", down: "認識不可",
-        summary: "試合結果", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "送った段数",
+        summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "送った段数",
         s_pieces: "置いたミノ", s_max_ren: "最大REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
         connecting: "接続中...", disconnected: "切断されました。再接続中..." },
   en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", down: "Can't read the game",
-        summary: "Match summary", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "Lines sent",
+        summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "Lines sent",
         s_pieces: "Pieces", s_max_ren: "Max REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
 const DEFAULTS = { style: "band", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
-  summary_offset_x: 0, summary_offset_y: 0, show_summary: true,
+  summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true,
   background_opacity: 0.85, show_apm: true, show_pps: true, show_app: true, show_clock: true,
   show_event_log: false, event_log_count: 3 };
 
@@ -216,11 +228,12 @@ const style = () => STYLES.includes(display.style) ? display.style : "band";
 // user's own definition). Both use match time, so pauses don't count.
 function values(data) {
   data = data || {};
-  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app };
+  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app, opener: data.opener };
 }
 
 function statRowsHtml(st, side, v) {
-  return shownKeys().map((key) => {
+  const head = display.show_opener && v.opener ? `<div class="opener">${esc(v.opener)}</div>` : "";
+  return head + shownKeys().map((key) => {
     const lab = `<span class="lab">${key.toUpperCase()}</span>`;
     const val = `<span class="val num">${fmt(key, v[key])}</span>`;
     if (st === "pop") return `<div class="row"><span class="pill">${lab}${val}</span></div>`;
@@ -233,7 +246,9 @@ function statRowsHtml(st, side, v) {
 }
 
 function versusHtml(left, right) {
-  return shownKeys().map((key) => {
+  const head = display.show_opener && (left.opener || right.opener)
+    ? `<div class="vop"><span class="l">${esc(left.opener || "")}</span><span class="r">${esc(right.opener || "")}</span></div>` : "";
+  return head + shownKeys().map((key) => {
     const a = left[key] || 0, b = right[key] || 0, total = a + b;
     const split = total > 0
       ? `<div class="a" style="width:${(a / total * 100).toFixed(1)}%"></div><div class="b" style="flex:1"></div>`
@@ -250,9 +265,11 @@ function summaryHtml(state) {
   const f = (v, dec) => v == null ? "--" : Number(v).toFixed(dec);
   const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
   const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const cell = (cls, v, dec) => dec === null
+    ? `<span class="${cls} sop">${esc(v || "--")}</span>` : `<span class="${cls}">${f(v, dec)}</span>`;
   return `<div class="stitle">${ui().summary}&nbsp;&nbsp;${time}</div>` + SUMMARY_ROWS.map(([key, lab, dec]) =>
-    `<div class="srow"><span class="sl">${f(L[key], dec)}</span><span class="slab">${ui()[lab]}</span>` +
-    `<span class="sr">${f(R[key], dec)}</span></div>`).join("");
+    `<div class="srow">${cell("sl", L[key], dec)}<span class="slab">${ui()[lab]}</span>` +
+    `${cell("sr", R[key], dec)}</div>`).join("");
 }
 
 function layout() {

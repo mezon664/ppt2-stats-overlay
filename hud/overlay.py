@@ -77,13 +77,13 @@ BAND_RGB = (12, 22, 60)
 UI_TEXT = {
     "ja": {"frozen": "試合終了", "paused": "試合中断中", "waiting": "スタート待ち",
            "capture_down": "認識不可",
-           "summary": "試合結果", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
+           "summary": "試合結果", "s_opener": "開幕", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
            "s_lines": "送った段数", "s_pieces": "置いたミノ", "s_max_ren": "最大REN",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "パーフェクト",
            "edit_hint": "位置調整中：黄色い枠をドラッグして動かせます（設定画面の「完了」で終了）"},
     "en": {"frozen": "Match over", "paused": "Paused", "waiting": "Waiting for start",
            "capture_down": "Can't read the game",
-           "summary": "Match summary", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
+           "summary": "Match summary", "s_opener": "Opener", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
            "s_lines": "Lines sent", "s_pieces": "Pieces", "s_max_ren": "Max REN",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "Perfect clear",
            "edit_hint": "Adjusting: drag the yellow boxes to move them (press Done in the settings to finish)"},
@@ -237,6 +237,14 @@ def side_values(side):
 
 WHITE = (255, 255, 255)
 SOFT = (220, 228, 245)
+OPENER_PX = 10      # opener name line (reference px x u)
+OPENER_H = 15
+
+
+def elide(text, px, weight, width):
+    """Shortens text with … to fit width (opener names can be long)."""
+    fm = QtGui.QFontMetricsF(_font(px, weight))
+    return fm.elidedText(text, QtCore.Qt.TextElideMode.ElideRight, width)
 
 
 class StatBlock(Band):
@@ -257,17 +265,34 @@ class StatBlock(Band):
         self.shown = list(self.KEYS)
         self.u = 1.0
         self.values = {"apm": None, "pps": None, "app": None}
+        self.opener = None          # 開幕テンプレ name once recognized
+        self.show_opener = True
 
-    def configure(self, style, mode, shown, u):
+    def _header_h(self):
+        return OPENER_H if (self.show_opener and self.opener) else 0
+
+    def configure(self, style, mode, shown, u, show_opener=True):
         self.style, self.mode, self.shown, self.u = style, mode, list(shown), u
+        self.show_opener = show_opener
         self.fade = mode
+        self._resize()
+
+    def _resize(self):
         n = max(1, len(self.shown))
-        self.setFixedSize(int(self.WIDTH[style] * u),
-                          int((self.ROW_H[style] * n + self.PAD[style] * 2) * u))
+        st, u = self.style, self.u
+        width = self.WIDTH[st] * u
+        if self._header_h():   # widen (away from the board) so the opener name fits
+            width = max(width, text_width(OPENER_PX * u, BOLD, self.opener) + 12 * u)
+        self.setFixedSize(int(width),
+                          int((self._header_h() + self.ROW_H[st] * n + self.PAD[st] * 2) * u))
         self.update()
 
     def update_side(self, side):
         self.values = side_values(side)
+        opener = (side or {}).get("opener")
+        if opener != self.opener:
+            self.opener = opener
+            self._resize()          # the name line comes and goes with the match
         self.update()
 
     def paintEvent(self, event):
@@ -279,8 +304,17 @@ class StatBlock(Band):
         u, W, st = self.u, self.width(), self.style
         a = 0.45 if self.dim else 1.0
         hug_right = self.mode == "left"   # placed left of the board: hug the right edge
+        head = self._header_h()
+        if head:
+            text = elide(self.opener, OPENER_PX * u, BOLD, W - 10 * u)
+            outline = 1.2 * u if st in ("text", "pop") else 0
+            base = (self.PAD[st] + 11) * u
+            if hug_right:
+                draw_text(p, W - 5 * u, base, text, OPENER_PX * u, BOLD, PLAYER_TEXT_COLORS[self.side], "right", outline, a)
+            else:
+                draw_text(p, 5 * u, base, text, OPENER_PX * u, BOLD, PLAYER_TEXT_COLORS[self.side], "left", outline, a)
         for i, key in enumerate(self.shown):
-            top = (self.PAD[st] + i * self.ROW_H[st]) * u
+            top = (self.PAD[st] + head + i * self.ROW_H[st]) * u
             label, value = key.upper(), fmt_value(key, self.values[key])
             if st in ("band", "text"):
                 big = 17 if st == "band" else 20
@@ -344,14 +378,28 @@ class VersusBlock(Band):
         self.shown = ["apm", "pps", "app"]
         self.u = 1.0
         self.values = {"left": side_values(None), "right": side_values(None)}
+        self.openers = {"left": None, "right": None}
+        self.show_opener = True
 
-    def configure(self, shown, u):
-        self.shown, self.u = list(shown), u
-        self.setFixedSize(int(self.WIDTH * u), int((self.ROW_H * max(1, len(shown)) + 6) * u))
+    def _header_h(self):
+        return OPENER_H if (self.show_opener and any(self.openers.values())) else 0
+
+    def configure(self, shown, u, show_opener=True):
+        self.shown, self.u, self.show_opener = list(shown), u, show_opener
+        self._resize()
+
+    def _resize(self):
+        u = self.u
+        self.setFixedSize(int(self.WIDTH * u),
+                          int((self._header_h() + self.ROW_H * max(1, len(self.shown)) + 6) * u))
         self.update()
 
     def update_sides(self, left, right):
         self.values = {"left": side_values(left), "right": side_values(right)}
+        openers = {"left": (left or {}).get("opener"), "right": (right or {}).get("opener")}
+        if openers != self.openers:
+            self.openers = openers
+            self._resize()
         self.update()
 
     def paintEvent(self, event):
@@ -360,8 +408,14 @@ class VersusBlock(Band):
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         u, W = self.u, self.width()
         a = 0.45 if self.dim else 1.0
+        head = self._header_h()
+        if head:   # the two openers, each on its own half
+            for side, x, align in (("left", 7 * u, "left"), ("right", W - 7 * u, "right")):
+                if self.openers[side]:
+                    text = elide(self.openers[side], OPENER_PX * u, BOLD, W / 2 - 10 * u)
+                    draw_text(p, x, 14 * u, text, OPENER_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, alpha=a)
         for i, key in enumerate(self.shown):
-            top = (3 + i * self.ROW_H) * u
+            top = (3 + head + i * self.ROW_H) * u
             lv, rv = self.values["left"][key], self.values["right"][key]
             draw_text(p, W / 2, top + 11 * u, key.upper(), 10 * u, BOLD, SOFT, "center", alpha=a)
             draw_text(p, 7 * u, top + 15 * u, fmt_value(key, lv), 15 * u, BOLD, PLAYER_TEXT_COLORS["left"], alpha=a)
@@ -563,7 +617,8 @@ class ClockBlock(Band):
                       color, "center", outline, a)
 
 
-SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format)
+SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format; None = text)
+    ("opener", "s_opener", None),
     ("apm", "s_apm", "{:.1f}"),
     ("pps", "s_pps", "{:.2f}"),
     ("app", "s_app", "{:.2f}"),
@@ -582,6 +637,7 @@ def summary_side(side):
     stats = side.get("match_stats") or {}
     out = side_values(side)
     out.update({k: stats.get(k) for k in ("lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear")})
+    out["opener"] = side.get("opener")
     return out
 
 
@@ -652,6 +708,10 @@ class SummaryBlock(Band):
             draw_text(p, W / 2, base, ui[label_key], 10 * u, SEMI, SOFT, "center", outline, a)
             for side, x, align in (("left", 12 * u, "left"), ("right", W - 12 * u, "right")):
                 v = self.sides[side].get(key)
+                if fmt is None:     # text row (opener): smaller, cut to its half
+                    text = "--" if not v else elide(v, 10 * u, BOLD, W / 2 - 40 * u)
+                    draw_text(p, x, base, text, 10 * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+                    continue
                 text = "--" if v is None else fmt.format(v)
                 draw_text(p, x, base, text, 13 * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
 
@@ -740,12 +800,12 @@ class HudWindow(QtWidgets.QWidget):
             for band in (stat, ev):
                 band.opacity = d["background_opacity"]
             if shown and d["style"] != "versus":
-                stat.configure(d["style"], mode, shown, u)
+                stat.configure(d["style"], mode, shown, u, d["show_opener"])
             ev.language = d["language"]
             ev.configure(d["style"], mode, d["event_log_count"], u)
         self.versus.opacity = d["background_opacity"]
         if shown and d["style"] == "versus":
-            self.versus.configure(shown, u)
+            self.versus.configure(shown, u, d["show_opener"])
         self.clock.opacity = d["background_opacity"]
         self.clock.configure(d["style"], u)
         self.summary.opacity = d["background_opacity"]
