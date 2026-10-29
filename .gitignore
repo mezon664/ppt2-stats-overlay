@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Large local data: recordings, debug captures, logs
+samples/
+debug_frames/
+logs/
+server_log.txt
+
+# Each user's own settings (defaults live in scripts/config_store.py and the
+# file is created on first run)
+config/overlay_settings.json
+config/*.tmp

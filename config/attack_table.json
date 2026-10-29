@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "description": "対テトリス火力表（ぷよぷよテトリス2）。APM計算の唯一の参照元。コードにハードコードしない。",
+    "source_url": "https://shiwehi.com/tetris/template/karyoku.php",
+    "fetched_at": "2026-10-24",
+    "source_note": "ページ内「送れるお邪魔の段数(火力数)」>「対テトリス」セクション。ぷよぷよテトリス2はTetris99と同じ基本火力・BtB表を共有するが、RENボーナスとPerfect Clearのルールが異なるため、ぷよぷよテトリス2専用の値のみを採用している。",
+    "change_log": [
+      {"date": "2026-10-24", "change": "初版作成。ユーザー提示の仮REN表と出典ページの値が完全一致することを確認し、正式値として採用。"}
+    ]
+  },
+  "base_clear": {
+    "1": 0,
+    "2": 1,
+    "3": 2,
+    "4": 4
+  },
+  "tspin": {
+    "mini": 0,
+    "single": 2,
+    "double": 4,
+    "triple": 6
+  },
+  "back_to_back": {
+    "bonus": 1,
+    "eligible_clears": ["clear_4", "tspin_mini", "tspin_single", "tspin_double", "tspin_triple"],
+    "min_consecutive_for_bonus": 2,
+    "assumption_note": "出典ページは『+1段』としか書いておらず、何連続目から発動するかは明記されていない。対戦Tetrisの一般的な慣例（2連続目のBtB対象クリアから+1）を仮採用。実機での挙動確認が必要（未検証・要修正の可能性あり）。"
+  },
+  "perfect_clear": {
+    "value": 10,
+    "mode": "override",
+    "note": "出典ページ: 'Perfect Clear(パフェ): 10段固定 *テト99のみ+4段'。ぷよぷよテトリス2では10段固定＝その回の攻撃は基本火力・BtB・RENボーナスを無視して10段で上書きする。"
+  },
+  "ren_bonus": {
+    "source_note": "出典ページ表の『ぷテ2』列。ユーザー提示の仮設定値と完全一致を確認済み（2026-10-24）。",
+    "table": {
+      "1": 0, "2": 1, "3": 1, "4": 2, "5": 2, "6": 3, "7": 3,
+      "8": 4, "9": 4, "10": 4, "11": 4, "12": 4
+    },
+    "default_beyond_table": 5,
+    "default_beyond_table_note": "13REN以上は出典ページで+5段固定。"
+  }
+}
