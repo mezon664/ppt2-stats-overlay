@@ -52,6 +52,7 @@ def detect(fixture, side="left"):
     ("opener_pco_left.jpg", "パフェ積み(中あけ)"),
     ("opener_gassho_left.jpg", "合掌TSD"),
     ("opener_meisou_left.jpg", "迷走砲"),        # live, mirrored, hard-drop sparkles above
+    ("opener_gassho_live_left.jpg", "合掌TSD"),  # live, missed when only checked on placements
 ])
 def test_real_frames(fixture, name):
     assert detect(fixture) == name

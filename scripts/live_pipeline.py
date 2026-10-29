@@ -159,6 +159,8 @@ class PlayerPipeline:
                                                   debug_dump_dir=self.debug_dump_dir)
         self.queue_tracker = NextQueueTracker(self.side, profile=self.profile)
         self.opener_detector = OpenerDetector(self.side, profile=self.profile)
+        self._first_t = None        # first frame this pipeline saw (match start when no GO! time)
+        self.opener_t = None        # game time the opener was recognized (for the short popup)
         self._clear_flash_times = []   # flash edges with 1-4 lit rows not yet attributed to a placement
         self._banner_flash_times = []  # the same flashes, each usable to back one banner event
         self.rejected_banner_count = 0
@@ -315,8 +317,12 @@ class PlayerPipeline:
         # its banner grace period, and applying the break first would let that
         # clear count as REN 1 of a new chain instead of ending the old one.
         placements = self.queue_tracker.update(frame, t)
-        opener = self.opener_detector.on_placements(frame, len(placements))
+        if self._first_t is None:
+            self._first_t = t
+        start = self.clock_start_t if self.clock_start_t is not None else self._first_t
+        opener = self.opener_detector.on_frame(frame, t - start, len(placements))
         if opener:
+            self.opener_t = t
             self.event_log.insert(0, format_opener_entry(t, opener))
             del self.event_log[EVENT_LOG_MAX:]
             log.info("[%s] t=%.2f opener: %s", self.side, t, opener)
@@ -425,6 +431,8 @@ class PlayerPipeline:
             "confirmed_flash_clear_count": self.confirmed_flash_clear_count,
             "perfect_clear_count": self.perfect_clear_count,
             "opener": self.opener_detector.name,   # 開幕テンプレ, once recognized
+            # seconds since it was recognized: the overlays show it briefly
+            "opener_age_s": round(now - self.opener_t, 2) if self.opener_t is not None else None,
             # totals for the end-of-match summary
             "match_stats": {
                 "lines_sent": self.apm.total_lines,

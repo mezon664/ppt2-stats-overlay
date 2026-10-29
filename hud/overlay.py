@@ -237,8 +237,10 @@ def side_values(side):
 
 WHITE = (255, 255, 255)
 SOFT = (220, 228, 245)
-OPENER_PX = 10      # opener name line (reference px x u)
-OPENER_H = 15
+# Opener popup: shown for POPUP_S seconds when the opener is recognized,
+# fading out over the last POPUP_FADE_S.
+POPUP_S = 4.0
+POPUP_FADE_S = 1.0
 
 
 def elide(text, px, weight, width):
@@ -265,34 +267,17 @@ class StatBlock(Band):
         self.shown = list(self.KEYS)
         self.u = 1.0
         self.values = {"apm": None, "pps": None, "app": None}
-        self.opener = None          # 開幕テンプレ name once recognized
-        self.show_opener = True
 
-    def _header_h(self):
-        return OPENER_H if (self.show_opener and self.opener) else 0
-
-    def configure(self, style, mode, shown, u, show_opener=True):
+    def configure(self, style, mode, shown, u):
         self.style, self.mode, self.shown, self.u = style, mode, list(shown), u
-        self.show_opener = show_opener
         self.fade = mode
-        self._resize()
-
-    def _resize(self):
         n = max(1, len(self.shown))
-        st, u = self.style, self.u
-        width = self.WIDTH[st] * u
-        if self._header_h():   # widen (away from the board) so the opener name fits
-            width = max(width, text_width(OPENER_PX * u, BOLD, self.opener) + 12 * u)
-        self.setFixedSize(int(width),
-                          int((self._header_h() + self.ROW_H[st] * n + self.PAD[st] * 2) * u))
+        self.setFixedSize(int(self.WIDTH[style] * u),
+                          int((self.ROW_H[style] * n + self.PAD[style] * 2) * u))
         self.update()
 
     def update_side(self, side):
         self.values = side_values(side)
-        opener = (side or {}).get("opener")
-        if opener != self.opener:
-            self.opener = opener
-            self._resize()          # the name line comes and goes with the match
         self.update()
 
     def paintEvent(self, event):
@@ -304,17 +289,8 @@ class StatBlock(Band):
         u, W, st = self.u, self.width(), self.style
         a = 0.45 if self.dim else 1.0
         hug_right = self.mode == "left"   # placed left of the board: hug the right edge
-        head = self._header_h()
-        if head:
-            text = elide(self.opener, OPENER_PX * u, BOLD, W - 10 * u)
-            outline = 1.2 * u if st in ("text", "pop") else 0
-            base = (self.PAD[st] + 11) * u
-            if hug_right:
-                draw_text(p, W - 5 * u, base, text, OPENER_PX * u, BOLD, PLAYER_TEXT_COLORS[self.side], "right", outline, a)
-            else:
-                draw_text(p, 5 * u, base, text, OPENER_PX * u, BOLD, PLAYER_TEXT_COLORS[self.side], "left", outline, a)
         for i, key in enumerate(self.shown):
-            top = (self.PAD[st] + head + i * self.ROW_H[st]) * u
+            top = (self.PAD[st] + i * self.ROW_H[st]) * u
             label, value = key.upper(), fmt_value(key, self.values[key])
             if st in ("band", "text"):
                 big = 17 if st == "band" else 20
@@ -378,28 +354,14 @@ class VersusBlock(Band):
         self.shown = ["apm", "pps", "app"]
         self.u = 1.0
         self.values = {"left": side_values(None), "right": side_values(None)}
-        self.openers = {"left": None, "right": None}
-        self.show_opener = True
 
-    def _header_h(self):
-        return OPENER_H if (self.show_opener and any(self.openers.values())) else 0
-
-    def configure(self, shown, u, show_opener=True):
-        self.shown, self.u, self.show_opener = list(shown), u, show_opener
-        self._resize()
-
-    def _resize(self):
-        u = self.u
-        self.setFixedSize(int(self.WIDTH * u),
-                          int((self._header_h() + self.ROW_H * max(1, len(self.shown)) + 6) * u))
+    def configure(self, shown, u):
+        self.shown, self.u = list(shown), u
+        self.setFixedSize(int(self.WIDTH * u), int((self.ROW_H * max(1, len(shown)) + 6) * u))
         self.update()
 
     def update_sides(self, left, right):
         self.values = {"left": side_values(left), "right": side_values(right)}
-        openers = {"left": (left or {}).get("opener"), "right": (right or {}).get("opener")}
-        if openers != self.openers:
-            self.openers = openers
-            self._resize()
         self.update()
 
     def paintEvent(self, event):
@@ -408,14 +370,8 @@ class VersusBlock(Band):
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         u, W = self.u, self.width()
         a = 0.45 if self.dim else 1.0
-        head = self._header_h()
-        if head:   # the two openers, each on its own half
-            for side, x, align in (("left", 7 * u, "left"), ("right", W - 7 * u, "right")):
-                if self.openers[side]:
-                    text = elide(self.openers[side], OPENER_PX * u, BOLD, W / 2 - 10 * u)
-                    draw_text(p, x, 14 * u, text, OPENER_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, alpha=a)
         for i, key in enumerate(self.shown):
-            top = (3 + head + i * self.ROW_H) * u
+            top = (3 + i * self.ROW_H) * u
             lv, rv = self.values["left"][key], self.values["right"][key]
             draw_text(p, W / 2, top + 11 * u, key.upper(), 10 * u, BOLD, SOFT, "center", alpha=a)
             draw_text(p, 7 * u, top + 15 * u, fmt_value(key, lv), 15 * u, BOLD, PLAYER_TEXT_COLORS["left"], alpha=a)
@@ -647,8 +603,10 @@ class SummaryBlock(Band):
     left in blue, 2P on the right in red; the box follows the chosen style."""
 
     WIDTH = 212   # fits between the left NEXT column and the right HOLD box
-    TITLE_H = 24
-    ROW_H = 16
+    TITLE_H = 28
+    ROW_H = 20
+    # text sizes (reference px x u); the user asked for these bigger than the stats' small labels
+    TITLE_PX, LABEL_PX, VALUE_PX, TEXT_PX = 15, 12, 15, 12
 
     def __init__(self, parent):
         super().__init__(parent, fade=None, draggable=True)
@@ -702,18 +660,85 @@ class SummaryBlock(Band):
         outline = 1.3 * u if st == "text" else 0
         W = r.width()
         title = f"{ui['summary']}  {fmt_clock(self.duration)}"
-        draw_text(p, W / 2, 17 * u, title, 13 * u, BOLD, WHITE, "center", outline, a)
+        draw_text(p, W / 2, 20 * u, title, self.TITLE_PX * u, BOLD, WHITE, "center", outline, a)
         for i, (key, label_key, fmt) in enumerate(SUMMARY_ROWS):
-            base = (self.TITLE_H + 4 + i * self.ROW_H + 12) * u
-            draw_text(p, W / 2, base, ui[label_key], 10 * u, SEMI, SOFT, "center", outline, a)
+            base = (self.TITLE_H + 4 + i * self.ROW_H + 15) * u
+            draw_text(p, W / 2, base, ui[label_key], self.LABEL_PX * u, SEMI, SOFT, "center", outline, a)
             for side, x, align in (("left", 12 * u, "left"), ("right", W - 12 * u, "right")):
                 v = self.sides[side].get(key)
-                if fmt is None:     # text row (opener): smaller, cut to its half
-                    text = "--" if not v else elide(v, 10 * u, BOLD, W / 2 - 40 * u)
-                    draw_text(p, x, base, text, 10 * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+                if fmt is None:     # text row (opener): a little smaller, cut to its half
+                    text = "--" if not v else elide(v, self.TEXT_PX * u, BOLD, W / 2 - 36 * u)
+                    draw_text(p, x, base, text, self.TEXT_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
                     continue
                 text = "--" if v is None else fmt.format(v)
-                draw_text(p, x, base, text, 13 * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+                draw_text(p, x, base, text, self.VALUE_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+
+
+class OpenerPopup(Band):
+    """The recognized opener, shown for POPUP_S seconds right above the
+    player's stats: a small "開幕" label over the name in large type, in a box
+    matching the chosen style with the player's color as an accent."""
+
+    def __init__(self, parent, side):
+        super().__init__(parent, fade=None)
+        self.side = side
+        self.style = "band"
+        self.u = 1.0
+        self.language = "ja"
+        self.name = ""
+        self.alpha = 1.0
+
+    def configure(self, style, language, u):
+        self.style, self.language, self.u = style, language, u
+        self._resize()
+
+    def set_name(self, name, alpha):
+        if name != self.name:
+            self.name = name
+            self._resize()
+        self.alpha = alpha
+        self.update()
+
+    def _label(self):
+        return UI_TEXT[self.language]["s_opener"]
+
+    def _resize(self):
+        u = self.u
+        w = max(text_width(18 * u, BOLD, self.name or ""), text_width(10 * u, BOLD, self._label())) + 30 * u
+        self.setFixedSize(int(w), int(42 * u))
+        self.update()
+
+    def paintEvent(self, event):
+        st, u = self.style, self.u
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        a = self.alpha * (0.45 if self.dim else 1.0)
+        r = QtCore.QRectF(self.rect())
+        accent = QtGui.QColor(*PLAYER_COLORS[self.side])
+        accent.setAlphaF(a)
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        if st == "pop":
+            rim = QtGui.QColor(255, 255, 255)
+            rim.setAlphaF(a)
+            p.setBrush(accent)
+            p.setPen(QtGui.QPen(rim, 2.5 * u))
+            inner = r.adjusted(1.5 * u, 1.5 * u, -1.5 * u, -1.5 * u)
+            p.drawRoundedRect(inner, 12 * u, 12 * u)
+        elif st != "text":
+            band = QtGui.QColor(*BAND_RGB)
+            band.setAlphaF(max(self.opacity, 0.75) * a)
+            p.setBrush(band)
+            radius = 0 if st == "gauge" else 5 * u
+            p.drawRoundedRect(r, radius, radius)
+            if st == "gauge":
+                p.fillRect(QtCore.QRectF(0, r.height() - 3 * u, r.width(), 3 * u), accent)
+            else:   # player-color bar down the left edge
+                p.fillRect(QtCore.QRectF(0, 0, 4 * u, r.height()), accent)
+        outline = 1.6 * u if st == "text" else 0
+        label_color = (235, 242, 255) if st == "pop" else PLAYER_TEXT_COLORS[self.side]
+        x = 14 * u if st not in ("pop", "text") else 12 * u
+        draw_text(p, x, 14 * u, self._label(), 10 * u, BOLD, label_color, "left", outline, a)
+        draw_text(p, x, 34 * u, self.name or "", 18 * u, BOLD, WHITE, "left", outline, a)
 
 
 class HudWindow(QtWidgets.QWidget):
@@ -737,6 +762,7 @@ class HudWindow(QtWidgets.QWidget):
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
         self.summary = SummaryBlock(self)
+        self.popups = {"left": OpenerPopup(self, "left"), "right": OpenerPopup(self, "right")}
         self.events = {"left": EventBlock(self, "left"), "right": EventBlock(self, "right")}
         self.clock = ClockBlock(self)
         self.edit_hint = QtWidgets.QLabel(
@@ -800,16 +826,19 @@ class HudWindow(QtWidgets.QWidget):
             for band in (stat, ev):
                 band.opacity = d["background_opacity"]
             if shown and d["style"] != "versus":
-                stat.configure(d["style"], mode, shown, u, d["show_opener"])
+                stat.configure(d["style"], mode, shown, u)
             ev.language = d["language"]
             ev.configure(d["style"], mode, d["event_log_count"], u)
         self.versus.opacity = d["background_opacity"]
         if shown and d["style"] == "versus":
-            self.versus.configure(shown, u, d["show_opener"])
+            self.versus.configure(shown, u)
         self.clock.opacity = d["background_opacity"]
         self.clock.configure(d["style"], u)
         self.summary.opacity = d["background_opacity"]
         self.summary.configure(d["style"], d["language"], u)
+        for pop in self.popups.values():
+            pop.opacity = d["background_opacity"]
+            pop.configure(d["style"], d["language"], u)
         self._place()
 
     def _place(self):
@@ -846,6 +875,25 @@ class HudWindow(QtWidgets.QWidget):
         clock_top = CLOCK_BOTTOM_Y * s - self.clock.height()   # default spot (the versus block uses it)
         self.clock.move(int((CLOCK_CENTER_X + d["clock_offset_x"]) * s - self.clock.width() / 2),
                         int(clock_top + d["clock_offset_y"] * s))
+        # opener popups: a few seconds after recognition, right above that
+        # player's stats (and events), hugging the board side like they do
+        for side in ("left", "right"):
+            pop = self.popups[side]
+            info = (self._last_state.get(side) or {})
+            age, name = info.get("opener_age_s"), info.get("opener")
+            show = (d["show_opener"] and name and age is not None and age < POPUP_S
+                    and not self._last_state.get("frozen"))
+            pop.setVisible(bool(show))
+            if not show:
+                continue
+            pop.set_name(name, min(1.0, (POPUP_S - age) / POPUP_FADE_S))
+            anchor_x = (STAT_ANCHOR_X[mode][side] + d["offset_x"]) * s
+            tops = [(STAT_BOTTOM_Y + d["offset_y"]) * s]
+            for w in (self.stats[side], self.events[side]):
+                if w.isVisibleTo(self):
+                    tops.append(w.y())
+            x = anchor_x - pop.width() if mode == "left" else anchor_x
+            pop.move(int(x), int(min(tops) - 4 * u - pop.height()))
         # summary: while a finished match is on screen (or always while
         # positioning, so it can be found and dragged)
         show_summary = d["show_summary"] and (self._summary_ready() or self.edit_mode)
@@ -920,7 +968,8 @@ class HudWindow(QtWidgets.QWidget):
         self.summary.update_match(state)
         # Dim rather than hide when capture is down: the numbers shown are the
         # last real measurement, not a fabricated live one.
-        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary):
+        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
+                     *self.popups.values()):
             band.dim = stale
             band.update()
         self._place()

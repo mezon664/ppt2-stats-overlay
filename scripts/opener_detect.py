@@ -25,6 +25,12 @@ from fumen import decode
 OPENERS_PATH = Path(__file__).resolve().parent.parent / "assets" / "openers.json"
 
 MAX_PLACEMENTS = 10    # a first bag is 7 pieces; a little slack for the first hold
+# The board is checked on every frame of the opening, not only when a
+# placement is confirmed: a live 合掌TSD was missed because the frames between
+# its 7th and 8th piece never coincided with a confirmed NEXT-queue shift
+# (fast play / a queue misread at the start). Checking stops after this long
+# or once MAX_PLACEMENTS pieces are down, whichever comes first.
+OPENING_S = 12.0
 # Only these rows right above the shape must be empty. Checking the whole
 # board missed a live 迷走砲: the white sparkles of a hard drop sat a few rows
 # higher, and the next piece can already be falling too.
@@ -68,12 +74,14 @@ def match_openers(occupancy, openers):
 def read_occupancy(frame, box):
     """ROWS x COLS bools, bottom row first: True where the cell holds a block
     (most of its sample patch bright — see BLOCK_FILL)."""
-    v = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[..., 2]
+    x1, y1, x2, y2 = box
+    v = cv2.cvtColor(frame[y1:y2 + 4, x1:x2 + 4], cv2.COLOR_BGR2HSV)[..., 2]   # just the board
     rows = []
     for row in range(ROWS - 1, -1, -1):          # board_read rows are top-first
         cells = []
         for col in range(COLS):
             cx, cy = cell_center(box, col, row)
+            cx, cy = cx - x1, cy - y1
             patch = v[cy - 3:cy + 3, cx - 3:cx + 3]
             cells.append(bool((patch >= CLEAR_V_MIN).mean() >= BLOCK_FILL))
         rows.append(cells)
@@ -100,12 +108,25 @@ class OpenerDetector:
         self.placements = 0
         self.name = None
 
+    def on_frame(self, frame, t_in_match, placements=0):
+        """Call on every frame with the time since the match started and the
+        placements confirmed on this frame. During the opening the board is
+        compared every frame; returns the opener name when it becomes known
+        or changes, else None."""
+        self.placements += placements
+        if t_in_match > OPENING_S or self.placements > MAX_PLACEMENTS:
+            return None
+        return self._check(frame)
+
     def on_placements(self, frame, count):
-        """Call when `count` placements were confirmed on this frame.
-        Returns the opener name when it becomes known or changes, else None."""
+        """Check only when `count` placements were confirmed on this frame
+        (kept for tests / callers without match time)."""
         if count <= 0 or self.placements >= MAX_PLACEMENTS:
             return None
         self.placements += count
+        return self._check(frame)
+
+    def _check(self, frame):
         names = match_openers(read_occupancy(frame, self.box), openers())
         if not names:
             return None

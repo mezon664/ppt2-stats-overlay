@@ -86,7 +86,7 @@
   .vop { display: flex; justify-content: space-between; gap: calc(6 * var(--u)); font-size: calc(10 * var(--u));
     font-weight: 700; line-height: calc(15 * var(--u)); }
   .vop span { max-width: 48%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .summary .sop { font-size: calc(10 * var(--u)); max-width: 36%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .summary .sop { font-size: calc(12 * var(--u)); max-width: 36%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* --- versus: one block between the boards --- */
   .versus { width: calc(150 * var(--u)); box-sizing: border-box; padding: calc(3 * var(--u)) calc(7 * var(--u));
@@ -152,10 +152,10 @@
   /* --- end-of-match summary (same looks as the HUD's SummaryBlock) --- */
   .summary { width: calc(212 * var(--u)); box-sizing: border-box; padding: calc(4 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
     background: rgba(12,22,60,max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
-  .summary .stitle { text-align: center; font-size: calc(13 * var(--u)); font-weight: 700; line-height: calc(24 * var(--u)); }
-  .summary .srow { display: flex; align-items: baseline; justify-content: space-between; height: calc(16 * var(--u)); }
-  .summary .slab { font-size: calc(10 * var(--u)); font-weight: 600; color: rgb(220,228,245); }
-  .summary .sl, .summary .sr { font-size: calc(13 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 25%; }
+  .summary .stitle { text-align: center; font-size: calc(15 * var(--u)); font-weight: 700; line-height: calc(28 * var(--u)); }
+  .summary .srow { display: flex; align-items: baseline; justify-content: space-between; height: calc(20 * var(--u)); }
+  .summary .slab { font-size: calc(12 * var(--u)); font-weight: 600; color: rgb(220,228,245); }
+  .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 25%; }
   .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); text-align: right; }
   body.style-gauge .summary { border-radius: 0;
     background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(12,22,60,max(0.5, var(--band-a))); }
