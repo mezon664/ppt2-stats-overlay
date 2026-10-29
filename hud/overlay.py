@@ -61,7 +61,10 @@ VERSUS_GAP = 4            # between the versus block and the clock below it
 # display keys each draggable part moves
 OFFSET_KEYS = {"stats": ("offset_x", "offset_y"),
                "clock": ("clock_offset_x", "clock_offset_y"),
-               "event": ("event_offset_x", "event_offset_y")}
+               "event": ("event_offset_x", "event_offset_y"),
+               "summary": ("summary_offset_x", "summary_offset_y")}
+# End-of-match summary: centered between the boards, top edge at this y.
+SUMMARY_TOP_Y = 120
 # Match time: centered above the マッチポイント banner (x 542-693, y 579-604).
 CLOCK_CENTER_X, CLOCK_BOTTOM_Y = 617, 576
 
@@ -74,9 +77,15 @@ BAND_RGB = (12, 22, 60)
 UI_TEXT = {
     "ja": {"frozen": "試合終了", "paused": "試合中断中", "waiting": "スタート待ち",
            "capture_down": "認識不可",
+           "summary": "試合結果", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
+           "s_lines": "送った段数", "s_pieces": "置いたミノ", "s_max_ren": "最大REN",
+           "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "パーフェクト",
            "edit_hint": "位置調整中：黄色い枠をドラッグして動かせます（設定画面の「完了」で終了）"},
     "en": {"frozen": "Match over", "paused": "Paused", "waiting": "Waiting for start",
            "capture_down": "Can't read the game",
+           "summary": "Match summary", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
+           "s_lines": "Lines sent", "s_pieces": "Pieces", "s_max_ren": "Max REN",
+           "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "Perfect clear",
            "edit_hint": "Adjusting: drag the yellow boxes to move them (press Done in the settings to finish)"},
 }
 
@@ -174,7 +183,7 @@ class Band(QtWidgets.QWidget):
 PLAYER_COLORS = {"left": (59, 142, 234), "right": (229, 72, 77)}        # 1P blue / 2P red
 PLAYER_TEXT_COLORS = {"left": (140, 200, 255), "right": (255, 154, 158)}  # lighter, for text
 # Gauge style: the value that fills the bar (higher values just show it full).
-GAUGE_MAX = {"apm": 120.0, "pps": 4.0}
+GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0}
 OUTLINE_RGB = (27, 36, 64)
 
 BOLD, SEMI = QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.DemiBold
@@ -218,12 +227,12 @@ def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha
 def fmt_value(key, value):
     if value is None:
         return "--"
-    return f"{value:.1f}" if key == "apm" else f"{value:.2f}"
+    return f"{value:.1f}" if key == "apm" else f"{value:.2f}"   # pps / app: 2 decimals
 
 
 def side_values(side):
     side = side or {}
-    return {"apm": (side.get("apm") or {}).get("apm"), "pps": side.get("pps")}
+    return {"apm": (side.get("apm") or {}).get("apm"), "pps": side.get("pps"), "app": side.get("app")}
 
 
 WHITE = (255, 255, 255)
@@ -235,7 +244,7 @@ class StatBlock(Band):
     "gauge", "text"). The content hugs the board side of the block (mode =
     stats_position); sizes are reference px x u."""
 
-    KEYS = ("apm", "pps")
+    KEYS = ("apm", "pps", "app")
     WIDTH = {"band": 92, "pop": 104, "gauge": 104, "text": 104}
     ROW_H = {"band": 21, "pop": 26, "gauge": 27, "text": 23}
     PAD = {"band": 3, "pop": 1, "gauge": 3, "text": 1}
@@ -247,7 +256,7 @@ class StatBlock(Band):
         self.mode = "left"
         self.shown = list(self.KEYS)
         self.u = 1.0
-        self.values = {"apm": None, "pps": None}
+        self.values = {"apm": None, "pps": None, "app": None}
 
     def configure(self, style, mode, shown, u):
         self.style, self.mode, self.shown, self.u = style, mode, list(shown), u
@@ -332,7 +341,7 @@ class VersusBlock(Band):
 
     def __init__(self, parent):
         super().__init__(parent, fade=None, draggable=True)
-        self.shown = ["apm", "pps"]
+        self.shown = ["apm", "pps", "app"]
         self.u = 1.0
         self.values = {"left": side_values(None), "right": side_values(None)}
 
@@ -554,6 +563,99 @@ class ClockBlock(Band):
                       color, "center", outline, a)
 
 
+SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format)
+    ("apm", "s_apm", "{:.1f}"),
+    ("pps", "s_pps", "{:.2f}"),
+    ("app", "s_app", "{:.2f}"),
+    ("lines_sent", "s_lines", "{:d}"),
+    ("pieces", "s_pieces", "{:d}"),
+    ("max_ren", "s_max_ren", "{:d}"),
+    ("tetris", "s_tetris", "{:d}"),
+    ("tspin", "s_tspin", "{:d}"),
+    ("perfect_clear", "s_pc", "{:d}"),
+)
+
+
+def summary_side(side):
+    """One player's row values for the summary, from their snapshot."""
+    side = side or {}
+    stats = side.get("match_stats") or {}
+    out = side_values(side)
+    out.update({k: stats.get(k) for k in ("lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear")})
+    return out
+
+
+class SummaryBlock(Band):
+    """End-of-match summary: both players' totals side by side, shown while
+    the finished match is on screen (frozen). Label in the middle, 1P on the
+    left in blue, 2P on the right in red; the box follows the chosen style."""
+
+    WIDTH = 212   # fits between the left NEXT column and the right HOLD box
+    TITLE_H = 24
+    ROW_H = 16
+
+    def __init__(self, parent):
+        super().__init__(parent, fade=None, draggable=True)
+        self.drag_target = "summary"
+        self.style = "band"
+        self.u = 1.0
+        self.language = "ja"
+        self.duration = 0.0
+        self.sides = {"left": summary_side(None), "right": summary_side(None)}
+
+    def configure(self, style, language, u):
+        self.style, self.language, self.u = style, language, u
+        self.setFixedSize(int(self.WIDTH * u),
+                          int((self.TITLE_H + self.ROW_H * len(SUMMARY_ROWS) + 8) * u))
+        self.update()
+
+    def update_match(self, state):
+        self.duration = state.get("match_elapsed_s", 0) or 0
+        self.sides = {"left": summary_side(state.get("left")), "right": summary_side(state.get("right"))}
+        self.update()
+
+    def paintEvent(self, event):
+        st, u = self.style, self.u
+        if self.editing:
+            super().paintEvent(event)
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        a = 0.45 if self.dim else 1.0
+        r = QtCore.QRectF(self.rect())
+        if not self.editing:
+            if st == "pop":
+                fill = QtGui.QColor(*POP_CLOCK_RGB)
+                fill.setAlphaF(max(self.opacity, 0.6) * a)
+                rim = QtGui.QColor(255, 255, 255)
+                rim.setAlphaF(a)
+                p.setBrush(fill)
+                p.setPen(QtGui.QPen(rim, 2.5 * u))
+                p.drawRoundedRect(r.adjusted(1.5 * u, 1.5 * u, -1.5 * u, -1.5 * u), 12 * u, 12 * u)
+            elif st != "text":
+                band = QtGui.QColor(*BAND_RGB)
+                band.setAlphaF(max(self.opacity, 0.5) * a)   # a table needs some backing to be readable
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                p.setBrush(band)
+                p.drawRoundedRect(r, (0 if st == "gauge" else 6) * u, (0 if st == "gauge" else 6) * u)
+                if st == "gauge":
+                    for x0, x1, side in ((0, r.width() / 2, "left"), (r.width() / 2, r.width(), "right")):
+                        c = QtGui.QColor(*PLAYER_COLORS[side])
+                        c.setAlphaF(a)
+                        p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, 2.5 * u), c)
+        ui = UI_TEXT[self.language]
+        outline = 1.3 * u if st == "text" else 0
+        W = r.width()
+        title = f"{ui['summary']}  {fmt_clock(self.duration)}"
+        draw_text(p, W / 2, 17 * u, title, 13 * u, BOLD, WHITE, "center", outline, a)
+        for i, (key, label_key, fmt) in enumerate(SUMMARY_ROWS):
+            base = (self.TITLE_H + 4 + i * self.ROW_H + 12) * u
+            draw_text(p, W / 2, base, ui[label_key], 10 * u, SEMI, SOFT, "center", outline, a)
+            for side, x, align in (("left", 12 * u, "left"), ("right", W - 12 * u, "right")):
+                v = self.sides[side].get(key)
+                text = "--" if v is None else fmt.format(v)
+                draw_text(p, x, base, text, 13 * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+
+
 class HudWindow(QtWidgets.QWidget):
     # New offset_x, offset_y (reference px) while the user drags the stats;
     # finished=True on release (the settings window saves then).
@@ -574,6 +676,7 @@ class HudWindow(QtWidgets.QWidget):
 
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
+        self.summary = SummaryBlock(self)
         self.events = {"left": EventBlock(self, "left"), "right": EventBlock(self, "right")}
         self.clock = ClockBlock(self)
         self.edit_hint = QtWidgets.QLabel(
@@ -645,6 +748,8 @@ class HudWindow(QtWidgets.QWidget):
             self.versus.configure(shown, u)
         self.clock.opacity = d["background_opacity"]
         self.clock.configure(d["style"], u)
+        self.summary.opacity = d["background_opacity"]
+        self.summary.configure(d["style"], d["language"], u)
         self._place()
 
     def _place(self):
@@ -681,6 +786,13 @@ class HudWindow(QtWidgets.QWidget):
         clock_top = CLOCK_BOTTOM_Y * s - self.clock.height()   # default spot (the versus block uses it)
         self.clock.move(int((CLOCK_CENTER_X + d["clock_offset_x"]) * s - self.clock.width() / 2),
                         int(clock_top + d["clock_offset_y"] * s))
+        # summary: while a finished match is on screen (or always while
+        # positioning, so it can be found and dragged)
+        show_summary = d["show_summary"] and (self._summary_ready() or self.edit_mode)
+        self.summary.setVisible(show_summary)
+        if show_summary:
+            self.summary.move(int((CLOCK_CENTER_X + d["summary_offset_x"]) * s - self.summary.width() / 2),
+                              int((SUMMARY_TOP_Y + d["summary_offset_y"]) * s))
         # versus: centered between the boards, just above the clock's default
         # spot (or where the clock would be); the APM/PPS offsets move it.
         self.versus.setVisible(versus and any_stat)
@@ -745,12 +857,18 @@ class HudWindow(QtWidgets.QWidget):
         for side in ("left", "right"):
             self.stats[side].update_side(state.get(side))
         self.versus.update_sides(state.get("left"), state.get("right"))
+        self.summary.update_match(state)
         # Dim rather than hide when capture is down: the numbers shown are the
         # last real measurement, not a fabricated live one.
-        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock):
+        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary):
             band.dim = stale
             band.update()
         self._place()
+
+    def _summary_ready(self):
+        """A match was played and has ended: the server froze the numbers."""
+        st = self._last_state
+        return bool(st.get("frozen")) and (st.get("match_elapsed_s") or 0) > 0
 
     # --- position adjust (drag) mode, toggled from the settings window ---
     def set_edit_mode(self, on):
@@ -762,7 +880,7 @@ class HudWindow(QtWidgets.QWidget):
             return
         self.edit_mode = on
         self._drag = None
-        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock):
+        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary):
             band.editing = on
             band.setCursor(QtCore.Qt.CursorShape.SizeAllCursor if on else QtCore.Qt.CursorShape.ArrowCursor)
             band.update()
@@ -772,6 +890,7 @@ class HudWindow(QtWidgets.QWidget):
             set_px(self.edit_hint, max(11, 13 * self._scale))
             self.edit_hint.adjustSize()
             self.edit_hint.move(int(self.width() / 2 - self.edit_hint.width() / 2), int(70 * self._scale))
+        self._place()   # e.g. show the summary box while positioning
         if self.isVisible():
             self.apply_click_through(not on and self.settings["hud"]["click_through"])
 

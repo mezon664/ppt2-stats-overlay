@@ -30,11 +30,15 @@ DISPLAY_DEFAULTS = {
     "clock_offset_y": 0,
     "event_offset_x": 0,         # move the event history (it otherwise sits above the stats)
     "event_offset_y": 0,
+    "summary_offset_x": 0,       # move the end-of-match summary
+    "summary_offset_y": 0,
     "background_opacity": 0.85,  # 0 = no background band
     "show_apm": True,
     "show_pps": True,
+    "show_app": True,            # attack per piece (lines sent / pieces placed)
     "show_clock": True,          # match time, above the マッチポイント banner
     "show_event_log": False,     # recent clears / REN breaks above the stats
+    "show_summary": True,        # both players' totals between the boards when a match ends
     "event_log_count": 3,        # 1 - 5
 }
 
@@ -49,6 +53,8 @@ DISPLAY_RANGES = {
     "clock_offset_y": (-692, 692),
     "event_offset_x": (-1232, 1232),
     "event_offset_y": (-692, 692),
+    "summary_offset_x": (-1232, 1232),
+    "summary_offset_y": (-692, 692),
     "background_opacity": (0.0, 1.0),
     "event_log_count": (1, 5),
 }
@@ -65,6 +71,11 @@ DEFAULTS = {
     # apm_tracker's internal peak/trend tracking, not for separate on-screen rows.
     "apm_windows_s": [10, 30, 60],
     "display": dict(DISPLAY_DEFAULTS),
+    # Developer option: save raw frames around recognition events (banners,
+    # clear flashes, pause) to debug_frames/ for investigating misses. Off for
+    # users — each frame is ~0.6MB. max_files caps what one run keeps (the
+    # oldest files from this run are removed; earlier files are never touched).
+    "debug": {"save_frames": False, "max_files": 2000},
     "hud": {
         "visible": True,
         "click_through": True,

@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 import cv2
 import websockets
@@ -24,12 +25,34 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("data_server")
 
 CLIENTS = set()
-# debug_dump_dir: temporary instrumentation for the live T-SPIN miss investigation
-# (phase3) — saves a raw frame whenever tspin_double/tspin_single crosses a
-# below-threshold "worth inspecting" score. Remove once the root cause is found.
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+DEBUG_DIR = PROJECT_DIR / "debug_frames"
+_DEBUG = load_settings().get("debug", {})
+# Saving raw frames around recognition events is a developer option
+# (settings "debug.save_frames"), off by default.
+DEBUG_DUMP_DIR = str(DEBUG_DIR) if _DEBUG.get("save_frames") else None
+DEBUG_MAX_FILES = int(_DEBUG.get("max_files", 2000))
+RUN_STARTED = time.time()
 # wait_for_start: the server may start on a menu or result screen that
 # still shows the NEXT queues; count nothing until a match is confirmed.
-PIPELINE = MatchPipeline(debug_dump_dir="../debug_frames", wait_for_start=True)
+PIPELINE = MatchPipeline(debug_dump_dir=DEBUG_DUMP_DIR, wait_for_start=True)
+
+
+def prune_debug_frames():
+    """Keeps at most DEBUG_MAX_FILES frames saved by THIS run (oldest go
+    first). Files from earlier runs — and recordings in sub-folders — are
+    left alone."""
+    if not DEBUG_DUMP_DIR or not DEBUG_DIR.exists():
+        return
+    try:
+        mine = [p for p in DEBUG_DIR.glob("*.png") if p.stat().st_mtime >= RUN_STARTED]
+        if len(mine) <= DEBUG_MAX_FILES:
+            return
+        mine.sort(key=lambda p: p.stat().st_mtime)
+        for p in mine[:len(mine) - DEBUG_MAX_FILES]:
+            p.unlink(missing_ok=True)
+    except Exception as e:
+        log.warning("couldn't prune debug frames: %s", e)
 CAPTURE_STATUS = {"ok": False, "message": "starting"}
 
 
@@ -101,6 +124,8 @@ async def broadcaster():
     settings_mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else None
     while True:
         tick += 1
+        if tick % (hz * 30) == 0:  # ~30s
+            await asyncio.get_running_loop().run_in_executor(None, prune_debug_frames)
         if tick % hz == 0:  # ~1s: pick up display changes saved to the settings file
             try:
                 mtime = CONFIG_PATH.stat().st_mtime
@@ -110,7 +135,7 @@ async def broadcaster():
                     log.info("display settings: %s", display)
             except Exception as e:  # mid-save or invalid JSON: keep the last good values
                 log.warning("couldn't read settings (%s); keeping %s", e, display)
-        if tick % (hz * 2) == 0:  # every ~2s
+        if DEBUG_DUMP_DIR and tick % (hz * 2) == 0:  # every ~2s, developer option only
             for side_name, pp in (("left", PIPELINE.left), ("right", PIPELINE.right)):
                 peak = _debug_tspin_peak(pp)
                 if peak:

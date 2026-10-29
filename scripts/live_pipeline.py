@@ -166,6 +166,10 @@ class PlayerPipeline:
         self._pc_active = False      # PERFECT CLEAR banner on screen last frame
         self._recent_events = []     # emitted clears, kept briefly so a later PC banner can upgrade one
         self.perfect_clear_count = 0
+        # per-match counts for the end-of-match summary
+        self.tetris_count = 0
+        self.tspin_count = 0
+        self.max_ren = 0
 
     def _emit_attack_event(self, t, ev, lines, result):
         if ev.get("perfect_clear"):
@@ -174,6 +178,11 @@ class PlayerPipeline:
             self.perfect_clear_count += 1
         self.apm.add_event(t, lines)
         self.last_event = {**ev, "lines": lines, "breakdown": result}
+        if ev["clear_type"] == "clear_4":
+            self.tetris_count += 1
+        elif ev["clear_type"].startswith("tspin_"):
+            self.tspin_count += 1
+        self.max_ren = max(self.max_ren, ev.get("ren_count") or 0)
         entry = format_event_log_entry(t, ev, lines)
         self.event_log.insert(0, entry)
         del self.event_log[EVENT_LOG_MAX:]
@@ -385,9 +394,22 @@ class PlayerPipeline:
             # match time (pause excluded), like APM.
             "pieces": self.queue_tracker.pieces_placed,
             "pps": round(self.queue_tracker.pieces_placed / elapsed_s, 2) if elapsed_s and elapsed_s >= 1.0 else None,
+            # APP (attack per piece) = lines sent / pieces placed: how much each
+            # piece sends, independent of speed.
+            "app": round(self.apm.total_lines / self.queue_tracker.pieces_placed, 2)
+                   if self.queue_tracker.pieces_placed else None,
             "capture_ok": self.last_frame_ok_t is not None and (now - self.last_frame_ok_t) < 2.0,
             "confirmed_flash_clear_count": self.confirmed_flash_clear_count,
             "perfect_clear_count": self.perfect_clear_count,
+            # totals for the end-of-match summary
+            "match_stats": {
+                "lines_sent": self.apm.total_lines,
+                "pieces": self.queue_tracker.pieces_placed,
+                "max_ren": self.max_ren,
+                "tetris": self.tetris_count,
+                "tspin": self.tspin_count,
+                "perfect_clear": self.perfect_clear_count,
+            },
             "dismissed_flash_count": self.dismissed_flash_count,
         }
 

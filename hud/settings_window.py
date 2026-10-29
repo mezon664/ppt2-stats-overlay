@@ -49,8 +49,9 @@ TARGET_KEYS = {
     "stats": ("offset_x", "offset_y"),
     "clock": ("clock_offset_x", "clock_offset_y"),
     "event": ("event_offset_x", "event_offset_y"),
+    "summary": ("summary_offset_x", "summary_offset_y"),
 }
-TARGET_ORDER = ("stats", "clock", "event")
+TARGET_ORDER = ("stats", "clock", "event", "summary")
 STYLE_ORDER = ("band", "pop", "gauge", "text", "versus")
 
 TEXT = {
@@ -69,6 +70,7 @@ TEXT = {
     "opacity": {"ja": "背景の濃さ", "en": "Background"},
     "show_apm": {"ja": "APM を表示", "en": "Show APM"},
     "show_pps": {"ja": "PPS を表示", "en": "Show PPS"},
+    "show_app": {"ja": "APP を表示（1ミノあたりの火力）", "en": "Show APP (attack per piece)"},
     "show_clock": {"ja": "試合時間を表示", "en": "Show match time"},
     "show_event_log": {"ja": "イベント履歴を表示（TETRIS / REN など）", "en": "Show event history (TETRIS, REN, ...)"},
     "event_log_count": {"ja": "イベント履歴の件数", "en": "Events shown"},
@@ -78,6 +80,8 @@ TEXT = {
     "target.stats": {"ja": "APM・PPS", "en": "APM / PPS"},
     "target.clock": {"ja": "試合時間", "en": "Match time"},
     "target.event": {"ja": "イベント履歴", "en": "Event history"},
+    "target.summary": {"ja": "試合結果", "en": "Summary"},
+    "show_summary": {"ja": "試合が終わったら試合結果（まとめ）を表示", "en": "Show a match summary when a match ends"},
     "up": {"ja": "上へ", "en": "Up"}, "down": {"ja": "下へ", "en": "Down"},
     "left": {"ja": "左へ", "en": "Left"}, "right": {"ja": "右へ", "en": "Right"},
     "reset_pos": {"ja": "初期位置に戻す", "en": "Back to default position"},
@@ -147,9 +151,12 @@ class SettingsWindow(QtWidgets.QWidget):
 
         self.show_apm = QtWidgets.QCheckBox()
         self.show_pps = QtWidgets.QCheckBox()
+        self.show_app = QtWidgets.QCheckBox()
         self.show_clock = QtWidgets.QCheckBox()
         self.show_event_log = QtWidgets.QCheckBox()
-        for cb in (self.show_apm, self.show_pps, self.show_clock, self.show_event_log):
+        self.show_summary = QtWidgets.QCheckBox()
+        for cb in (self.show_apm, self.show_pps, self.show_app, self.show_clock, self.show_event_log,
+                   self.show_summary):
             form.addRow("", cb)
         lo, hi = DISPLAY_RANGES["event_log_count"]
         self.event_log_count = self._spin(lo, hi, "")
@@ -182,7 +189,8 @@ class SettingsWindow(QtWidgets.QWidget):
         for w in (self.scale, self.event_log_count):
             w.valueChanged.connect(self._changed)
         self.opacity.valueChanged.connect(self._changed)
-        for cb in (self.show_apm, self.show_pps, self.show_clock, self.show_event_log):
+        for cb in (self.show_apm, self.show_pps, self.show_app, self.show_clock, self.show_event_log,
+                   self.show_summary):
             cb.toggled.connect(self._changed)
         self.retranslate()
 
@@ -201,8 +209,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.position.setItemText(1, t("pos.right"))
         self.show_apm.setText(t("show_apm"))
         self.show_pps.setText(t("show_pps"))
+        self.show_app.setText(t("show_app"))
         self.show_clock.setText(t("show_clock"))
         self.show_event_log.setText(t("show_event_log"))
+        self.show_summary.setText(t("show_summary"))
         self.event_log_count.setSuffix(t("count_suffix"))
         self.position_section.setTitle(t("adjust"))
         self.move_label.setText(t("move_what"))
@@ -366,8 +376,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opacity.setValue(int(round(d["background_opacity"] * 100)))
         self.show_apm.setChecked(d["show_apm"])
         self.show_pps.setChecked(d["show_pps"])
+        self.show_app.setChecked(d["show_app"])
         self.show_clock.setChecked(d["show_clock"])
         self.show_event_log.setChecked(d["show_event_log"])
+        self.show_summary.setChecked(d["show_summary"])
         self.event_log_count.setValue(d["event_log_count"])
         self.event_log_count.setEnabled(d["show_event_log"])
         self.retranslate()
@@ -382,8 +394,10 @@ class SettingsWindow(QtWidgets.QWidget):
             "background_opacity": self.opacity.value() / 100,
             "show_apm": self.show_apm.isChecked(),
             "show_pps": self.show_pps.isChecked(),
+            "show_app": self.show_app.isChecked(),
             "show_clock": self.show_clock.isChecked(),
             "show_event_log": self.show_event_log.isChecked(),
+            "show_summary": self.show_summary.isChecked(),
             "event_log_count": self.event_log_count.value(),
         }
         for key, (kx, ky) in TARGET_KEYS.items():

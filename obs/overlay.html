@@ -137,6 +137,22 @@
       0 calc(-1.3 * var(--u)) 0 #1b2440, 0 calc(1.3 * var(--u)) 0 #1b2440,
       calc(-1.3 * var(--u)) 0 0 #1b2440, calc(1.3 * var(--u)) 0 0 #1b2440;
   }
+  /* --- end-of-match summary (same looks as the HUD's SummaryBlock) --- */
+  .summary { width: calc(212 * var(--u)); box-sizing: border-box; padding: calc(4 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
+    background: rgba(12,22,60,max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
+  .summary .stitle { text-align: center; font-size: calc(13 * var(--u)); font-weight: 700; line-height: calc(24 * var(--u)); }
+  .summary .srow { display: flex; align-items: baseline; justify-content: space-between; height: calc(16 * var(--u)); }
+  .summary .slab { font-size: calc(10 * var(--u)); font-weight: 600; color: rgb(220,228,245); }
+  .summary .sl, .summary .sr { font-size: calc(13 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 25%; }
+  .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); text-align: right; }
+  body.style-gauge .summary { border-radius: 0;
+    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(12,22,60,max(0.5, var(--band-a))); }
+  body.style-pop .summary { background: rgb(30,42,85); border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(12 * var(--u)); }
+  body.style-text .summary { background: none; }
+  body.style-text .summary div, body.style-text .summary span {
+    text-shadow: calc(-1.3 * var(--u)) 0 0 #1b2440, calc(1.3 * var(--u)) 0 0 #1b2440,
+      0 calc(-1.3 * var(--u)) 0 #1b2440, 0 calc(1.3 * var(--u)) 0 #1b2440; }
+
   /* Capture down: dim instead of hiding — the numbers are the last real
      measurement, never fabricated, but not live either. */
   body.stale .abs { opacity: 0.4; }
@@ -153,6 +169,7 @@
   <div class="abs stat" id="stat-left"></div>
   <div class="abs stat" id="stat-right"></div>
   <div class="abs versus hidden" id="versus"></div>
+  <div class="abs summary hidden" id="summary"></div>
 
 <script>
 // Layout in reference px (1232x692 game client) — same numbers as hud/overlay.py.
@@ -160,20 +177,30 @@ const REF_W = 1232;
 const STAT_ANCHOR_X = { left: { left: 186, right: 790 }, right: { left: 448, right: 1052 } };
 const STAT_BOTTOM_Y = 562, EVENT_GAP = 2, VERSUS_GAP = 4;
 const CLOCK_CENTER_X = 617, CLOCK_BOTTOM_Y = 576;
-const GAUGE_MAX = { apm: 120, pps: 4 };   // value that fills a gauge bar
+const SUMMARY_TOP_Y = 120;
+const SUMMARY_ROWS = [   // [key, label, decimals]
+  ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
+  ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
+  ["tspin", "s_tspin", 0], ["perfect_clear", "s_pc", 0]];
+const GAUGE_MAX = { apm: 120, pps: 4, app: 1 };   // value that fills a gauge bar
 const STYLES = ["band", "pop", "gauge", "text", "versus"];
 // The overlay's own text, by display.language (event text comes from the
 // server in both languages: "text" / "text_en").
 const UI_TEXT = {
   ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", down: "認識不可",
+        summary: "試合結果", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "送った段数",
+        s_pieces: "置いたミノ", s_max_ren: "最大REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
         connecting: "接続中...", disconnected: "切断されました。再接続中..." },
   en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", down: "Can't read the game",
+        summary: "Match summary", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "Lines sent",
+        s_pieces: "Pieces", s_max_ren: "Max REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
 const DEFAULTS = { style: "band", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
-  background_opacity: 0.85, show_apm: true, show_pps: true, show_clock: true,
+  summary_offset_x: 0, summary_offset_y: 0, show_summary: true,
+  background_opacity: 0.85, show_apm: true, show_pps: true, show_app: true, show_clock: true,
   show_event_log: false, event_log_count: 3 };
 
 let display = { ...DEFAULTS };
@@ -182,14 +209,14 @@ let lastState = null;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (key, v) => v == null ? "--" : Number(v).toFixed(key === "apm" ? 1 : 2);
-const shownKeys = () => ["apm", "pps"].filter((k) => display["show_" + k]);
+const shownKeys = () => ["apm", "pps", "app"].filter((k) => display["show_" + k]);
 const style = () => STYLES.includes(display.style) ? display.style : "band";
 
 // PPS = pieces placed / match seconds; APM = lines sent / match minutes (the
 // user's own definition). Both use match time, so pauses don't count.
 function values(data) {
   data = data || {};
-  return { apm: (data.apm || {}).apm, pps: data.pps };
+  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app };
 }
 
 function statRowsHtml(st, side, v) {
@@ -217,11 +244,23 @@ function versusHtml(left, right) {
   }).join("");
 }
 
+function summaryHtml(state) {
+  const side = (data) => ({ ...values(data), ...((data || {}).match_stats || {}) });
+  const L = side(state.left), R = side(state.right);
+  const f = (v, dec) => v == null ? "--" : Number(v).toFixed(dec);
+  const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
+  const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  return `<div class="stitle">${ui().summary}&nbsp;&nbsp;${time}</div>` + SUMMARY_ROWS.map(([key, lab, dec]) =>
+    `<div class="srow"><span class="sl">${f(L[key], dec)}</span><span class="slab">${ui()[lab]}</span>` +
+    `<span class="sr">${f(R[key], dec)}</span></div>`).join("");
+}
+
 function layout() {
   const k = window.innerWidth / REF_W;          // screen px per reference px
   const d = display, st = style();
   document.documentElement.style.setProperty("--u", (k * d.scale) + "px");
   document.documentElement.style.setProperty("--band", `rgba(12,22,60,${d.background_opacity})`);
+  document.documentElement.style.setProperty("--band-a", d.background_opacity);
   const mode = d.stats_position === "right" ? "right" : "left";
   document.body.classList.toggle("pos-right", mode === "right");
   for (const s of STYLES) document.body.classList.toggle("style-" + s, s === st);
@@ -256,6 +295,13 @@ function layout() {
   const vb = d.show_clock ? clockTop - VERSUS_GAP * k * d.scale : CLOCK_BOTTOM_Y * k;
   vs.style.left = ((CLOCK_CENTER_X + d.offset_x) * k - vs.offsetWidth / 2) + "px";
   vs.style.top = (vb + d.offset_y * k - vs.offsetHeight) + "px";
+
+  // summary: while a finished match is on screen
+  const sm = $("summary");
+  const ready = lastState && lastState.frozen && (lastState.match_elapsed_s || 0) > 0;
+  sm.classList.toggle("hidden", !(d.show_summary && ready));
+  sm.style.left = ((CLOCK_CENTER_X + d.summary_offset_x) * k - sm.offsetWidth / 2) + "px";
+  sm.style.top = ((SUMMARY_TOP_Y + d.summary_offset_y) * k) + "px";
 }
 
 function renderSide(side, data) {
@@ -272,6 +318,7 @@ function render(state) {
   renderSide("left", state.left);
   renderSide("right", state.right);
   $("versus").innerHTML = versusHtml(values(state.left), values(state.right));
+  $("summary").innerHTML = summaryHtml(state);
   // Match clock is game time: it stops while paused and resumes after.
   const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
   $("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
