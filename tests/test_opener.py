@@ -34,10 +34,12 @@ def test_one_cell_off_is_not_called_anything():
                 assert name not in names
 
 
-def test_a_block_above_the_shape_spoils_it_but_the_spawn_rows_do_not():
+def test_blocks_right_above_the_shape_spoil_it_but_higher_ones_do_not():
+    from opener_detect import CLEAR_ROWS_ABOVE
     name, shape = OPENERS[0]
-    assert match_openers(board(shape, [(10, 4)]), OPENERS) == []          # something mid-board
-    assert match_openers(board(shape, [(18, 4), (19, 4)]), OPENERS) == [name]  # next piece spawning
+    h = len(shape)
+    assert match_openers(board(shape, [(h, 4)]), OPENERS) == []                      # touching the shape
+    assert match_openers(board(shape, [(h + CLEAR_ROWS_ABOVE, 4), (18, 4)]), OPENERS) == [name]  # falling piece / sparkles
 
 
 def detect(fixture, side="left"):
@@ -49,6 +51,7 @@ def detect(fixture, side="left"):
 @pytest.mark.parametrize("fixture,name", [
     ("opener_pco_left.jpg", "パフェ積み(中あけ)"),
     ("opener_gassho_left.jpg", "合掌TSD"),
+    ("opener_meisou_left.jpg", "迷走砲"),        # live, mirrored, hard-drop sparkles above
 ])
 def test_real_frames(fixture, name):
     assert detect(fixture) == name

@@ -25,7 +25,13 @@ from fumen import decode
 OPENERS_PATH = Path(__file__).resolve().parent.parent / "assets" / "openers.json"
 
 MAX_PLACEMENTS = 10    # a first bag is 7 pieces; a little slack for the first hold
-SPAWN_ROWS = 3         # top rows ignored: the next piece is already there
+# Only these rows right above the shape must be empty. Checking the whole
+# board missed a live 迷走砲: the white sparkles of a hard drop sat a few rows
+# higher, and the next piece can already be falling too.
+CLEAR_ROWS_ABOVE = 2
+# A cell is a block when this share of its sample patch is bright: blocks fill
+# the cell, while sparkle particles are a few bright pixels.
+BLOCK_FILL = 0.5
 
 
 def _shape_rows(fumen):
@@ -50,25 +56,26 @@ def match_openers(occupancy, openers):
     """Names of the openers whose shape the board shows exactly.
     occupancy: ROWS rows of COLS bools, bottom row first."""
     names = []
-    top_checked = ROWS - SPAWN_ROWS
     for name, shape in openers:
         h = len(shape)
         if all(tuple(occupancy[r]) == shape[r] for r in range(h)) and \
-                not any(any(occupancy[r]) for r in range(h, top_checked)):
+                not any(any(occupancy[r]) for r in range(h, min(ROWS, h + CLEAR_ROWS_ABOVE))):
             if name not in names:
                 names.append(name)
     return names
 
 
 def read_occupancy(frame, box):
-    """ROWS x COLS bools, bottom row first: True where the cell is bright."""
+    """ROWS x COLS bools, bottom row first: True where the cell holds a block
+    (most of its sample patch bright — see BLOCK_FILL)."""
     v = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[..., 2]
     rows = []
     for row in range(ROWS - 1, -1, -1):          # board_read rows are top-first
         cells = []
         for col in range(COLS):
             cx, cy = cell_center(box, col, row)
-            cells.append(bool(v[cy - 3:cy + 3, cx - 3:cx + 3].mean() >= CLEAR_V_MIN))
+            patch = v[cy - 3:cy + 3, cx - 3:cx + 3]
+            cells.append(bool((patch >= CLEAR_V_MIN).mean() >= BLOCK_FILL))
         rows.append(cells)
     return rows
 
