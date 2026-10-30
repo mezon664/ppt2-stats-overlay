@@ -21,7 +21,8 @@ DISPLAY_DEFAULTS = {
     #   "text"   text only, white with a dark outline like the score
     #   "versus" one block between the boards comparing both players
     "style": "band",
-    "text_weight": "extra_bold", # how thick the overlay text is: "normal" / "bold" / "extra_bold"
+    "text_weight": "bold",       # how thick the overlay text is: "normal" / "bold"
+    "text_outline": True,        # black outline around all overlay text
     "language": "ja",           # "ja" / "en": overlay text (states, events) and the settings window
     "stats_position": "left",    # "left": each board's lower-left, "right": lower-right
     "scale": 1.0,                # size of everything shown (0.5 - 2.0)
@@ -70,7 +71,7 @@ STYLES = ("band", "pop", "gauge", "text", "versus")
 # allowed values for the text options
 LANGUAGES = ("ja", "en")
 OPENER_DISPLAYS = ("board", "hold", "namebar", "top")
-TEXT_WEIGHTS = ("normal", "bold", "extra_bold")
+TEXT_WEIGHTS = ("normal", "bold")
 DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES,
                    "opener_display": OPENER_DISPLAYS, "text_weight": TEXT_WEIGHTS}
 

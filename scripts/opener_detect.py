@@ -14,6 +14,7 @@ the next piece has already spawned. An exact match only — a board that is
 one cell off, or has garbage under it, is not called anything.
 """
 import json
+import re
 from pathlib import Path
 
 import cv2
@@ -47,12 +48,18 @@ def _shape_rows(fumen):
     return tuple(tuple(bool(c) for c in rows[i]) for i in range(height))
 
 
+def screen_name(name):
+    """The name as shown: without its （…）/(…) variant part — パフェ積み(中あけ)
+    and りねパフェ(左凸) show as パフェ積み / りねパフェ (user's request)."""
+    return re.sub(r"\s*[（(][^）)]*[）)]", "", name).strip() or name
+
+
 def load_openers(path=OPENERS_PATH):
     """[(name, shape_rows)], several shapes per opener."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     out = []
     for op in data["openers"]:
-        name = op.get("display") or op["name"]     # shorter on-screen name if given
+        name = screen_name(op.get("display") or op["name"])     # shorter on-screen name if given
         for f in op["shapes"]:
             out.append((name, _shape_rows(f)))
     return out

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import cv2
 import pytest
 from capture_profile import compute_profile
-from opener_detect import OpenerDetector, load_openers, match_openers
+from opener_detect import OpenerDetector, load_openers, match_openers, screen_name
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 OPENERS = load_openers()
@@ -19,6 +19,13 @@ def board(shape, extra=()):
     for r, c in extra:
         rows[r][c] = not rows[r][c]
     return rows
+
+
+def test_shown_names_drop_the_variant_in_parentheses():
+    assert screen_name("パフェ積み(中あけ)") == "パフェ積み"
+    assert screen_name("りねパフェ（左凸）") == "りねパフェ"
+    assert screen_name("T土台りねパフェ") == "T土台りねパフェ"
+    assert not any("(" in n or "（" in n for n, _ in OPENERS)
 
 
 def test_every_shape_matches_only_its_own_opener():
@@ -49,7 +56,7 @@ def detect(fixture, side="left"):
 
 
 @pytest.mark.parametrize("fixture,name", [
-    ("opener_pco_left.jpg", "パフェ積み(中あけ)"),
+    ("opener_pco_left.jpg", "パフェ積み"),
     ("opener_gassho_left.jpg", "合掌TSD"),
     ("opener_meisou_left.jpg", "迷走砲"),        # live, mirrored, hard-drop sparkles above
     ("opener_gassho_live_left.jpg", "合掌TSD"),  # live, missed when only checked on placements

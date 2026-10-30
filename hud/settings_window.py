@@ -54,7 +54,7 @@ TARGET_KEYS = {
 TARGET_ORDER = ("stats", "clock", "event", "summary")
 STYLE_ORDER = ("band", "pop", "gauge", "text", "versus")
 OPENER_DISPLAY_ORDER = ("board", "hold", "namebar", "top")
-TEXT_WEIGHT_ORDER = ("normal", "bold", "extra_bold")
+TEXT_WEIGHT_ORDER = ("normal", "bold")
 
 TEXT = {
     "title": {"ja": "PPT2 Stats Overlay - 表示設定", "en": "PPT2 Stats Overlay - Display settings"},
@@ -73,7 +73,7 @@ TEXT = {
     "text_weight": {"ja": "文字の太さ", "en": "Text weight"},
     "tw.normal": {"ja": "ふつう", "en": "Normal"},
     "tw.bold": {"ja": "太い", "en": "Bold"},
-    "tw.extra_bold": {"ja": "とても太い", "en": "Extra bold"},
+    "text_outline": {"ja": "文字に縁をつける", "en": "Outline the text"},
     "show_apm": {"ja": "APM を表示", "en": "Show APM"},
     "show_pps": {"ja": "PPS を表示", "en": "Show PPS"},
     "show_app": {"ja": "APP を表示（1ミノあたりの火力）", "en": "Show APP (attack per piece)"},
@@ -165,6 +165,8 @@ class SettingsWindow(QtWidgets.QWidget):
         for key in TEXT_WEIGHT_ORDER:
             self.text_weight.addItem("", key)
         row("text_weight", self.text_weight)
+        self.text_outline = QtWidgets.QCheckBox()
+        form.addRow("", self.text_outline)
 
         self.show_apm = QtWidgets.QCheckBox()
         self.show_pps = QtWidgets.QCheckBox()
@@ -211,6 +213,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.style.currentIndexChanged.connect(self._changed)
         self.opener_display.currentIndexChanged.connect(self._changed)
         self.text_weight.currentIndexChanged.connect(self._changed)
+        self.text_outline.toggled.connect(self._changed)
         for w in (self.scale, self.event_log_count):
             w.valueChanged.connect(self._changed)
         self.opacity.valueChanged.connect(self._changed)
@@ -232,6 +235,7 @@ class SettingsWindow(QtWidgets.QWidget):
             self.style.setItemText(i, t("style." + key))
         for i, key in enumerate(TEXT_WEIGHT_ORDER):
             self.text_weight.setItemText(i, t("tw." + key))
+        self.text_outline.setText(t("text_outline"))
         self.position.setItemText(0, t("pos.left"))
         self.position.setItemText(1, t("pos.right"))
         self.show_apm.setText(t("show_apm"))
@@ -405,6 +409,7 @@ class SettingsWindow(QtWidgets.QWidget):
             self._set_offset(key, d[kx], d[ky])
         self.opacity.setValue(int(round(d["background_opacity"] * 100)))
         self.text_weight.setCurrentIndex(self.text_weight.findData(d["text_weight"]))
+        self.text_outline.setChecked(d["text_outline"])
         self.show_apm.setChecked(d["show_apm"])
         self.show_pps.setChecked(d["show_pps"])
         self.show_app.setChecked(d["show_app"])
@@ -427,6 +432,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "scale": self.scale.value() / 100,
             "background_opacity": self.opacity.value() / 100,
             "text_weight": self.text_weight.currentData(),
+            "text_outline": self.text_outline.isChecked(),
             "show_apm": self.show_apm.isChecked(),
             "show_pps": self.show_pps.isChecked(),
             "show_app": self.show_app.isChecked(),

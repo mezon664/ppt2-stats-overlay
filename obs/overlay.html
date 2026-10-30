@@ -19,9 +19,19 @@
   }
   :root {
     --u: 1px; --band: rgba(12,22,60,0.85); --clear: rgba(12,22,60,0);
-    --fw-bold: 900; --fw-semi: 800;  /* display.text_weight, set by script (TEXT_WEIGHTS) */
+    /* display.text_weight, set by script (TEXT_WEIGHTS). The fonts stop at Bold,
+       so past that text is thickened with a stroke in its own color. */
+    --fw-bold: 700; --fw-semi: 700; --fw-stroke: 0.05;
     --p-left: rgb(59,142,234); --p-right: rgb(229,72,77);
     --t-left: rgb(140,200,255); --t-right: rgb(255,154,158);
+  }
+  * { -webkit-text-stroke: calc(var(--fw-stroke) * 1em) currentColor; }
+  /* display.text_outline: black outline around ALL text (0.10 x font size, as
+     the HUD). Black, since navy vanished on the band/clock/summary boxes;
+     !important so the "text" style's own navy outlines give way to it too. */
+  body.outlined * {
+    text-shadow: 0.1em 0 0 #000, -0.1em 0 0 #000, 0 0.1em 0 #000, 0 -0.1em 0 #000,
+      0.071em 0.071em 0 #000, -0.071em 0.071em 0 #000, 0.071em -0.071em 0 #000, -0.071em -0.071em 0 #000 !important;
   }
   .abs { position: absolute; }
   .num { font-variant-numeric: tabular-nums; }
@@ -33,6 +43,12 @@
   .stat .row { display: flex; align-items: baseline; gap: calc(4 * var(--u)); }
   .stat.hug-r .row { justify-content: flex-end; }
   .lab { font-weight: var(--fw-bold); }
+  /* Room for the widest value (APM 888.8, PPS/APP 8.88) so labels don't shift
+     as numbers change — same idea as hud/overlay.py VALUE_TEMPLATES. */
+  .stat:not(.st-gauge) .val { display: inline-block; }
+  .stat:not(.st-gauge) .val.v-apm { min-width: 5ch; }
+  .stat:not(.st-gauge) .val.v-pps, .stat:not(.st-gauge) .val.v-app { min-width: 4ch; }
+  .stat.hug-r .val, .st-pop .val { text-align: right; }
 
   .st-band { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); }
   .st-band .row { height: calc(21 * var(--u)); }
@@ -57,6 +73,10 @@
   .st-gauge { min-width: calc(104 * var(--u)); padding: calc(3 * var(--u)) calc(6 * var(--u)); }
   .st-gauge .row { height: calc(27 * var(--u)); flex-wrap: wrap; justify-content: space-between !important; align-content: flex-start; }
   .st-gauge .lab { font-size: calc(11 * var(--u)); color: rgb(220,228,245); }
+  /* label + value in the 80 nearest the board (lines up with the band style's
+     text), the bar keeps the full 104 — hud/overlay.py GAUGE_TEXT_W */
+  .st-gauge.hug-r .lab { margin-left: calc(24 * var(--u)); }
+  .st-gauge.hug-l .val { margin-right: calc(24 * var(--u)); }
   .st-gauge .val { font-size: calc(15 * var(--u)); font-weight: var(--fw-semi); }
   .st-gauge .bar { flex-basis: 100%; height: calc(4.5 * var(--u)); border-radius: 999px;
     background: rgba(255,255,255,0.24); display: flex; overflow: hidden; margin-top: calc(1 * var(--u)); }
@@ -107,7 +127,7 @@
   body.style-text .ob div, body.style-text .ob span {
     text-shadow: calc(-1.6 * var(--u)) 0 0 #1b2440, calc(1.6 * var(--u)) 0 0 #1b2440,
       0 calc(-1.6 * var(--u)) 0 #1b2440, 0 calc(1.6 * var(--u)) 0 #1b2440; }
-  .summary .sop { font-size: calc(12 * var(--u)); max-width: 36%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .summary .sop { font-size: calc(12 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* --- versus: one block between the boards --- */
   .versus { width: calc(150 * var(--u)); box-sizing: border-box; padding: calc(3 * var(--u)) calc(7 * var(--u));
@@ -174,10 +194,15 @@
   .summary { width: calc(212 * var(--u)); box-sizing: border-box; padding: calc(4 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
     background: rgba(12,22,60,max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
   .summary .stitle { text-align: center; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); line-height: calc(28 * var(--u)); }
-  .summary .srow { display: flex; align-items: baseline; justify-content: space-between; height: calc(20 * var(--u)); }
-  .summary .slab { font-size: calc(12 * var(--u)); font-weight: var(--fw-semi); color: rgb(220,228,245); }
-  .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; min-width: 25%; }
-  .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); text-align: right; }
+  /* 1P | label | 2P, each centered in its column; the player columns are
+     centered at 20% / 80% of the box like hud/overlay.py SummaryBlock.COL_X
+     (60.8 = 2 x (0.2 x 212 - 12 padding)) */
+  .summary .srow { display: grid; grid-template-columns: calc(60.8 * var(--u)) 1fr calc(60.8 * var(--u));
+    align-items: baseline; height: calc(20 * var(--u)); }
+  .summary .slab { font-size: calc(12 * var(--u)); font-weight: var(--fw-semi); color: rgb(220,228,245); text-align: center; }
+  .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums;
+    text-align: center; min-width: 0; }
+  .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); }
   body.style-gauge .summary { border-radius: 0;
     background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(12,22,60,max(0.5, var(--band-a))); }
   body.style-pop .summary { background: rgb(30,42,85); border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(12 * var(--u)); }
@@ -227,8 +252,8 @@ const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
   ["tspin", "s_tspin", 0], ["perfect_clear", "s_pc", 0]];
 const GAUGE_MAX = { apm: 120, pps: 4, app: 1 };   // value that fills a gauge bar
 const STYLES = ["band", "pop", "gauge", "text", "versus"];
-// display.text_weight -> [bold, semi] font-weight (same as hud/overlay.py TEXT_WEIGHT_PRESETS)
-const TEXT_WEIGHTS = { normal: [700, 600], bold: [800, 700], extra_bold: [900, 800] };
+// display.text_weight -> [bold, semi, stroke x font size] (same as hud/overlay.py TEXT_WEIGHT_PRESETS)
+const TEXT_WEIGHTS = { normal: [700, 600, 0], bold: [700, 700, 0.05] };
 // The overlay's own text, by display.language (event text comes from the
 // server in both languages: "text" / "text_en").
 const UI_TEXT = {
@@ -242,7 +267,7 @@ const UI_TEXT = {
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
-const DEFAULTS = { style: "band", text_weight: "extra_bold", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
+const DEFAULTS = { style: "band", text_weight: "bold", text_outline: true, language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
   summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true, opener_display: "board",
   background_opacity: 0.85, show_apm: true, show_pps: true, show_app: true, show_clock: true,
@@ -267,7 +292,7 @@ function values(data) {
 function statRowsHtml(st, side, v) {
   return shownKeys().map((key) => {
     const lab = `<span class="lab">${key.toUpperCase()}</span>`;
-    const val = `<span class="val num">${fmt(key, v[key])}</span>`;
+    const val = `<span class="val num v-${key}">${fmt(key, v[key])}</span>`;
     if (st === "pop") return `<div class="row"><span class="pill">${lab}${val}</span></div>`;
     if (st === "gauge") {
       const frac = v[key] == null ? 0 : Math.max(0, Math.min(1, v[key] / GAUGE_MAX[key]));
@@ -308,9 +333,11 @@ function layout() {
   document.documentElement.style.setProperty("--u", (k * d.scale) + "px");
   document.documentElement.style.setProperty("--band", `rgba(12,22,60,${d.background_opacity})`);
   document.documentElement.style.setProperty("--band-a", d.background_opacity);
-  const [fwBold, fwSemi] = TEXT_WEIGHTS[d.text_weight] || TEXT_WEIGHTS.extra_bold;
+  const [fwBold, fwSemi, fwStroke] = TEXT_WEIGHTS[d.text_weight] || TEXT_WEIGHTS.bold;
+  document.body.classList.toggle("outlined", !!d.text_outline);
   document.documentElement.style.setProperty("--fw-bold", fwBold);
   document.documentElement.style.setProperty("--fw-semi", fwSemi);
+  document.documentElement.style.setProperty("--fw-stroke", fwStroke);
   const mode = d.stats_position === "right" ? "right" : "left";
   document.body.classList.toggle("pos-right", mode === "right");
   for (const s of STYLES) document.body.classList.toggle("style-" + s, s === st);

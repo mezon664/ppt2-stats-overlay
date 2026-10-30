@@ -186,18 +186,29 @@ PLAYER_TEXT_COLORS = {"left": (140, 200, 255), "right": (255, 154, 158)}  # ligh
 GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0}
 OUTLINE_RGB = (27, 36, 64)
 
-# display.text_weight -> (BOLD, SEMI). Same numbers as obs/overlay.html's TEXT_WEIGHTS.
+# display.text_weight -> (BOLD, SEMI, THICKEN). Same numbers as obs/overlay.html's
+# TEXT_WEIGHTS. The UI font (Yu Gothic UI) only has Semibold and Bold, so asking
+# for 800/900 still drew plain Bold (user report: the setting changed nothing).
+# Past Bold, text is thickened by stroking it in its own color, THICKEN x the
+# font size wide — that works with any font.
 TEXT_WEIGHT_PRESETS = {
-    "normal": (QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.DemiBold),
-    "bold": (QtGui.QFont.Weight.ExtraBold, QtGui.QFont.Weight.Bold),
-    "extra_bold": (QtGui.QFont.Weight.Black, QtGui.QFont.Weight.ExtraBold),
+    "normal": (QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.DemiBold, 0.0),
+    "bold": (QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.Bold, 0.05),
 }
-BOLD, SEMI = TEXT_WEIGHT_PRESETS["extra_bold"]
+BOLD, SEMI, THICKEN = TEXT_WEIGHT_PRESETS["bold"]
+# display.text_outline: black outline around every text, this x the font size.
+# Black, not the "text" style's navy OUTLINE_RGB: navy is nearly the color of
+# the band / clock / summary boxes, so on them the outline didn't show (user
+# report: only some text got an outline).
+TEXT_OUTLINE_RATIO = 0.10
+TEXT_OUTLINE_RGB = (0, 0, 0)
+TEXT_OUTLINE = 0.0
 
 
-def set_text_weight(name):
-    global BOLD, SEMI
-    BOLD, SEMI = TEXT_WEIGHT_PRESETS.get(name, TEXT_WEIGHT_PRESETS["extra_bold"])
+def set_text_style(weight, outline):
+    global BOLD, SEMI, THICKEN, TEXT_OUTLINE
+    BOLD, SEMI, THICKEN = TEXT_WEIGHT_PRESETS.get(weight, TEXT_WEIGHT_PRESETS["bold"])
+    TEXT_OUTLINE = TEXT_OUTLINE_RATIO if outline else 0.0
 
 
 def _font(px, weight):
@@ -223,16 +234,64 @@ def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha
         x -= w / 2
     path = QtGui.QPainterPath()
     path.addText(QtCore.QPointF(x, y), font, text)
+    thicken = THICKEN * px
+    outline = max(outline, TEXT_OUTLINE * px)
     if outline > 0:
-        oc = QtGui.QColor(*OUTLINE_RGB)
+        oc = QtGui.QColor(*(TEXT_OUTLINE_RGB if TEXT_OUTLINE else OUTLINE_RGB))
         oc.setAlphaF(alpha)
-        pen = QtGui.QPen(oc, outline * 2)
+        pen = QtGui.QPen(oc, outline * 2 + thicken)  # still shows around the thickened glyphs
         pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
         p.strokePath(path, pen)
-    c = QtGui.QColor(*color)
-    c.setAlphaF(alpha)
-    p.fillPath(path, c)
+    if thicken > 0 and alpha < 1.0:
+        _draw_thick_faded(p, path, color, alpha, thicken)
+    else:
+        c = QtGui.QColor(*color)
+        c.setAlphaF(alpha)
+        p.fillPath(path, c)
+        if thicken > 0:
+            pen = QtGui.QPen(c, thicken)
+            pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+            p.strokePath(path, pen)
     return w
+
+
+def _draw_thick_faded(p, path, color, alpha, thicken):
+    """Fill + same-color stroke for see-through text: drawn opaque on a small
+    layer first, then the layer at `alpha`, so the stroke doesn't double the
+    alpha where it overlaps the fill. (Merging the two into one path instead
+    took up to ~43ms per string — too slow at 10 repaints a second.)"""
+    rect = path.boundingRect().adjusted(-thicken, -thicken, thicken, thicken).toAlignedRect()
+    if rect.isEmpty():
+        return
+    dpr = p.device().devicePixelRatioF() if p.device() else 1.0
+    img = QtGui.QImage(int(rect.width() * dpr) + 1, int(rect.height() * dpr) + 1,
+                       QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    img.setDevicePixelRatio(dpr)
+    img.fill(QtCore.Qt.GlobalColor.transparent)
+    q = QtGui.QPainter(img)
+    q.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    q.translate(-rect.left(), -rect.top())
+    c = QtGui.QColor(*color)
+    q.fillPath(path, c)
+    pen = QtGui.QPen(c, thicken)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    q.strokePath(path, pen)
+    q.end()
+    p.save()
+    p.setOpacity(p.opacity() * alpha)
+    p.drawImage(QtCore.QPointF(rect.left(), rect.top()), img)
+    p.restore()
+
+
+# Widest value each stat is given room for, digits filled in with the font's
+# widest digit — so the label beside a value stays put as the number changes
+# (user report: APM etc. shifted left and right with every update).
+VALUE_TEMPLATES = {"apm": "{0}{0}{0}.{0}", "pps": "{0}.{0}{0}", "app": "{0}.{0}{0}"}
+
+
+def value_slot_width(key, px, weight):
+    d = max("0123456789", key=lambda c: text_width(px, weight, c))
+    return text_width(px, weight, VALUE_TEMPLATES[key].format(d))
 
 
 def fmt_value(key, value):
@@ -275,6 +334,10 @@ class StatBlock(Band):
 
     KEYS = ("apm", "pps", "app")
     WIDTH = {"band": 92, "pop": 104, "gauge": 104, "text": 104}
+    # gauge: the label + value sit in the GAUGE_TEXT_W nearest the board, so
+    # the label starts where the band style's text does (74 in from the board
+    # side; user's request), while the bar keeps the full width.
+    GAUGE_TEXT_W = 80
     ROW_H = {"band": 21, "pop": 26, "gauge": 27, "text": 23}
     PAD = {"band": 3, "pop": 1, "gauge": 3, "text": 1}
 
@@ -318,7 +381,8 @@ class StatBlock(Band):
                 if hug_right:
                     x = W - 5 * u
                     vw = draw_text(p, x, base, value, big * u, SEMI, WHITE, "right", outline, a)
-                    draw_text(p, x - vw - 4 * u, base, label, 12 * u, BOLD, WHITE, "right", outline, a)
+                    slot = max(vw, value_slot_width(key, big * u, SEMI))
+                    draw_text(p, x - slot - 4 * u, base, label, 12 * u, BOLD, WHITE, "right", outline, a)
                 else:
                     x = 5 * u
                     lw = draw_text(p, x, base, label, 12 * u, BOLD, WHITE, "left", outline, a)
@@ -326,7 +390,7 @@ class StatBlock(Band):
             elif st == "pop":
                 h = 22 * u
                 lw, vw = text_width(11 * u, BOLD, label), text_width(16 * u, BOLD, value)
-                pw = lw + vw + 27 * u
+                pw = lw + max(vw, value_slot_width(key, 16 * u, BOLD)) + 27 * u  # fixed: the pill doesn't resize
                 x0 = W - pw - 2 * u if hug_right else 2 * u
                 fill = QtGui.QColor(*PLAYER_COLORS[self.side])
                 fill.setAlphaF(a)
@@ -337,12 +401,15 @@ class StatBlock(Band):
                 p.drawRoundedRect(QtCore.QRectF(x0, top + 2 * u, pw, h), h / 2, h / 2)
                 base = top + 2 * u + h / 2 + 5.5 * u
                 draw_text(p, x0 + 11 * u, base, label, 11 * u, BOLD, (225, 236, 255), alpha=a)
-                draw_text(p, x0 + 16 * u + lw, base, value, 16 * u, BOLD, WHITE, alpha=a)
+                draw_text(p, x0 + pw - 11 * u, base, value, 16 * u, BOLD, WHITE, "right", alpha=a)
             else:  # gauge
                 base = top + 14 * u
                 x_l, x_r = 6 * u, W - 6 * u
-                draw_text(p, x_l, base, label, 11 * u, BOLD, SOFT, alpha=a)
-                draw_text(p, x_r, base, value, 15 * u, SEMI, WHITE, "right", alpha=a)
+                inset = (self.WIDTH["gauge"] - self.GAUGE_TEXT_W) * u
+                text_l = x_l + inset if hug_right else x_l
+                text_r = x_r if hug_right else x_r - inset
+                draw_text(p, text_l, base, label, 11 * u, BOLD, SOFT, alpha=a)
+                draw_text(p, text_r, base, value, 15 * u, SEMI, WHITE, "right", alpha=a)
                 bar = QtCore.QRectF(x_l, top + 18 * u, x_r - x_l, 4.5 * u)
                 r = bar.height() / 2
                 p.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -626,6 +693,7 @@ class SummaryBlock(Band):
     ROW_H = 20
     # text sizes (reference px x u); the user asked for these bigger than the stats' small labels
     TITLE_PX, LABEL_PX, VALUE_PX, TEXT_PX = 15, 12, 15, 12
+    COL_X = 0.2   # center of the 1P column (2P mirrored), share of the width
 
     def __init__(self, parent):
         super().__init__(parent, fade=None, draggable=True)
@@ -683,14 +751,15 @@ class SummaryBlock(Band):
         for i, (key, label_key, fmt) in enumerate(SUMMARY_ROWS):
             base = (self.TITLE_H + 4 + i * self.ROW_H + 15) * u
             draw_text(p, W / 2, base, ui[label_key], self.LABEL_PX * u, SEMI, SOFT, "center", outline, a)
-            for side, x, align in (("left", 12 * u, "left"), ("right", W - 12 * u, "right")):
+            # each player's column centered on its own side (user's request)
+            for side, x in (("left", W * self.COL_X), ("right", W * (1 - self.COL_X))):
                 v = self.sides[side].get(key)
-                if fmt is None:     # text row (opener): a little smaller, cut to its half
-                    text = "--" if not v else elide(v, self.TEXT_PX * u, BOLD, W / 2 - 36 * u)
-                    draw_text(p, x, base, text, self.TEXT_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+                if fmt is None:     # text row (opener): a little smaller, cut to its column
+                    text = "--" if not v else elide(v, self.TEXT_PX * u, BOLD, 2 * W * self.COL_X - 12 * u)
+                    draw_text(p, x, base, text, self.TEXT_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)
                     continue
                 text = "--" if v is None else fmt.format(v)
-                draw_text(p, x, base, text, self.VALUE_PX * u, BOLD, PLAYER_TEXT_COLORS[side], align, outline, a)
+                draw_text(p, x, base, text, self.VALUE_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)
 
 
 class OpenerBadge(Band):
@@ -891,7 +960,7 @@ class HudWindow(QtWidgets.QWidget):
         w, h = self._size
         s = self._scale
         d = self.display
-        set_text_weight(d["text_weight"])
+        set_text_style(d["text_weight"], d["text_outline"])
         u = s * d["scale"]
         mode = d["stats_position"]
         shown = [k for k in StatBlock.KEYS if d[f"show_{k}"]]
