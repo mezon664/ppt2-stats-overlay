@@ -186,6 +186,9 @@
   - **新しい版の出し方**: `scripts/version.py` を上げる → コミット → タグ `v<版>` を push。`.github/workflows/release.yml` が版とタグの一致確認・テスト・`tools/make_release.py` で zip 作成・リリース公開まで自動。変更点は `docs/release-notes/v<版>.md` に書いておくとリリースの説明になる（アプリの「この版の変更点」に出る）。
   - コミットの作者アドレスは GitHub の非公開用 `325367006+mezon664@users.noreply.github.com`（このリポジトリの git config に設定済み。過去9件も書き換え済み）。Gmail を絶対に載せないこと。
   - 利用者向け `README.md`、`requirements.txt` を追加。Python なしで動く形（exe 化など）はまだ。
+  - **2026-10-31 公開済み**: https://github.com/mezon664/ppt2-stats-overlay （アカウント名は mezon664 に変更済み。旧名・Windows のユーザー名入りのパスは履歴からも消してから公開）。
+    v0.1.0 のリリースを自動作業で作成済み（zip 約283KB）。アプリの更新確認で v0.1.0 が見え、古い版なら更新を出す・ダウンロード・展開まで実物で確認済み。
+    push のサインインは Git Credential Manager に保存済み（ユーザーがブラウザでサインイン）。
 
 ## ユーザーへの連絡でよく使うこと
 - 録画を頼むとき: 「録画して」と言ってもらえれば `capture_burst.py` で始める。
