@@ -5,8 +5,10 @@ live game-window capture or a recorded video (for testing/replay).
 PPS comes from NEXT-queue advances (queue_tracker.py), not board tracking —
 board_tracker.py was shelved after phase 2's line-clear-cascade problems.
 """
+import os
 import time
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 
 import cv2
@@ -18,11 +20,11 @@ from opener_detect import OpenerDetector
 from apm_tracker import APMWindowTracker
 from board_read import board_is_clear, LEFT_BOX, RIGHT_BOX
 from capture_profile import scale_box, REFERENCE_PROFILE
-from match_boundary import MatchBoundaryDetector
+from match_boundary import MatchBoundaryDetector, _orange_ratio
 from flash_clear_detector import FlashClearDetector, MAX_LINES_PER_EVENT
 from queue_tracker import NextQueueTracker
 from hold_tracker import HoldTracker
-from gameplay_gate import GameplayGate
+from gameplay_gate import GameplayGate, ON_SCREEN_THRESHOLD
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("live_pipeline")
@@ -35,7 +37,7 @@ CLEAR_TYPE_LABEL_JA = {
     "tspin_double": "T-SPIN Double",
     "tspin_single": "T-SPIN Single",
     "tspin_triple": "T-SPIN Triple",
-    "tspin_mini": "T-SPIN Mini",
+    "tspin_mini": "T-SPIN Mini Single",   # the line-clearing Mini (the game's banner text)
 }
 
 EVENT_LOG_MAX = 15  # recent entries kept per side, for on-screen verification of what was recognized
@@ -47,7 +49,7 @@ EVENT_LOG_MAX = 15  # recent entries kept per side, for on-screen verification o
 HOLD_ADJUST_WINDOW_S = 1.0
 
 # Lines each banner type clears, checked against the clear flash's lit rows.
-BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3}
+BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3, "tspin_mini": 1}
 
 
 def format_event_log_entry(t, ev, lines):
@@ -101,6 +103,36 @@ def format_ren_break_entry(t):
     }
 
 
+def format_mini_no_line_entry(t):
+    """A T-SPIN Mini that cleared no line: shown in the log, but it isn't a
+    clear — no attack, and REN / Back-to-Back are left to the placement logic."""
+    return {
+        "t": round(t, 2),
+        "label": "T-SPIN Mini",
+        "lines": 0,
+        "btb": False,
+        "ren_count": 0,
+        "ren_source": "tspin_mini_no_line",
+        "text": "T-SPIN Mini",
+        "text_en": "T-SPIN Mini",
+    }
+
+
+def format_tspin_no_line_entry(t):
+    """A T-SPIN that cleared no line ("T-SPIN" alone on the badge): shown in
+    the log like the no-line Mini — not a clear, no attack."""
+    return {
+        "t": round(t, 2),
+        "label": "T-SPIN",
+        "lines": 0,
+        "btb": False,
+        "ren_count": 0,
+        "ren_source": "tspin_no_line",
+        "text": "T-SPIN",
+        "text_en": "T-SPIN",
+    }
+
+
 def format_opener_entry(t, name):
     """Event log entry for a recognized opener (same shape as the others)."""
     return {
@@ -145,6 +177,14 @@ class PlayerPipeline:
     # as a plain clear_N here AND let the banner event double-count it when
     # it arrives a beat later.
     FLASH_GRACE_S = 1.5
+    # ...but how long a banner can still come depends on how many lines the
+    # flash measured (user: events showed up late — plain clears waited 1.5s).
+    # Banner-after-flash times in every recording: T-SPIN Single / Double /
+    # Triple 0.08-0.26s, T-SPIN Mini 0.14 and 0.95s, TETRIS 0.55-1.14s. 2-3
+    # lines can only become a T-SPIN Double / Triple; 1 line a T-SPIN Single or
+    # Mini. 4 lines can only be a TETRIS, so those don't wait at all (see
+    # process_frame); the 1.5s above stays for anything else.
+    FLASH_GRACE_BY_LINES_S = {1: 1.1, 2: 0.6, 3: 0.6}
     # A banner only counts if a real clear flash (1-4 lit rows) came within
     # this long before it. Every real clear flashes, and its banner follows
     # 0.07-0.7s later (all banner events in the recordings); banners with no
@@ -208,6 +248,7 @@ class PlayerPipeline:
         # per-match counts for the end-of-match summary
         self.tetris_count = 0
         self.tspin_count = 0
+        self.tspin_counts = {"tspin_single": 0, "tspin_double": 0, "tspin_triple": 0, "tspin_mini": 0}   # by kind
         self.max_ren = 0
 
     def _emit_attack_event(self, t, ev, lines, result):
@@ -221,6 +262,8 @@ class PlayerPipeline:
             self.tetris_count += 1
         elif ev["clear_type"].startswith("tspin_"):
             self.tspin_count += 1
+            if ev["clear_type"] in self.tspin_counts:
+                self.tspin_counts[ev["clear_type"]] += 1
         self.max_ren = max(self.max_ren, ev.get("ren_count") or 0)
         entry = format_event_log_entry(t, ev, lines)
         self.event_log.insert(0, entry)
@@ -278,11 +321,15 @@ class PlayerPipeline:
         than MAX_LINES_PER_EVENT) means the row-reading itself was unreliable
         for this frame, so it's dropped too rather than guessed."""
         still_pending = []
+        waiting = False   # an older real clear is still waiting: later ones wait too, so REN counts in order
         for pf in self._pending_flashes:
-            if t - pf["flash_t"] < self.FLASH_GRACE_S:
-                still_pending.append(pf)
-                continue
             n_lines = pf["n_lines"]
+            real = 1 <= n_lines <= MAX_LINES_PER_EVENT
+            if t - pf["flash_t"] < self.FLASH_GRACE_BY_LINES_S.get(n_lines, self.FLASH_GRACE_S) \
+                    or (waiting and real):
+                still_pending.append(pf)
+                waiting = waiting or real
+                continue
             if not (1 <= n_lines <= MAX_LINES_PER_EVENT):
                 self.dismissed_flash_count += 1
                 log.info("[%s] flash at t=%.2f dismissed (measured %d lit rows, not a real clear)",
@@ -312,9 +359,19 @@ class PlayerPipeline:
         streak = self.tracker.streak
         streak_before = (streak.consecutive_clears, streak.b2b_streak)
         before = len(self.tracker.attack_events)
+        minis_before = len(self.tracker.mini_no_line_events)
+        zeros_before = len(self.tracker.tspin_no_line_events)
         self.tracker.update(frame, t)
         self.last_frame_ok_t = t
         new_events = self.tracker.attack_events[before:]
+        for mini_t in self.tracker.mini_no_line_events[minis_before:]:
+            self.event_log.insert(0, format_mini_no_line_entry(mini_t))
+            del self.event_log[EVENT_LOG_MAX:]
+            log.info("[%s] t=%.2f T-SPIN Mini (no line)", self.side, mini_t)
+        for zero_t in self.tracker.tspin_no_line_events[zeros_before:]:
+            self.event_log.insert(0, format_tspin_no_line_entry(zero_t))
+            del self.event_log[EVENT_LOG_MAX:]
+            log.info("[%s] t=%.2f T-SPIN (no line)", self.side, zero_t)
         pc_state = self.tracker.states.get("perfect_clear")
         pc_on = bool(pc_state and pc_state.active)
         if pc_on and not self._pc_active:
@@ -324,10 +381,25 @@ class PlayerPipeline:
         flash_edge = self.flash_detector.update(frame, t)
         if flash_edge:
             n_lines = self.flash_detector.last_edge_row_count
-            self._pending_flashes.append({"flash_t": t, "n_lines": n_lines})
-            if 1 <= n_lines <= MAX_LINES_PER_EVENT:
+            if n_lines == 4 and not any(1 <= pf["n_lines"] <= MAX_LINES_PER_EVENT for pf in self._pending_flashes):
+                # Only a TETRIS clears 4 lines (25 of 25 TETRIS banners in the
+                # recordings followed a 4-line flash): counted now instead of
+                # when its banner shows up 0.55-1.14s later, and that banner
+                # isn't counted again. (With an older clear still waiting, it
+                # waits its turn the usual way, so REN counts in order.)
                 self._clear_flash_times.append(t)
-                self._banner_flash_times.append((t, n_lines))
+                self.tracker.expect_banner("tetris", t + self.BANNER_FLASH_WINDOW_S)
+                ren_count, b2b_streak = self.tracker.streak.register_clear(self.table, "clear_4")
+                btb = is_b2b_eligible(self.table, "clear_4") and \
+                    b2b_streak >= self.table["back_to_back"]["min_consecutive_for_bonus"]
+                result = compute_attack(self.table, "clear_4", ren_count, b2b_streak)
+                ev = {"clear_type": "clear_4", "btb": btb, "ren_count": ren_count, "ren_source": "flash_tetris"}
+                self._emit_attack_event(t, ev, result["total"], result)
+            else:
+                self._pending_flashes.append({"flash_t": t, "n_lines": n_lines})
+                if 1 <= n_lines <= MAX_LINES_PER_EVENT:
+                    self._clear_flash_times.append(t)
+                    self._banner_flash_times.append((t, n_lines))
 
         new_events = self._keep_flash_backed_banners(new_events, t, streak_before)
 
@@ -475,6 +547,12 @@ class PlayerPipeline:
             # piece sends, independent of speed.
             "app": round(self.apm.total_lines / self.queue_tracker.pieces_placed, 2)
                    if self.queue_tracker.pieces_placed else None,
+            # extra stat rows (display.stat_items): lines sent this match, the
+            # current REN (game numbering) and Back-to-Back chain (clears that
+            # got the BtB bonus in a row: the streak minus its first clear)
+            "attack": self.apm.total_lines,
+            "ren": self.tracker.streak.ren_count,
+            "b2b": max(0, self.tracker.streak.b2b_streak - 1),
             "capture_ok": self.last_frame_ok_t is not None and (now - self.last_frame_ok_t) < 2.0,
             "confirmed_flash_clear_count": self.confirmed_flash_clear_count,
             "perfect_clear_count": self.perfect_clear_count,
@@ -487,6 +565,7 @@ class PlayerPipeline:
                 "pieces": self.queue_tracker.pieces_placed,
                 "max_ren": self.max_ren,
                 "tetris": self.tetris_count,
+                **self.tspin_counts,   # tspin_single / _double / _triple / _mini (the summary can show each)
                 "tspin": self.tspin_count,
                 "perfect_clear": self.perfect_clear_count,
             },
@@ -521,6 +600,16 @@ GO_WAIT_TIMEOUT_S = 8.0
 # NEXT queues on screen, full and static, so "8s passed" alone started a
 # phantom match there (live bug, 2026-10-29).
 GO_TIMEOUT_MIN_QUEUE_ADVANCES = 2
+# GO! miss diagnostics (user report: a match start was only picked up by the 8s
+# timeout, live, with no frames kept to say why). While frozen between matches
+# the GO! region and its orange reading are kept for this many frames; when the
+# timeout has to start a match, they're logged and saved as one image.
+GO_TRACE_FRAMES = 150
+# The screen goes black between matches (every match boundary in every
+# recording: 0.0-0.4 mean brightness on a 64x36 shrink, 1-4 frames) and when
+# leaving a match for the menus; the match screen itself never comes close.
+# User's request: on that black, clear the numbers and the summary.
+BLACK_MEAN = 2.0
 # A real GO! only disappears right after a countdown that began on two empty
 # boards: in every recorded match start (8 of 8, five stages) both boards last
 # read empty 2.22-2.30s before the GO! edge. The set-end "WINNER!" cut-scene
@@ -528,6 +617,23 @@ GO_TIMEOUT_MIN_QUEUE_ADVANCES = 2
 # winner's board is still full there, so an edge without empty boards shortly
 # before it is ignored.
 GO_EMPTY_LOOKBACK_S = 4.0
+# A side playing Puyo Puyo (user's request: hide that side's display, for
+# Tetris vs Puyo and when playing Puyo yourself). Puyo has no "NEXT" label box
+# where Tetris has one: on the match screen that label scores 0.24-0.37 on a
+# Puyo side and 0.86-0.97 on a Tetris side (recordings burst_vs_puyo and
+# burst_self_puyo, and every Tetris recording), but a Tetris side dipped to 0.19
+# for a moment once (an effect passing over it: 0.08s, the longest gap in any
+# Tetris recording). So a side only becomes Puyo after its label has been
+# missing this long without a break (was 2.0s; user: hide it sooner), and
+# Tetris again after it's been seen this long.
+PUYO_LABEL_MISSING_S = 0.5
+# The overlays show only while a match screen is up (user's request: from after
+# character select, hidden back at the home screen; display.always_show turns
+# this off). Hidden once no match screen has been seen this long: between two
+# matches the screen leaves it for 0.65s at most (black / loading wipe, every
+# recording), menus and character select stay away far longer.
+MATCH_SCREEN_HIDE_S = 3.0
+TETRIS_LABEL_SEEN_S = 1.0
 # The board-empty fallback doesn't end a match this soon after it started:
 # both boards are still empty for a moment right after GO!.
 START_GRACE_S = 5.0
@@ -554,6 +660,10 @@ class MatchPipeline:
         self._paused = False
         self._paused_offset = 0.0
         self._last_on_screen_t = None
+        self.puyo = {"left": False, "right": False}   # see PUYO_LABEL_MISSING_S
+        self.match_screen = False        # see MATCH_SCREEN_HIDE_S
+        self._off_match_screen_since = None
+        self._puyo_pending = {"left": None, "right": None}
         self._recreate_pipelines()
         self.start_t = None
         self.frame_count = 0
@@ -604,6 +714,7 @@ class MatchPipeline:
         if wait_for_start:
             self._frozen = True
         self.match_reset_count = 0
+        self._go_trace = deque(maxlen=GO_TRACE_FRAMES)  # (raw t, orange, background, GO! up, note, crop)
         # Primary match-boundary signal (user's explicit request): freeze the
         # instant "やった!" (victory) appears — that's when the match is actually
         # decided, well before the longer celebration -> board-clear -> GO!
@@ -617,12 +728,38 @@ class MatchPipeline:
 
     def _recreate_pipelines(self, clock_start_t=None, discard_first_shift=False):
         templates = load_templates()
-        self.left = PlayerPipeline(side="left", templates=templates, profile=self.profile,
-                                    debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t,
-                                    discard_first_shift=discard_first_shift)
-        self.right = PlayerPipeline(side="right", templates=templates, profile=self.profile,
-                                     debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t,
-                                     discard_first_shift=discard_first_shift)
+        for side in ("left", "right"):
+            setattr(self, side, self._new_side(side, templates, clock_start_t, discard_first_shift))
+
+    def _new_side(self, side, templates=None, clock_start_t=None, discard_first_shift=False):
+        return PlayerPipeline(side=side, templates=templates or load_templates(), profile=self.profile,
+                              debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t,
+                              discard_first_shift=discard_first_shift)
+
+    def _update_puyo(self, raw_t):
+        """Follows which sides are playing Puyo (see PUYO_LABEL_MISSING_S) from
+        the NEXT label scores the gate just read on a match-screen frame. A side
+        that changes starts over: whatever was counted while it was Puyo (its
+        chains flash and drop pieces too) or while it wasn't followed is dropped."""
+        scores = getattr(self.gameplay_gate, "last_scores", None) or {}
+        for side in ("left", "right"):
+            if side not in scores:
+                continue
+            seen = scores[side] >= ON_SCREEN_THRESHOLD
+            if seen != self.puyo[side]:          # agrees with what the side is
+                self._puyo_pending[side] = None
+                continue
+            since = self._puyo_pending[side]
+            if since is None:
+                self._puyo_pending[side] = raw_t
+                continue
+            if raw_t - since >= (TETRIS_LABEL_SEEN_S if seen else PUYO_LABEL_MISSING_S):
+                self.puyo[side] = not seen
+                self._puyo_pending[side] = None
+                log.info("%s side is playing %s — %s its display", side,
+                         "Puyo" if self.puyo[side] else "Tetris",
+                         "hiding" if self.puyo[side] else "showing")
+                setattr(self, side, self._new_side(side, clock_start_t=self.start_t))
 
     def rebuild_for_profile(self, profile):
         """Re-creates both side trackers for a new capture profile (e.g. the game
@@ -671,10 +808,55 @@ class MatchPipeline:
         self._probe_queues = None
         self._probe_advances = 0
         self._startup_wait = False
+        self._go_trace.clear()
         self.start_t = clock_start_t
         self._play_started_t = clock_start_t  # None for a reset with no known start
         self.frame_count = 0
         self.match_reset_count += 1
+
+    def _trace_go(self, frame, raw_t, orange, note):
+        """Keeps the GO! region of a between-matches frame (half size) with its
+        orange reading — see GO_TRACE_FRAMES. Frames the match boundary never
+        sees (gate closed for no match UI) are kept too, noted with the reason."""
+        bd = self.boundary_detector
+        x1, y1, x2, y2 = bd.go_region
+        crop = cv2.resize(frame[y1:y2, x1:x2], None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+        background = float(sorted(bd._go_background)[len(bd._go_background) // 2]) if bd._go_background else 0.0
+        self._go_trace.append((raw_t, orange, background, note, crop))
+
+    def _report_go_miss(self, raw_t):
+        """The timeout had to start a match: log what the GO! region read while
+        waiting, and (when debug dumps are on) save it as one strip image."""
+        trace = list(self._go_trace)
+        self._go_trace.clear()
+        if not trace:
+            log.info("GO! missed at t=%.2f: no frames were seen while waiting", raw_t)
+            return
+        peak = max(trace, key=lambda e: e[1])
+        notes = {}
+        for e in trace:
+            notes[e[3] or "checked"] = notes.get(e[3] or "checked", 0) + 1
+        log.info("GO! missed at t=%.2f: %d frames over %.1fs, orange max %.3f at t=%.2f "
+                 "(background %.3f there), frames by kind %s",
+                 raw_t, len(trace), trace[-1][0] - trace[0][0], peak[1], peak[0], peak[2], notes)
+        if not self.debug_dump_dir:
+            return
+        step = max(1, len(trace) // 40)
+        tiles = []
+        for t, orange, background, note, crop in trace[::step][:40]:
+            band = crop[:28].copy() * 0     # caption strip under the picture
+            cv2.putText(band, f"t={t:.2f} {note}", (3, 11), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+            cv2.putText(band, f"orange {orange:.3f} bg {background:.3f}", (3, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 220, 255), 1)
+            tiles.append(cv2.vconcat([crop, band]))
+        cols = 8
+        while len(tiles) % cols:
+            tiles.append(tiles[0] * 0)
+        rows = [cv2.hconcat(tiles[i:i + cols]) for i in range(0, len(tiles), cols)]
+        os.makedirs(self.debug_dump_dir, exist_ok=True)
+        path = os.path.join(self.debug_dump_dir, f"go_miss_t{raw_t:.2f}.png")
+        cv2.imwrite(path, cv2.vconcat(rows))
+        log.info("GO! miss frames saved to %s", path)
 
     def _count_queue_advances(self, frame, t):
         """NEXT-queue shifts on either side this frame (only while a possible
@@ -707,6 +889,9 @@ class MatchPipeline:
         # while the gate is closed (empty queues), where game time is still
         # missing that closed stretch, so the two clocks don't line up.
         raw = t if raw_t is None else raw_t
+        if self._frozen:
+            bd = self.boundary_detector
+            self._trace_go(frame, raw, bd.last_go_conf, "up" if bd._go_active else "")
 
         # Board emptiness is read first, so a GO! edge on this very frame can
         # see it. small epsilon so float accumulation can't land a hair under
@@ -782,8 +967,38 @@ class MatchPipeline:
 
         return self._frozen
 
+    def _blackout_reset(self):
+        """The screen went black (see BLACK_MEAN): clear every number, the
+        clock and so the summary. Between matches the match-start detection
+        carries on as it was (frozen, waiting for GO!); after leaving a match
+        midway (e.g. quitting from the pause menu) it waits like at startup."""
+        log.info("screen went black — clearing the numbers and the summary")
+        if not self._frozen:
+            self._frozen = True
+            self._startup_wait = True
+            self._fallback_saw_empty_since_freeze = False
+        self._recreate_pipelines()
+        self.start_t = None
+        self._play_started_t = None
+        self.frame_count = 0
+        self.match_reset_count += 1
+
     def process_frame(self, frame, t):
-        if not self.gameplay_gate.update(frame):
+        if self.start_t is not None and \
+                float(cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA).mean()) < BLACK_MEAN:
+            self._blackout_reset()
+            return
+        on_screen = self.gameplay_gate.update(frame)
+        if on_screen or getattr(self.gameplay_gate, "last_reason", None) == "pause":
+            self.match_screen = True     # the pause screen is still the match
+            self._off_match_screen_since = None
+        elif self._off_match_screen_since is None:
+            self._off_match_screen_since = t
+        elif t - self._off_match_screen_since >= MATCH_SCREEN_HIDE_S:
+            self.match_screen = False
+        if not on_screen:
+            # off the match screen: a missing label only counts while it's in view
+            self._puyo_pending = {"left": None, "right": None}
             # Menu, dialog, loading wipe or pause: hold every number where it
             # is, and don't run the board-empty fallback either — on non-board
             # screens it reads artwork as pieces and invents match boundaries.
@@ -794,6 +1009,9 @@ class MatchPipeline:
             # only ~2 frames, so it needs every one of them.
             if self._frozen and getattr(self.gameplay_gate, "last_reason", None) == "pause":
                 self._check_match_boundary(frame, t - self._paused_offset, raw_t=t)
+            elif self._frozen:   # not seen by the GO! check at all — keep it for a miss report
+                self._trace_go(frame, t, _orange_ratio(frame, self.boundary_detector.go_region),
+                               f"gate:{getattr(self.gameplay_gate, 'last_reason', None)}")
             if not self._paused:
                 self._paused = True
                 log.info("match screen not visible (%s) — holding numbers",
@@ -812,6 +1030,7 @@ class MatchPipeline:
             log.info("match screen visible again — resuming (%.1fs excluded so far)", self._paused_offset)
         self._last_on_screen_t = t
         raw_t = t
+        self._update_puyo(raw_t)
         t = t - self._paused_offset  # game time from here on
 
         frozen = self._check_match_boundary(frame, t, raw_t=raw_t)
@@ -824,6 +1043,8 @@ class MatchPipeline:
             # progress shows itself by its queues moving.
             waited = self._startup_wait or t - self._awaiting_go_since >= GO_WAIT_TIMEOUT_S
             if waited and self._probe_advances >= GO_TIMEOUT_MIN_QUEUE_ADVANCES:
+                if not self._startup_wait:
+                    self._report_go_miss(raw_t)   # a real between-matches GO! was missed
                 self._frozen = False
                 self._fallback_saw_empty_since_freeze = False
                 self.reset_match(reason="next match confirmed by NEXT-queue movement")
@@ -843,8 +1064,9 @@ class MatchPipeline:
         for side in (self.left, self.right):
             if side.apm.match_start_t is None:
                 side.apm.match_start_t = self.start_t
-        self.left.process_frame(frame, t)
-        self.right.process_frame(frame, t)
+        for side in ("left", "right"):
+            if not self.puyo[side]:       # a Puyo side isn't read at all
+                getattr(self, side).process_frame(frame, t)
         self._last_t = t
         self.frame_count += 1
         now_wall = time.time()
@@ -857,14 +1079,19 @@ class MatchPipeline:
 
     def snapshot(self):
         elapsed = round((self._last_t - self.start_t), 2) if self.start_t is not None else 0
+        sides = {}
+        for side in ("left", "right"):
+            sides[side] = getattr(self, side).snapshot(self._last_t, elapsed)
+            sides[side]["puyo"] = self.puyo[side]   # the overlays hide a Puyo side
         return {
             "match_elapsed_s": elapsed,
             "match_start_t": self.start_t,  # same clock as event_log "t", for match-relative log times
-            "left": self.left.snapshot(self._last_t, elapsed),
-            "right": self.right.snapshot(self._last_t, elapsed),
+            "left": sides["left"],
+            "right": sides["right"],
             "recognition": {"fps": round(self.fps, 1), "frame_count": self.frame_count},
             "match_reset_count": self.match_reset_count,
             "frozen": self._frozen and not self._startup_wait,
+            "match_screen": self.match_screen,   # the overlays hide while False (see MATCH_SCREEN_HIDE_S)
             "paused": self._paused and not self._frozen,
             # A possible next match is waiting for GO!. The overlays show
             # 試合終了 first while frozen, so on the set-end menu (which can

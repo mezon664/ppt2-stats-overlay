@@ -14,3 +14,8 @@ server_log.txt
 # file is created on first run)
 config/overlay_settings.json
 config/*.tmp
+# Fonts a user loaded from the settings window (copies of their own files)
+assets/user_fonts/
+
+# Release zips (tools/make_release.py)
+dist/

@@ -3,12 +3,10 @@ multi-banner merging into single attack events.
 
 Coverage note (be explicit about what is and isn't supported — do not silently
 mis-classify what we haven't actually seen in footage):
-  - Confirmed templates: TETRIS (clear_4), T-SPIN Double, T-SPIN Triple, BACK TO BACK,
-    REN counter (presence; digit reading only calibrated for "1" and "2" so far).
-  - NOT yet confirmed to exist or have templates: T-SPIN Mini/Single banners, plain
-    Single/Double/Triple (non T-spin) banners, Perfect Clear banner. If the real game
-    shows these and they're not recognized, that is an honest detection gap, not a
-    guess we're making here.
+  - Confirmed templates: TETRIS (clear_4), T-SPIN Single/Double/Triple, T-SPIN Mini
+    (with and without a line), BACK TO BACK, PERFECT CLEAR, REN counter (presence;
+    digit reading only calibrated for "1" and "2" so far).
+  - Plain Single/Double/Triple show no banner at all (they come from the clear flash).
 """
 import glob
 import json
@@ -75,6 +73,27 @@ TEMPLATES = {
     # Same badge, word "Triple" — cut the same way (40x16, word only) from a live
     # frame of a real left-side T-SPIN Triple (debug dump at t=138.86, current theme).
     "tspin_triple": {"file": "../assets/templates/t_tst_tight.png", "window": (15, 395, 240, 535), "side_native": "left"},
+    # T-SPIN Mini: the same badge, smaller, with a yellow "Mini" on a navy tab
+    # at its left — "Mini T-SPIN" with no line cleared, "Mini T-SPIN Single"
+    # with one. The template is that yellow word (29x15, on the badge's own navy,
+    # so the stage behind doesn't matter), cut from burst_tsm (t=15.05, left).
+    # Measured: 0.76-0.96 on all 4 real Minis (3 with a line incl. one by the 2P
+    # CPU in burst_boundary, 1 without), at most 0.52 on every other frame of
+    # every recording.
+    "tspin_mini": {"file": "../assets/templates/t_tspin_mini_word.png", "window": (15, 395, 240, 535), "side_native": "left"},
+    # The small "Single" under a Mini badge, only read when "Mini" first shows
+    # up, to tell the two kinds apart (see MINI_SINGLE_THRESHOLD). Not a
+    # clear-type label on its own.
+    "tspin_mini_single": {"file": "../assets/templates/t_tspin_mini_single.png", "window": (15, 395, 240, 535), "side_native": "left"},
+    # A T-SPIN that cleared no line: the badge says only "T-SPIN", on a shorter
+    # ribbon than the Single / Double / Triple ones. The template is its
+    # "-SPIN" letters (48x17, on the badge's own navy), cut from burst_tspin_zero
+    # (t=2.59, left). Measured: 0.94-0.97 while either of the 2 real ones was
+    # up (0.65 on the first fade-in frame), at most 0.66 on every frame of
+    # every other recording (incl. the T-SPIN Single / Double / Triple / Mini
+    # badges, where its letters sit differently). Right side not yet seen on
+    # a recording. Not a clear: see TSPIN_ZERO_THRESHOLD / tspin_no_line_events.
+    "tspin_zero": {"file": "../assets/templates/t_tspin_zero_word.png", "window": (15, 395, 240, 535), "side_native": "left"},
     # Tighter text-only crop (just "BACK", not the blue ribbon) — the full-ribbon
     # template's background noise floor (~0.86 from icy decorative cubes, which are
     # also blue) overlapped with genuine faint-pulse confidence (~0.56-0.97), so NO
@@ -147,8 +166,7 @@ REN_SUPPORTED = True
 # pixels are shared artwork. Within a group, only the single highest-scoring label
 # per frame is allowed to count as a candidate match.
 EXCLUSIVE_GROUPS = [
-    {"tspin_double", "tspin_single", "tspin_triple"},
-    # tspin_mini isn't templated yet — add it here once it is.
+    {"tspin_double", "tspin_single", "tspin_triple", "tspin_mini"},
     set(REN_LABELS),
 ]
 
@@ -161,8 +179,12 @@ EXIT_GRACE_FRAMES = 2  # consecutive below-exit frames before declaring "ended" 
 #  - tetris: best achievable match on a confirmed-genuine instance was only 0.679
 #    (position/scale varies with stack height — see phase2d notes), while background
 #    frames stayed under ~0.47, so 0.70 was too strict and caused a confirmed miss.
-ENTER_THRESHOLDS = {"back_to_back": 0.90, "tetris": 0.60}
-EXIT_THRESHOLDS = {"back_to_back": 0.85, "tetris": 0.50}
+ENTER_THRESHOLDS = {"back_to_back": 0.90, "tetris": 0.60, "tspin_zero": 0.85}
+EXIT_THRESHOLDS = {"back_to_back": 0.85, "tetris": 0.50, "tspin_zero": 0.70}
+# tspin_zero only counts when none of the line-clearing T-SPIN words is there
+# (they peaked at 0.33-0.41 on the real no-line badges; a real word is 0.7+).
+TSPIN_ZERO_WORD_MAX = 0.6
+TSPIN_WORDS = ("tspin_single", "tspin_double", "tspin_triple", "tspin_mini")
 
 # back_to_back's pulse-to-pulse gap was measured at up to ~2.8s in this recording
 # (peaks at rel t=6.2, 7.73, 10.53, 12.47s), so the default 2-frame (~0.13s) grace
@@ -172,9 +194,14 @@ EXIT_THRESHOLDS = {"back_to_back": 0.85, "tetris": 0.50}
 # were detected as False). 45 frames (~3s at 15fps) bridges the measured gaps.
 EXIT_GRACE_FRAMES_OVERRIDES = {"back_to_back": 45}
 
-RAW_CLEAR_LABELS = {"tetris", "tspin_double", "tspin_single", "tspin_triple"}  # mutually-exclusive clear-type banners
+RAW_CLEAR_LABELS = {"tetris", "tspin_double", "tspin_single", "tspin_triple", "tspin_mini"}  # mutually-exclusive clear-type banners
 CLEAR_TYPE_MAP = {"tetris": "clear_4", "tspin_double": "tspin_double", "tspin_single": "tspin_single",
-                  "tspin_triple": "tspin_triple"}
+                  "tspin_triple": "tspin_triple", "tspin_mini": "tspin_mini"}
+# When "Mini" first crosses its threshold, the small "Single" under it scored
+# 0.64-0.88 on the 3 real Minis with a line and 0.33-0.36 on the one without
+# (same frame, fade-in included). Below this it's a Mini with no line: not a
+# clear (no attack, no REN/BtB change), reported in mini_no_line_events instead.
+MINI_SINGLE_THRESHOLD = 0.5
 
 MERGE_WINDOW_S = 0.5  # banners starting within this many seconds of each other -> one attack event
 
@@ -259,6 +286,11 @@ class BannerTracker:
         self.match_log = []     # every raw per-frame match: (t, label, conf, pos)
         self.banner_events = []  # deduped single events: (start_t, end_t, label, best_conf)
         self.attack_events = []  # resolved, in order
+        self.mini_no_line_events = []  # times of a T-SPIN Mini that cleared no line (not attacks)
+        self.tspin_no_line_events = []  # times of a T-SPIN (not Mini) that cleared no line (not attacks)
+        # label -> game time until which that clear's banner is already accounted
+        # for (the pipeline counted it from its flash; see expect_banner)
+        self._expected_banners = {}
         self.attack_table = load_table()
         self.streak = AttackStreakTracker()
         self.btb_mismatch_log = []  # (t, badge_said, streak_said) — diagnostic only
@@ -273,6 +305,12 @@ class BannerTracker:
         self.debug_dump_threshold = debug_dump_threshold
         self._debug_dump_cooldown_until = 0.0
         self._last_dump_hits = None
+
+    def expect_banner(self, label, until_t):
+        """The clear this banner belongs to was already counted (the pipeline
+        counts a 4-line flash as a TETRIS right away): the next such banner up
+        to until_t is not counted again."""
+        self._expected_banners[label] = until_t
 
     def _current_screen_ren(self):
         """Currently-active REN digit per the on-screen badge, or None if no digit
@@ -333,7 +371,15 @@ class BannerTracker:
                     st.best_conf = conf
                     st.best_pos = pos
                     st.below_exit_run = 0
-                    if label in RAW_CLEAR_LABELS:
+                    if label == "tspin_mini" and raw_scores.get("tspin_mini_single", 0.0) < MINI_SINGLE_THRESHOLD:
+                        self.mini_no_line_events.append(round(t, 2))
+                    elif label == "tspin_zero":
+                        if all(raw_scores.get(w, 0.0) < TSPIN_ZERO_WORD_MAX and not self.states[w].active
+                               for w in TSPIN_WORDS if w in self.states):
+                            self.tspin_no_line_events.append(round(t, 2))
+                    elif label in RAW_CLEAR_LABELS and t <= self._expected_banners.get(label, -1.0):
+                        del self._expected_banners[label]   # already counted from its flash
+                    elif label in RAW_CLEAR_LABELS:
                         clear_type = CLEAR_TYPE_MAP[label]
                         # BtB is derived from our OWN count of consecutive eligible
                         # clear banners, not from the B2B badge's live visual state.

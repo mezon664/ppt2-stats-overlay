@@ -36,7 +36,9 @@ def test_match_stats_count_the_summary_rows():
     p.queue_tracker.pieces_placed = 30
     stats = p.snapshot(10.0, 10.0)["match_stats"]
     assert stats == {"lines_sent": 15, "pieces": 30, "max_ren": 2, "tetris": 1,
-                     "tspin": 2, "perfect_clear": 0}
+                     "tspin": 2, "perfect_clear": 0,
+                     # each kind on its own too (the summary can show them separately)
+                     "tspin_single": 0, "tspin_double": 1, "tspin_triple": 1, "tspin_mini": 0}
 
 
 def test_perfect_clear_counts_in_the_summary():

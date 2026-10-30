@@ -12,7 +12,7 @@ CLEAR_TYPE_LABEL_EN = {
     "tspin_double": "T-SPIN Double",
     "tspin_single": "T-SPIN Single",
     "tspin_triple": "T-SPIN Triple",
-    "tspin_mini": "T-SPIN Mini",
+    "tspin_mini": "T-SPIN Mini Single",
 }
 
 REN_BREAK_EN = "REN ended (no clear)"

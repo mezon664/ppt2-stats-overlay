@@ -80,3 +80,44 @@ def test_only_the_first_placements_are_checked():
     det.placements = MAX_PLACEMENTS        # first bag long over (e.g. a mid-match board)
     assert det.on_placements(frame, 1) is None
     assert det.name is None
+
+
+def with_garbage(frame, rows, holes=(3, 6, 0, 8), color=(205, 205, 205)):
+    """The left board pushed up by `rows` garbage rows (grey, one hole each),
+    the way garbage received during the opening lifts the stack."""
+    from capture_profile import scale_box
+    from board_read import LEFT_BOX, ROWS, COLS, cell_center
+    h, w = frame.shape[:2]
+    box = scale_box(LEFT_BOX, compute_profile(w, h))
+    x1, y1, x2, y2 = box
+    cell_h, cell_w = (y2 - y1) / ROWS, (x2 - x1) / COLS
+    out = frame.copy()
+    shift = int(round(cell_h * rows))
+    out[y1:y2 - shift, x1:x2] = frame[y1 + shift:y2, x1:x2]
+    for r in range(rows):
+        row = ROWS - 1 - r
+        for col in range(COLS):
+            cx, cy = cell_center(box, col, row)
+            fill = (15, 15, 25) if col == holes[r % len(holes)] else color
+            cv2.rectangle(out, (int(cx - cell_w / 2) + 1, int(cy - cell_h / 2) + 1),
+                          (int(cx + cell_w / 2) - 1, int(cy + cell_h / 2) - 1), fill, -1)
+    return out
+
+
+def detect_frame(frame, side="left"):
+    return OpenerDetector(side, compute_profile(frame.shape[1], frame.shape[0])).on_placements(frame, 1)
+
+
+@pytest.mark.parametrize("rows", [1, 2, 4])
+def test_opener_on_top_of_garbage(rows):
+    """Garbage received during the opening (user's request): the shape is
+    found on top of it."""
+    frame = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))
+    assert detect_frame(with_garbage(frame, rows)) == "迷走砲"
+
+
+def test_coloured_rows_are_not_garbage():
+    """A row of the player's own (colored) blocks with one gap is not
+    garbage, so nothing is set aside for it."""
+    frame = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))
+    assert detect_frame(with_garbage(frame, 2, color=(40, 160, 230))) is None

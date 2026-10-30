@@ -18,7 +18,7 @@
 - 終了: タスクトレイのアイコン →「終了」（サーバーも止まる）。
 - 設定画面: 起動時に自動で開く／トレイアイコンをダブルクリック。設定は `config/overlay_settings.json`（gitに入れない。初期値は `scripts/config_store.py`）。
 - サーバーログ: `logs/server.log`
-- テスト: `.venv\Scripts\python.exe -m pytest tests -q`（現在 192 件すべて成功）
+- テスト: `.venv\Scripts\python.exe -m pytest tests -q`（現在 218 件すべて成功）
 - 再起動の仕方（作業後）: data_server / launch.py の python プロセスを止めて `start.bat` を実行。
 - git: リポジトリあり（main）。コミットには `Co-Authored-By: Claude ...` を付けてきた。
 
@@ -44,7 +44,7 @@
 `debug_frames/burst*` は 約10fps の連番画像（ファイル名 `f_NNNN_tT.png`）。
 - `burst`（ポーズ48秒を含む）、`burst2`（1→2→3→4段消し）、`burst_ren`（12連続消し）、`burst_break`（REN途切れ）、
   `burst_boundary`（試合の区切り4回・TETRISパフェ・合掌TSD・りねパフェ(左凸)を含む）、`burst_pc`（2段パフェ・パフェ積み）、
-  `burst_hold`（新しい試合の最初のHOLD使用を両サイド含む。HOLD誤カウント修正の検証に使用）
+  `burst_hold`（新しい試合の最初のHOLD使用を両サイド含む。HOLD誤カウント修正の検証に使用）、`burst_tsm`（T-SPIN Mini：ライン消去あり2回・なし1回、左。後半はポーズ画面）
 - 再生して結果を見る: `tools/validation/validate_burst_*.py`（`.venv\Scripts\python.exe tools\validation\validate_burst_boundary.py`）
 - サイズ違いの検証: `tools/validation/size_check.py burst_boundary 1920 1080`
 - 開幕判定の瞬間の画像を保存: `tools/validation/opener_frames.py burst_pc`
@@ -79,11 +79,11 @@
    **試合開始直後の1個目も誤カウントしていた**（ゴー!が消えて0.16〜0.27秒で必ずNEXTが1つ進む＝最初のミノの出現。burst_boundaryの4試合×両側すべて）
    → `NextQueueTracker(discard_first_shift=True)` で最初の1回だけ数えない。ゴー!で試合開始した時だけ有効（起動直後・ウインドウサイズ変更・ゴー!が見えない時の代替経路では無効）。
 5. 実戦で未確認: パフェ積み(端あけ)、りねパフェの判定、APP と試合結果まとめの実戦表示。
-6. 文字の設定: `display.text_weight`（normal / bold、初期値 bold）と `display.text_outline`（文字に黒い縁、初期値 on）。
+6. 文字の設定: `display.text_weight`（設定画面のスライダーで 0〜100、初期値 65＝以前の「太い」。0〜30 は Regular を少し太らせ、30〜100 は Bold をさらに太らせる: HUD `weight_style`／OBS `weightStyle`。古い "normal"/"bold" は 30/65 として読む）と `display.text_outline`（文字に黒い縁、初期値 on）。
    フォント（Yu Gothic UI）は Bold までしかなく 800/900 を指定しても変わらなかったので、bold は「同じ色の縁取り（文字サイズの5%）」で太らせる。
    「とても太い」はユーザーが不要とのことで削除。縁は黒・文字サイズの10%（紺だと帯や試合結果の箱の色と同じで見えなかった）。HUD は `hud/overlay.py` の `TEXT_WEIGHT_PRESETS`/`set_text_style`、
    OBS は `--fw-*` 変数と `body.outlined`、設定画面に「文字の太さ」「文字に縁をつける」。
-   ミニゲージ(gauge)の文字（ラベルと数値）を盤面側の80の範囲に寄せ、始まりを帯(band)と揃えた（ユーザー要望）。ゲージのバーは元の長さ(104)のまま（`GAUGE_TEXT_W`）。
+   ミニゲージ(gauge)の文字（ラベルと数値）を盤面側の86の範囲に寄せた（帯(band)の文字の始まりより少し左。ユーザー要望で80→86）。ゲージのバーは元の長さ(104)のまま（`GAUGE_TEXT_W`）。
    数値の幅を固定（APM 888.8 / PPS・APP 8.88 ぶん、`VALUE_TEMPLATES`・OBSは `.v-*` の min-width）して、数値が変わってもラベルが動かないようにした。
    ポップ(pop)のフォントをゲームに寄せる件: M PLUS Rounded 1c / Mochiy Pop One を比較したが、ユーザーは「今のままでいい」。変更なし。
    帯のグラデーションを濃くする案は試したが、ユーザーが元のほうが良いとのことで戻した。
@@ -95,19 +95,97 @@
    - 抜け道はゲーム描画への割り込み（Discordオーバーレイ/OBSゲームキャプチャ方式）だけで、プロジェクトの約束で不可。dxcam は入れて試したあと削除済み。
    - ついでに入れたもの: ウインドウサイズが変わっても0.5秒続くまで使わない（`live_capture.SizeSettler`）。一瞬のサイズぶれで試合の数値がリセットされていたため。
 
+## 開幕名の表示時間
+- どの位置（盤面の上/HOLDの下/名前の帯/上の中央）でも4秒で消える（ユーザー要望）。出るとき0.25秒・消えるとき1.2秒のなめらかなフェード（`popup_alpha`）。
+  HUD は状態受信からの経過を足して約60fpsで更新、OBS は CSS の opacity transition でつなぐ。
+
+## 見た目のカスタマイズ（2026-10-30）
+- デザイン「シンプル（四角）」(`style: simple`)：数値・イベント・試合時間・試合結果・開幕名を角なしの単色の四角で。
+- 追加デザイン7種（2026-10-30。22案の見本からユーザーが選んだ。アーケード・電光掲示板は試作したが不要とのことで外した）:
+  `frame`「カラー枠」（枠線が各プレイヤーの色／共通部品は文字色。最初は光る「ネオン」だったが、光は不要・名前を変えてとのことで変更。古い設定の `neon` は `frame` として読む: `config_store.STYLE_RENAMES`）、`slash`（行ごとの斜めの箱を階段状に）、`hex`（六角形のハチの巣。横は最大2列で、それ以上は下に伸びる: `hex_cells`）、
+  `meter`（一番上の数値を円弧メーター、残りはその下に文字。横幅を帯くらいに抑えるため下に並べる）、`tower`（数値ごとの縦ゲージ）、`minimal`（背景なし・数字の下に線。線がこのデザインの「背景」扱い: 濃さは背景の濃さ、色は専用の `line_color`（初期値は白、部品ごとにも設定可）。設定画面ではミニマル線のとき「背景の色」の行が「背景（線）の色」になり line_color を変える）、
+  `trend`（数値ごとに直近1分の推移の折れ線。1秒に1回記録、試合時間が戻ったら＝新しい試合で消す。HUD は `StatBlock.history`、OBS は `recordHistory`）。
+  HUD は `hud/overlay.py` の `NEW_STYLES` / `FRAMES`（他の部品の箱の種類）/ `paint_frame` / `StatBlock._paint_new`、OBS は `.st-<名前>` と `body.style-<名前>` の CSS。
+  新デザインの数値は盤面から 6px（基準）離す（`NEW_STYLE_GAP`。盤面のふちに張り付いて「右にずれている」と言われた）。
+  設定画面のデザイン一覧はシンプルな順（`settings_window.STYLE_ORDER`）: 文字だけ→ミニマル線→シンプル→帯→カラー枠→スラッシュ→ポップ→ミニゲージ→推移グラフ→縦メーター→円形メーター→六角形→中央VSバー。
+  六角形・縦メーターは表示する数値が多いと横に長くなる。
+- 色: `display.bg_color` / `text_color`（#rrggbb）。ラベル・イベント・ポップの時計・縁取りの色はこの2色から混ぜて作る（HUD `set_colors`、OBS `setColors`）。
+  背景の初期値は黒 `#000000`（2026-10-30 ユーザー指定。以前は紺 `#0c163c`）。
+- 開幕名（テンプレ名）だけ文字を少し細く: 太さの上乗せを他の文字の0.4倍（HUD `OPENER_NAME_THICKEN`、OBS `.oname` の text-stroke）。
+  「文字に縁」の縁は文字が明るければ黒、暗ければ白（暗い文字に黒い縁でつぶれたため）。プレイヤー色（青・赤）の部分は変えない。
+- フォント: `display.font_family`（初期値 Meiryo＝ユーザー指定、空＝Windows の標準 Yu Gothic UI）、ファイルから読み込むと `assets/user_fonts/` にコピーして `font_file` に記録（gitには入れない）。
+  OBS は `../assets/user_fonts/...` を FontFace で読む。`font_file` は `user_fonts/<名前>.(ttf|otf|ttc)` 以外は受け付けない。
+- 帯・ミニゲージの試合時間・試合結果は角なしの四角（グラデーションは試したがユーザー判断で四角に）。
+- APM/PPS/APP は表のように揃える（ラベル左端・数値右端、`StatBlock._columns`、OBS は `alignStatColumns`）。
+
+- 設定画面はタブ4つ（デザイン / 表示 / 位置 / OBSに映す）。開くとデザインタブ。デザインは見本付きカード（HUDと同じ描画で今の色・フォント・項目を反映、`render_style_preview`）。
+  OBSタブ: 手順、overlay.html の場所のコピー、ブラウザで確認。`hud/settings_window.py`。
+- 表示する数値: `display.stat_items`（並び順つき。apm/pps/app/attack/pieces/ren/b2b）。旧 show_apm/pps/app は読み込み時に引き継ぐ。
+  attack=送った段数、pieces=置いたミノ数、ren=今のREN、b2b=B2Bが続いた回数（ストリーク-1、0は「--」）。サーバーのスナップショットに追加済み。
+  数値の箱はラベルと数値の最大幅に合わせて広がる（`StatBlock._needed_width`）。
+- ラベルの文言: `display.labels`（例 {"apm": "火力/分"}、12文字まで）。
+- プレイヤー色: `display.player_color_left/right`（文字用の淡い色は自動）。
+- 設定画面ではマウスホイールで値が変わらない（プルダウン・数値欄・スライダーの上でもページのスクロールだけ。`SettingsWindow.eventFilter`）。
+- 設定画面の色（背景・文字）には「元に戻す」: 全体なら初期値へ、部品なら全体と同じに戻す。部品の状態表示（この部品だけ／全体と同じ）はユーザーの希望で削除。「全体」で値を変えると、その項目の部品ごとの値も消えて全部の部品に効く（部品に残った黒の背景が優先されて「全体で色が変わらない」と言われた）。ボタンは「全体をこの色に合わせる」1つだけ（ユーザー指定）: 選んでいる部分の色（背景・文字・ミニマル線の線）を全体の色にして、全部の部分の個別の色を消す。大きさと背景の濃さはそのまま。「全体」を選んでいるときは押せない。
+- 部品ごとの設定: `display.parts.{stats,clock,events,summary,opener}` に scale / background_opacity / bg_color / text_color。
+  書いていない値は全体の値に従う（`config_store.part_value`）。設定画面の「対象」で全体／部品を選ぶ。HUD は部品ごとに描く直前に色を切り替え（`use_colors`）、OBS は要素ごとに CSS 変数。
+- プリセット: 設定ファイルの `presets`（言語以外の見た目一式）。書き出しは `{"format": "ppt2-stats-overlay-preset", ...}` の JSON。
+
+## 試合の区切り
+- 画面が暗転（64x36に縮めた平均の明るさ < 2）したら数値と試合結果を消す（`MatchPipeline._blackout_reset`）。暗転は試合の区切りごとに毎回起きる（全録画で確認）。
+- 「ゴー!」を取りこぼして8秒の予備判定で始まったときは、待っていた間の「ゴー!」の場所の画像を `debug_frames/go_miss_t*.png` に保存し、ログにオレンジ量を出す。
+  2026-10-30 19:18 に実戦で1回取りこぼし（原因未特定）。次に起きたらこの画像で調べる。
+
 ## 今後やりたいこと（ユーザーのリスト、2026-10-30。順番は未定）
 ユーザーの言葉のまま＋確認した内容と必要なもの。
-1. **T-SPIN Mini の実装** — バナーのテンプレ画像が要る → T-SPIN Mini が出る場面の録画が必要。
+1. ~~**T-SPIN Mini の実装**~~ → 済（2026-10-30、録画 `burst_tsm`）。バナーは2種類: ライン消去なし「Mini T-SPIN」、あり「Mini T-SPIN Single」。
+   - 判定: 左の紺タブの黄色い「Mini」（`t_tspin_mini_word.png`）。出始めた瞬間に小さい「Single」（`t_tspin_mini_single.png`）が 0.5 以上ならライン消去あり。
+     実測: Mini 0.76〜0.96（本物4回、うち1回は burst_boundary の2P CPU）／それ以外の全録画で最高0.52。Single はあり0.64〜0.88／なし0.33〜0.36。
+   - ライン消去あり = `tspin_mini`（表示「T-SPIN Mini Single」、攻撃0段・B2B対象、1段の光が必要）。なし = 攻撃でもクリアでもない、イベント履歴に「T-SPIN Mini」だけ出す（`mini_no_line_events`）。
+   - 実戦（2026-10-30 19:10頃、ユーザー操作）: Mini Single 4回（うち2回はB2Bで+1）、ライン消去なし1回を認識。誤って捨てたバナーなし。
+   - 注意: 盤面の一番上の段を消したとき（burst_boundary 右 t=107.5、負け直前）、光の段数を2段と測り、Miniバナーが段数不一致で捨てられた。光の測り方の既知の弱点（Mini に限らない）。
 2. **開幕テンプレを全部** — テトリステンプレ整理Wiki の全テンプレのタグ（テト譜）を `assets/openers.json` に追加。数が多いので重複・似た形の確認（tests/test_opener.py）が重要。
 3. **他言語** = 英語版のぷよテト2に対応（表示の言語ではなく、ゲーム側が英語のとき）。「やった!」「ゴー!」等のテンプレが英語表記で違うはず → 英語版での録画が必要（配布準備の「英語版ゲームの『やった!』対応」と同じ件）。
 4. ~~**縁あり（文字に縁をつける）を初期値に**~~ → 済（`DISPLAY_DEFAULTS["text_outline"] = True`、OBS の DEFAULTS も）。
-5. **キャラ選択後から表示、ホームに戻ったら非表示**（常に表示する設定項目も追加） — キャラ選択画面・ホーム画面の判定が必要 → それぞれの画面の録画が必要（キャラ選択は 2026-10-30 の調査で1枚取れている）。
+5. ~~**キャラ選択後から表示、ホームに戻ったら非表示**~~ → 済（2026-10-31）。画面の種類を個別に見分けるのではなく「試合画面（NEXT 枠が見える／ポーズ中）が出ている間だけ表示」にした: 試合画面が `live_pipeline.MATCH_SCREEN_HIDE_S`（3秒）見えなければ隠す（試合と試合の間に試合画面から外れるのは全録画で最長0.65秒）。snapshot の `match_screen`、設定 `display.always_show`（「ホーム画面やメニューでも常に表示する」、初期値オフ）。HUD `_away_from_match`、OBS `body.away`。
 6. ~~**開幕テンプレ名のカッコ部分はいらない**~~ → 済（`opener_detect.screen_name` が（）/() 部分を外す。openers.json の名前はWikiのまま）。
-7. **たいぷよ（相手がぷよ）や自分がぷよを使う時は非表示** — ぷよ側の盤面の判定が必要 → ぷよを使った試合の録画が必要。
+7. ~~**たいぷよ（相手がぷよ）や自分がぷよを使う時は非表示**~~ → 済（2026-10-30、録画 `burst_vs_puyo`=右ぷよ、`burst_self_puyo`=左ぷよ）。
+   - 判定: ぷよ側には NEXT の枠（ラベル）がない。試合画面での一致度: ぷよ側 0.24〜0.37／テトリス側 0.86〜0.97（ただしテトリス側が一瞬 0.19 に落ちたことが1回）。
+     → 2秒続けて見えなければ「ぷよ」、1秒続けて見えれば「テトリス」に戻す（`live_pipeline.PUYO_LABEL_MISSING_S` / `TETRIS_LABEL_SEEN_S`）。試合画面以外ではリセット。
+   - ぷよ側は認識そのものを止める（ぷよの連鎖の光や落下を数えない）。切り替わったときその側は数え直し。snapshot の各側に `"puyo": true`。
+   - HUD・OBS とも、ぷよ側の数値・イベント履歴・開幕名を隠し、試合結果のその列は空欄、versus は数字なし＋バーは中立。
+   - 録画での確認: ぷよ側だけ正しく判定（12.8秒・8.5秒時点）、テトリス同士の録画8本では一度も誤判定なし。テスト画像 `tests/fixtures/puyo_left.jpg` / `puyo_right.jpg`。
+   - 両方ぷよ（ぷよ同士）は NEXT 枠が両方ないので試合画面と判定されず、何も数えない（表示は止まったまま）。
 8. ~~**試合結果の数値や文字は中央揃えに**~~ → 済（両者の列を幅の20%/80%を中心に中央揃え。HUD `SummaryBlock.COL_X`、OBS は3列グリッド）。
 9. **試合結果の背景などをかっこよく** — デザイン案を作って見てもらう。
 10. **デザイン「ネコ」** = 猫の実写素材を使ったネタデザイン。ライン消去のたびに猫の鳴き声が鳴る。
     → 写真・音声は使ってよいライセンスの素材が必要（フリー素材の候補を探してユーザーに確認）。音を鳴らす仕組みは HUD/OBS に新規。
+
+## 2026-10-31 に入れたもの・残り
+- **勝手にポーズされる件**: このゲームはフォーカスを失うと自動でポーズする。アプリ起動時に HUD・設定画面がフォーカスを奪っていた（作業中の再起動のたびに起きていた）。
+  HUD は `WindowDoesNotAcceptFocus`＋`WA_ShowWithoutActivating`＋`WS_EX_NOACTIVATE`。設定画面は「ゲームが起動中なら開かず、トレイ通知で場所を知らせる」（WA_ShowWithoutActivating だけでは設定画面がフォーカスを取った）。
+  ゲーム起動中の再起動で前面ウィンドウが変わらないことを確認済み。再起動は start.bat ではなく `.venv\Scripts\pythonw.exe launch.py` を CREATE_NO_WINDOW で（cmd の黒い窓を出さない）。
+- ぷよ判定を 2秒→0.5秒に（`PUYO_LABEL_MISSING_S`。テトリス側で NEXT 枠が消えた最長は全録画で0.08秒）。録画でぷよ側は出てから約0.5秒で非表示、テトリス録画で誤判定なし。
+- 初期デザインはミニゲージ（`style: gauge`）。PIECE の初期ラベルは PIECES。イベント履歴の件数は最大10。
+- 試合結果に出す項目を選べる（`display.summary_items`、`config_store.SUMMARY_ITEMS` の順で固定）。T-SPIN は全部まとめて／Single／Double／Triple／Mini を別々に選べる（`match_stats` に `tspin_single` などを追加）。
+- 縦メーターを詰めた（細く短いバー、列の間隔2）。スラッシュと六角形の背景は背景の濃さどおりに（以前は最低0.7/0.6で下げても変わらなかった）。
+- **ライン消去なしの T-SPIN**（録画 `burst_tspin_zero`、左で2回）: バナーは短い帯に「T-SPIN」だけ。テンプレ `t_tspin_zero_word.png`（「-SPIN」の文字）。
+  実測: 本物 0.94〜0.97（最初のフェードイン1枚だけ0.65）、他の全録画の全フレーム（Single/Double/Triple/Mini のバナー含む）で最高0.66 → 入りのしきい値 0.85。
+  さらに Single/Double/Triple/Mini の文字が 0.6 未満のときだけ（`TSPIN_ZERO_WORD_MAX`）。攻撃にもクリアにも数えず、イベント履歴に「T-SPIN」とだけ出す（`tspin_no_line_events`）。右側の実物はまだ録画にない。
+- **イベント表示の遅れを短縮**: 普通のライン消去は「後から T-SPIN/TETRIS のバナーが来ないか」1.5秒待っていた。全録画の実測（バナーが光の何秒後に来るか）: T-SPIN S/D/T 0.08〜0.26秒、Mini 0.14/0.95秒、TETRIS 0.55〜1.14秒。
+  → 光で測った段数ごとに待ち時間を変えた（`FLASH_GRACE_BY_LINES_S`: 1段 1.1秒、2〜3段 0.6秒）。4段は TETRIS しかないので光の時点ですぐ数え、後から来る TETRIS バナーは数えない（`BannerTracker.expect_banner`）。
+  4段の光25回すべてが TETRIS バナーと対応していたのを確認済み。おまけで burst2 の最後、バナーが出なかった本物の TETRIS（点数 17818→21442）を拾えるようになった。待っている古い消去があるときは順番を守る（REN の数え順）。
+- 開幕テンプレ名を出しておく時間を選べる（`display.opener_seconds`: 2/3/4/6/8/10秒・試合が終わるまで(0)、初期4秒）。
+- 1P だけ／2P だけ表示（`display.players`: both/left/right）。表示しない側はぷよ側と同じ扱い（`mark_hidden_sides`、OBS は render で `hidden`）。
+- **お邪魔を受けても開幕テンプレを判定**: 盤面の一番下から「ちょうど1マスだけ空いていて、ブロックが全部灰色」の行をお邪魔として数え、その上に形がぴったり乗っているかを見る（`opener_detect.garbage_rows`）。
+  お邪魔のブロックは彩度0、ミノは120〜255 → `GARBAGE_SAT_MAX` 30。全録画の全フレーム・両側で「お邪魔を除いたら開幕に一致」は0件（誤検知なし）。本物（お邪魔の上の開幕）の録画はまだない → 合成した画像でテスト。
+- **アップデートの仕組み**（ユーザー希望。開発は続けるので、新しい版を出し続ける前提）:
+  - 版番号は `scripts/version.py` の VERSION（今 0.1.0）。配布先は GitHub `mezon664/ppt2-stats-overlay` のリリース（`updater.UPDATE_REPO`）。リポジトリは作成済み（Public）。
+  - アプリ: 起動時に最新リリースを確認（設定「アップデート」タブ、`update.check_on_start`）→ 新しければトレイ通知 → 「更新して再起動」で zip を GitHub からだけダウンロード（`ALLOWED_HOSTS`）→ 展開（外へ出るパスは拒否）→ PowerShell の後始末スクリプトがアプリ終了を待って robocopy で上書き（削除はしない）→ 再起動。勝手には更新しない。
+    ユーザーのもの（`config/overlay_settings.json`、`assets/user_fonts/`、logs、debug_frames など）は zip に入れず、入っていても消してから写す（`PRESERVE`）。
+  - **新しい版の出し方**: `scripts/version.py` を上げる → コミット → タグ `v<版>` を push。`.github/workflows/release.yml` が版とタグの一致確認・テスト・`tools/make_release.py` で zip 作成・リリース公開まで自動。変更点は `docs/release-notes/v<版>.md` に書いておくとリリースの説明になる（アプリの「この版の変更点」に出る）。
+  - コミットの作者アドレスは GitHub の非公開用 `325367006+mezon664@users.noreply.github.com`（このリポジトリの git config に設定済み。過去9件も書き換え済み）。Gmail を絶対に載せないこと。
+  - 利用者向け `README.md`、`requirements.txt` を追加。Python なしで動く形（exe 化など）はまだ。
 
 ## ユーザーへの連絡でよく使うこと
 - 録画を頼むとき: 「録画して」と言ってもらえれば `capture_burst.py` で始める。

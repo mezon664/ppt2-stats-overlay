@@ -14,12 +14,16 @@
     margin: 0; padding: 0;
     background: transparent;
     font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
-    color: #fff;
+    color: var(--fg);
     overflow: hidden;
   }
   :root {
-    --u: 1px; --band: rgba(12,22,60,0.85); --clear: rgba(12,22,60,0);
-    /* display.text_weight, set by script (TEXT_WEIGHTS). The fonts stop at Bold,
+    /* display.bg_color / text_color and the colors made from them (setColors(),
+       same as hud/overlay.py set_colors); these are the defaults */
+    --bg-rgb: 0,0,0; --fg: #fff; --soft-rgb: 226,226,232; --event-rgb: 230,231,236;
+    --pop-rgb: 31,40,76; --outline-rgb: 27,36,72; --to: #000;
+    --u: 1px; --band: rgba(var(--bg-rgb),0.85); --clear: rgba(var(--bg-rgb),0);
+    /* display.text_weight, set by script (weightStyle). The fonts stop at Bold,
        so past that text is thickened with a stroke in its own color. */
     --fw-bold: 700; --fw-semi: 700; --fw-stroke: 0.05;
     --p-left: rgb(59,142,234); --p-right: rgb(229,72,77);
@@ -30,10 +34,12 @@
      the HUD). Black, since navy vanished on the band/clock/summary boxes;
      !important so the "text" style's own navy outlines give way to it too. */
   body.outlined * {
-    text-shadow: 0.1em 0 0 #000, -0.1em 0 0 #000, 0 0.1em 0 #000, 0 -0.1em 0 #000,
-      0.071em 0.071em 0 #000, -0.071em 0.071em 0 #000, 0.071em -0.071em 0 #000, -0.071em -0.071em 0 #000 !important;
+    text-shadow: 0.1em 0 0 var(--to), -0.1em 0 0 var(--to), 0 0.1em 0 var(--to), 0 -0.1em 0 var(--to),
+      0.071em 0.071em 0 var(--to), -0.071em 0.071em 0 var(--to), 0.071em -0.071em 0 var(--to), -0.071em -0.071em 0 var(--to) !important;
   }
   .abs { position: absolute; }
+  /* each part takes its own text color (display.parts), not the page's */
+  .stat, .events, .clockbox, .summary, .ob, .versus { color: var(--fg); }
   .num { font-variant-numeric: tabular-nums; }
   .state:empty, .status:empty, .hidden { display: none !important; }
 
@@ -46,9 +52,11 @@
   /* Room for the widest value (APM 888.8, PPS/APP 8.88) so labels don't shift
      as numbers change — same idea as hud/overlay.py VALUE_TEMPLATES. */
   .stat:not(.st-gauge) .val { display: inline-block; }
-  .stat:not(.st-gauge) .val.v-apm { min-width: 5ch; }
-  .stat:not(.st-gauge) .val.v-pps, .stat:not(.st-gauge) .val.v-app { min-width: 4ch; }
-  .stat.hug-r .val, .st-pop .val { text-align: right; }
+  /* One value width for every row (the widest shown: APM's when it's on) and
+     labels sized to the widest label by alignStatColumns(), so APM / PPS / APP
+     line up as a table — labels start in one column, values end in one. */
+  .stat:not(.st-gauge) .val { min-width: var(--slot, 4ch); text-align: right; }
+  .stat:not(.st-gauge) .lab { display: inline-block; text-align: left; }
 
   .st-band { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); }
   .st-band .row { height: calc(21 * var(--u)); }
@@ -72,11 +80,11 @@
 
   .st-gauge { min-width: calc(104 * var(--u)); padding: calc(3 * var(--u)) calc(6 * var(--u)); }
   .st-gauge .row { height: calc(27 * var(--u)); flex-wrap: wrap; justify-content: space-between !important; align-content: flex-start; }
-  .st-gauge .lab { font-size: calc(11 * var(--u)); color: rgb(220,228,245); }
-  /* label + value in the 80 nearest the board (lines up with the band style's
-     text), the bar keeps the full 104 — hud/overlay.py GAUGE_TEXT_W */
-  .st-gauge.hug-r .lab { margin-left: calc(24 * var(--u)); }
-  .st-gauge.hug-l .val { margin-right: calc(24 * var(--u)); }
+  .st-gauge .lab { font-size: calc(11 * var(--u)); color: rgb(var(--soft-rgb)); }
+  /* label + value in the 86 nearest the board (about where the band style's
+     text starts), the bar keeps the full 104 — hud/overlay.py GAUGE_TEXT_W */
+  .st-gauge.hug-r .lab { margin-left: calc(18 * var(--u)); }
+  .st-gauge.hug-l .val { margin-right: calc(18 * var(--u)); }
   .st-gauge .val { font-size: calc(15 * var(--u)); font-weight: var(--fw-semi); }
   .st-gauge .bar { flex-basis: 100%; height: calc(4.5 * var(--u)); border-radius: 999px;
     background: rgba(255,255,255,0.24); display: flex; overflow: hidden; margin-top: calc(1 * var(--u)); }
@@ -85,25 +93,36 @@
   .st-gauge.p-left .bar i { background: var(--p-left); }
   .st-gauge.p-right .bar i { background: var(--p-right); }
 
+  /* "simple": plain square boxes in one color */
+  .st-simple { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); background: var(--band); }
+  .st-simple .row { height: calc(21 * var(--u)); }
+  .st-simple .lab { font-size: calc(12 * var(--u)); }
+  .st-simple .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
+  body.style-simple .events, body.style-simple .clockbox, body.style-simple .summary, body.style-simple .ob {
+    background: var(--band) !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+
   .st-text { min-width: calc(104 * var(--u)); padding: calc(1 * var(--u)) calc(5 * var(--u)); }
   .st-text .row { height: calc(23 * var(--u)); }
   .st-text .lab { font-size: calc(12 * var(--u)); }
   .st-text .val { font-size: calc(20 * var(--u)); font-weight: var(--fw-semi); }
-  .st-text .lab, .st-text .val {
+  .st-text .lab, .st-text .val, .st-minimal .lab, .st-minimal .val {
     text-shadow:
-      calc(-1.6 * var(--u)) calc(-1.6 * var(--u)) 0 #1b2440, calc(1.6 * var(--u)) calc(-1.6 * var(--u)) 0 #1b2440,
-      calc(-1.6 * var(--u)) calc(1.6 * var(--u)) 0 #1b2440, calc(1.6 * var(--u)) calc(1.6 * var(--u)) 0 #1b2440,
-      0 calc(-1.6 * var(--u)) 0 #1b2440, 0 calc(1.6 * var(--u)) 0 #1b2440,
-      calc(-1.6 * var(--u)) 0 0 #1b2440, calc(1.6 * var(--u)) 0 0 #1b2440;
+      calc(-1.6 * var(--u)) calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)),
+      calc(-1.6 * var(--u)) calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)),
+      0 calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)),
+      calc(-1.6 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) 0 0 rgb(var(--outline-rgb));
   }
 
   /* --- opener (開幕テンプレ), display.opener_display: om-board (A, a few
      seconds over the board), om-hold (B), om-namebar (C), om-top (D) --- */
-  .ob { box-sizing: border-box; white-space: nowrap; font-weight: var(--fw-bold); color: #fff;
-    background: rgba(12,22,60,max(0.78, var(--band-a))); border-radius: calc(6 * var(--u)); }
+  /* opacity comes ~10 times a second with the server state; the transition
+     fills the steps in between so the fade is smooth */
+  .ob { transition: opacity 0.12s linear; }
+  .ob { box-sizing: border-box; white-space: nowrap; font-weight: var(--fw-bold); color: var(--fg);
+    background: rgba(var(--bg-rgb),max(0.78, var(--band-a))); border-radius: calc(6 * var(--u)); }
   #ob-left { --acc: var(--p-left); --lab: var(--t-left); }
   #ob-right { --acc: var(--p-right); --lab: var(--t-right); }
-  .ob .olab { color: var(--lab, rgb(220,228,245)); }
+  .ob .olab { color: var(--lab, rgb(var(--soft-rgb))); }
   .ob:not(#ob-both) { box-shadow: inset 0 calc(-3 * var(--u)) 0 var(--acc); }
   body.om-board .ob { padding: calc(4 * var(--u)) calc(22 * var(--u)) calc(8 * var(--u)); border-radius: calc(10 * var(--u)); text-align: center; }
   body.om-board .olab { font-size: calc(13 * var(--u)); line-height: calc(22 * var(--u)); }
@@ -115,18 +134,20 @@
     font-size: calc(12 * var(--u)); border-radius: 999px; box-shadow: none; border: calc(2 * var(--u)) solid var(--acc); }
   #ob-both { padding: calc(4 * var(--u)) calc(14 * var(--u)) calc(8 * var(--u)); min-width: calc(200 * var(--u));
     background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) bottom / 100% calc(3 * var(--u)) no-repeat,
-                rgba(12,22,60,max(0.78, var(--band-a))); }
+                rgba(var(--bg-rgb),max(0.78, var(--band-a))); }
   #ob-both .olab { text-align: center; font-size: calc(11 * var(--u)); line-height: calc(16 * var(--u)); }
   #ob-both .orow { display: flex; align-items: baseline; justify-content: space-between; gap: calc(10 * var(--u)); font-size: calc(18 * var(--u)); }
   #ob-both .ol { color: var(--t-left); } #ob-both .or { color: var(--t-right); }
-  #ob-both .ovs { font-size: calc(13 * var(--u)); color: rgb(220,228,245); }
+  #ob-both .ovs { font-size: calc(13 * var(--u)); color: rgb(var(--soft-rgb)); }
+  /* the opener names: thickened less than the rest (0.4 of it, as the HUD's OPENER_NAME_THICKEN) */
+  .ob .oname, #ob-both .ol, #ob-both .or { -webkit-text-stroke: calc(var(--fw-stroke) * 0.4 * 1em) currentColor; }
   body.style-gauge .ob { border-radius: 0 !important; }
   body.style-pop .ob:not(#ob-both) { background: var(--acc); box-shadow: none; border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(14 * var(--u)); }
   body.style-pop .ob .olab { color: rgb(235,242,255); }
   body.style-text .ob { background: none !important; box-shadow: none; border-color: transparent; }
   body.style-text .ob div, body.style-text .ob span {
-    text-shadow: calc(-1.6 * var(--u)) 0 0 #1b2440, calc(1.6 * var(--u)) 0 0 #1b2440,
-      0 calc(-1.6 * var(--u)) 0 #1b2440, 0 calc(1.6 * var(--u)) 0 #1b2440; }
+    text-shadow: calc(-1.6 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) 0 0 rgb(var(--outline-rgb)),
+      0 calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)); }
   .summary .sop { font-size: calc(12 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* --- versus: one block between the boards --- */
@@ -134,7 +155,7 @@
     background: var(--band); border-radius: calc(4 * var(--u)); }
   .versus .vrow { height: calc(34 * var(--u)); position: relative; }
   .versus .vlab { position: absolute; left: 0; right: 0; top: calc(1 * var(--u)); text-align: center;
-    font-size: calc(10 * var(--u)); font-weight: var(--fw-bold); color: rgb(220,228,245); }
+    font-size: calc(10 * var(--u)); font-weight: var(--fw-bold); color: rgb(var(--soft-rgb)); }
   .versus .vals { display: flex; justify-content: space-between; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold);
     line-height: calc(19 * var(--u)); }
   .versus .l { color: var(--t-left); } .versus .r { color: var(--t-right); }
@@ -146,7 +167,7 @@
      stats do — same looks as the HUD's EventBlock / ClockBlock --- */
   .events {
     padding: calc(2 * var(--u)) calc(6 * var(--u)) calc(2 * var(--u)) calc(11 * var(--u));
-    font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #e4e4e7;
+    font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: rgb(var(--event-rgb));
     line-height: calc(14 * var(--u));
     text-align: right; white-space: nowrap; box-sizing: border-box;
     background: linear-gradient(to right, var(--clear) 0%, var(--band) 45%, var(--band) 100%);
@@ -160,12 +181,12 @@
   body.style-gauge .events.p-right { box-shadow: inset calc(-2 * var(--u)) 0 0 var(--p-right); }
   body.style-gauge.pos-right .events.p-left { box-shadow: inset calc(2 * var(--u)) 0 0 var(--p-left); }
   body.style-gauge.pos-right .events.p-right { box-shadow: inset calc(2 * var(--u)) 0 0 var(--p-right); }
-  body.style-text .events { background: none; color: #fff; line-height: calc(15 * var(--u)); }
+  body.style-text .events { background: none; color: var(--fg); line-height: calc(15 * var(--u)); }
   body.style-pop .events { background: none; display: flex; flex-direction: column; align-items: flex-end;
     gap: calc(3 * var(--u)); padding: calc(2 * var(--u)); line-height: normal; }
   body.style-pop.pos-right .events { align-items: flex-start; }
   body.style-pop .events div { height: calc(16 * var(--u)); line-height: calc(13 * var(--u)); box-sizing: border-box;
-    padding: 0 calc(7 * var(--u)); border-radius: 999px; border: calc(1.5 * var(--u)) solid #fff; color: #fff; }
+    padding: 0 calc(7 * var(--u)); border-radius: 999px; border: calc(1.5 * var(--u)) solid #fff; color: var(--fg); }
   body.style-pop .events.p-left div { background: var(--p-left); }
   body.style-pop .events.p-right div { background: var(--p-right); }
 
@@ -177,43 +198,141 @@
   }
   body.style-gauge .clockbox { border-radius: 0; padding-bottom: calc(5 * var(--u));
     background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) bottom / 100% calc(2.5 * var(--u)) no-repeat, var(--band); }
-  body.style-pop .clockbox { background: rgb(30,42,85); border: calc(2.5 * var(--u)) solid #fff;
+  body.style-pop .clockbox { background: rgb(var(--pop-rgb)); border: calc(2.5 * var(--u)) solid #fff;
     border-radius: calc(12 * var(--u)); padding: calc(2 * var(--u)) calc(12 * var(--u)); }
   body.style-text .clockbox { background: none; padding: 0 calc(4 * var(--u)); }
   .clock { font-size: calc(18 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
   .state { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #fde68a; }
   .status { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #fca5a5; }
-  body.style-text .clockbox div, body.style-text .events {
+  body.style-text .clockbox div, body.style-text .events, body.style-minimal .clockbox div, body.style-minimal .events {
     text-shadow:
-      calc(-1.3 * var(--u)) calc(-1.3 * var(--u)) 0 #1b2440, calc(1.3 * var(--u)) calc(-1.3 * var(--u)) 0 #1b2440,
-      calc(-1.3 * var(--u)) calc(1.3 * var(--u)) 0 #1b2440, calc(1.3 * var(--u)) calc(1.3 * var(--u)) 0 #1b2440,
-      0 calc(-1.3 * var(--u)) 0 #1b2440, 0 calc(1.3 * var(--u)) 0 #1b2440,
-      calc(-1.3 * var(--u)) 0 0 #1b2440, calc(1.3 * var(--u)) 0 0 #1b2440;
+      calc(-1.3 * var(--u)) calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)),
+      calc(-1.3 * var(--u)) calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)),
+      0 calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)),
+      calc(-1.3 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) 0 0 rgb(var(--outline-rgb));
   }
   /* --- end-of-match summary (same looks as the HUD's SummaryBlock) --- */
   .summary { width: calc(212 * var(--u)); box-sizing: border-box; padding: calc(4 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
-    background: rgba(12,22,60,max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
+    background: rgba(var(--bg-rgb),max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
   .summary .stitle { text-align: center; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); line-height: calc(28 * var(--u)); }
   /* 1P | label | 2P, each centered in its column; the player columns are
      centered at 20% / 80% of the box like hud/overlay.py SummaryBlock.COL_X
      (60.8 = 2 x (0.2 x 212 - 12 padding)) */
   .summary .srow { display: grid; grid-template-columns: calc(60.8 * var(--u)) 1fr calc(60.8 * var(--u));
     align-items: baseline; height: calc(20 * var(--u)); }
-  .summary .slab { font-size: calc(12 * var(--u)); font-weight: var(--fw-semi); color: rgb(220,228,245); text-align: center; }
+  .summary .slab { font-size: calc(12 * var(--u)); font-weight: var(--fw-semi); color: rgb(var(--soft-rgb)); text-align: center; }
   .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums;
     text-align: center; min-width: 0; }
   .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); }
   body.style-gauge .summary { border-radius: 0;
-    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(12,22,60,max(0.5, var(--band-a))); }
-  body.style-pop .summary { background: rgb(30,42,85); border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(12 * var(--u)); }
+    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(var(--bg-rgb),max(0.5, var(--band-a))); }
+  body.style-pop .summary { background: rgb(var(--pop-rgb)); border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(12 * var(--u)); }
   body.style-text .summary { background: none; }
-  body.style-text .summary div, body.style-text .summary span {
-    text-shadow: calc(-1.3 * var(--u)) 0 0 #1b2440, calc(1.3 * var(--u)) 0 0 #1b2440,
-      0 calc(-1.3 * var(--u)) 0 #1b2440, 0 calc(1.3 * var(--u)) 0 #1b2440; }
+  /* band / gauge: the clock is a plain square box (user's choice) */
+  body.style-band .clockbox, body.style-gauge .clockbox { border-radius: 0; }
+  body.style-band .clockbox, body.style-gauge .clockbox, body.style-simple .clockbox {
+    padding-left: calc(14 * var(--u)); padding-right: calc(14 * var(--u)); }   /* a little wider (user) */
+  body.style-text .summary div, body.style-text .summary span, body.style-minimal .summary div, body.style-minimal .summary span {
+    text-shadow: calc(-1.3 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) 0 0 rgb(var(--outline-rgb)),
+      0 calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)); }
+
+
+  /* --- the designs added later (hud/overlay.py NEW_STYLES): frame, slash, hex,
+     meter, tower, minimal, trend. Same looks as the HUD. --- */
+  .stat.p-left, .events.p-left { --acc: var(--p-left); --tint: var(--t-left); }
+  .stat.p-right, .events.p-right { --acc: var(--p-right); --tint: var(--t-right); }
+  /* frame (カラー枠): dark box with a border in the player's color (the text color for shared parts) */
+  .st-frame { padding: calc(4 * var(--u)) calc(9 * var(--u)); }
+  .st-frame .row { height: calc(21 * var(--u)); }
+  .st-frame .lab { font-size: calc(12 * var(--u)); color: var(--tint); }
+  .st-frame .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
+  .st-frame, body.style-frame .events, body.style-frame .clockbox, body.style-frame .summary, body.style-frame .ob {
+    background: var(--band) !important; border: calc(2 * var(--u)) solid var(--acc, var(--fg)) !important;
+    border-radius: calc(5 * var(--u)) !important; box-shadow: none !important; }
+  body.style-frame .clockbox { padding: calc(2 * var(--u)) calc(14 * var(--u)); }
+  /* slash: each row a slanted box with a player-color edge, stepped like stairs */
+  .st-slash { padding: calc(2 * var(--u)) 0; }
+  .st-slash .row { height: calc(20 * var(--u)); margin: calc(2 * var(--u)) 0; align-items: center;
+    background: var(--band); border-left: calc(4 * var(--u)) solid var(--acc);
+    transform: skewX(-17deg); padding: 0 calc(10 * var(--u)) 0 calc(8 * var(--u)); width: max-content; }
+  .st-slash .row > * { transform: skewX(17deg); }
+  .st-slash.hug-r .row { margin-left: auto; }
+  .st-slash .lab { font-size: calc(11 * var(--u)); color: var(--tint); }
+  .st-slash .val { font-size: calc(15 * var(--u)); font-weight: var(--fw-semi); }
+  body.style-slash .events, body.style-slash .clockbox, body.style-slash .ob {
+    background: var(--band) !important; transform: skewX(-12deg); border-radius: 0 !important; box-shadow: none !important; }
+  body.style-slash .events, body.style-slash #ob-left, body.style-slash #ob-right { border-left: calc(4 * var(--u)) solid var(--acc) !important; }
+  body.style-slash .events > div, body.style-slash .clockbox > div, body.style-slash .ob > * { transform: skewX(12deg); }
+  body.style-slash .clockbox { padding-left: calc(18 * var(--u)); padding-right: calc(18 * var(--u)); }
+  /* the opener name box: longer, so the name keeps clear of the slanted ends (as the HUD) */
+  body.style-slash .ob { padding-left: calc(34 * var(--u)) !important; padding-right: calc(34 * var(--u)) !important; }
+  body.style-slash.om-namebar .ob { padding-left: calc(18 * var(--u)) !important; padding-right: calc(18 * var(--u)) !important; }
+  body.style-slash .summary { background: rgba(var(--bg-rgb),max(0.5, var(--band-a))); border-radius: 0; }
+  /* hex: each number in a hexagon with a player-color rim; a honeycomb two wide that grows downward */
+  .st-hex { --hw: calc(54 * var(--u)); padding: calc(1 * var(--u)); }
+  .st-hex .hxwrap { position: relative; }
+  .st-hex.hug-r .hxwrap { margin-left: auto; }
+  .st-hex .hx { position: absolute; width: var(--hw); height: calc(var(--hw) * 0.88);
+    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); background: var(--acc);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .st-hex .hx::before { content: ""; position: absolute; inset: calc(1.6 * var(--u));
+    clip-path: inherit; background: var(--band); }
+  .st-hex .hx > * { position: relative; }
+  .st-hex .lab { font-size: calc(9 * var(--u)); color: var(--tint); max-width: 72%; overflow: hidden; white-space: nowrap; }
+  .st-hex .val, .st-tower .val { min-width: 0; text-align: center; }
+  .st-hex .val { font-size: calc(14 * var(--u)); font-weight: var(--fw-semi); line-height: 1.1; }
+  /* meter: the first number as a speedometer arc, the rest under it (narrow, like the band) */
+  .st-meter { display: flex; flex-direction: column; align-items: stretch; padding: calc(5 * var(--u)) calc(6 * var(--u));
+    background: var(--band); border-radius: calc(6 * var(--u)); }
+  .st-meter .mbox { position: relative; width: calc(70 * var(--u)); height: calc(48 * var(--u)); flex: none; align-self: center; order: -1; }
+  .st-meter .mrows { margin-top: calc(4 * var(--u)); }
+  .st-meter .mrows .row { justify-content: space-between !important; }
+  .st-meter svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .st-meter .mval { position: absolute; left: 0; right: 0; top: calc(17 * var(--u)); text-align: center;
+    font-size: calc(16 * var(--u)); font-weight: var(--fw-semi); }
+  .st-meter .mlab { position: absolute; left: 0; right: 0; top: calc(36 * var(--u)); text-align: center;
+    font-size: calc(8 * var(--u)); font-weight: var(--fw-bold); color: var(--tint); }
+  .st-meter .mrows .row { height: calc(16 * var(--u)); }
+  .st-meter .lab { font-size: calc(10 * var(--u)); color: var(--tint); }
+  .st-meter .mrows .val { font-size: calc(13 * var(--u)); font-weight: var(--fw-semi); }
+  /* tower: a vertical bar per number, value on top */
+  /* kept compact (as the HUD): short thin bars, columns close together */
+  .st-tower { display: flex; gap: calc(2 * var(--u)); padding: calc(3 * var(--u)) calc(4 * var(--u)); background: var(--band); }
+  .st-tower .tw { min-width: calc(22 * var(--u)); display: flex; flex-direction: column; align-items: center; }
+  .st-tower .val { font-size: calc(11 * var(--u)); font-weight: var(--fw-semi); line-height: calc(13 * var(--u)); }
+  .st-tower .tb { width: calc(10 * var(--u)); height: calc(58 * var(--u)); margin: calc(2 * var(--u)) 0;
+    border-radius: calc(3 * var(--u)); background: rgba(255,255,255,0.18); display: flex; align-items: flex-end; overflow: hidden; }
+  .st-tower .tb i { display: block; width: 100%; border-radius: calc(3 * var(--u));
+    background: linear-gradient(var(--tint), var(--acc)); }
+  .st-tower .lab { font-size: calc(8 * var(--u)); color: var(--tint); line-height: calc(11 * var(--u)); white-space: nowrap; }
+  /* minimal: no box, a line under each number — the line is its background
+     (the background strength, in display.line_color: white to start) */
+  .st-minimal { padding: calc(2 * var(--u)) calc(3 * var(--u)); }
+  .st-minimal .row { height: calc(20 * var(--u)); margin-bottom: calc(2 * var(--u));
+    border-bottom: calc(1.5 * var(--u)) solid rgba(var(--line-rgb), var(--band-a)); }
+  .st-minimal .lab { font-size: calc(12 * var(--u)); }
+  .st-minimal .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
+  body.style-minimal .events, body.style-minimal .clockbox, body.style-minimal .ob { background: none !important; box-shadow: none !important; border-color: transparent !important; }
+  body.style-minimal .summary { background: none; }
+  body.style-minimal .summary .stitle { border-bottom: calc(1.5 * var(--u)) solid rgba(var(--line-rgb), max(0.5, var(--band-a))); margin: 0 15%; }
+  /* trend: each number with a small line chart of its last minute */
+  .st-trend { padding: calc(4 * var(--u)) calc(6 * var(--u)); background: var(--band); border-radius: calc(6 * var(--u)); }
+  .st-trend .row { height: calc(20 * var(--u)); align-items: center; gap: calc(4 * var(--u)); }
+  .st-trend .lab { font-size: calc(11 * var(--u)); color: rgb(var(--soft-rgb)); }
+  .st-trend .val { font-size: calc(14 * var(--u)); font-weight: var(--fw-semi); }
+  .st-trend svg { width: calc(32 * var(--u)); height: calc(13 * var(--u)); flex: none; overflow: visible; }
+  /* the shared parts in hex / tower: plain square boxes; in meter / trend: rounded ones */
+  body.style-hex .events, body.style-hex .clockbox, body.style-hex .summary, body.style-hex .ob,
+  body.style-tower .events, body.style-tower .clockbox, body.style-tower .summary, body.style-tower .ob {
+    background: var(--band) !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+  body.style-meter .events, body.style-trend .events { background: var(--band); border-radius: calc(6 * var(--u)); }
+  body.style-meter .clockbox, body.style-trend .clockbox { border-radius: calc(6 * var(--u)); padding-left: calc(14 * var(--u)); padding-right: calc(14 * var(--u)); }
 
   /* Capture down: dim instead of hiding — the numbers are the last real
      measurement, never fabricated, but not live either. */
   body.stale .abs { opacity: 0.4; }
+  /* off the match screen (home, menus, character select): nothing shown, unless display.always_show */
+  body.away .abs { visibility: hidden !important; }
 </style>
 </head>
 <body>
@@ -240,7 +359,17 @@ const STAT_BOTTOM_Y = 562, EVENT_GAP = 2, VERSUS_GAP = 4;
 const CLOCK_CENTER_X = 617, CLOCK_BOTTOM_Y = 576;
 const SUMMARY_TOP_Y = 120;
 // opener displays (same numbers as hud/overlay.py)
-const POPUP_S = 4.0, POPUP_FADE_S = 1.0;
+// Opener name: up for POPUP_S seconds in every position, eased in/out (same as hud/overlay.py popup_alpha)
+const POPUP_S = 4.0, POPUP_IN_S = 0.25, POPUP_FADE_S = 1.2;
+const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+// seconds: display.opener_seconds (how long the name stays up; 0 = until the match ends)
+function popupAlpha(sideState, frozen, seconds = POPUP_S) {
+  const age = (sideState || {}).opener_age_s;
+  if (age == null || frozen) return 0;
+  if (!(seconds > 0)) return smooth(age / POPUP_IN_S);
+  if (age >= seconds) return 0;
+  return Math.min(smooth(age / POPUP_IN_S), smooth((seconds - age) / Math.min(POPUP_FADE_S, seconds / 2)));
+}
 const BOARD_CENTER_X = { left: 313, right: 918 }, OPENER_BOARD_TOP_Y = 150;
 const HOLD_RIGHT_X = { left: 191, right: 797 }, OPENER_HOLD_TOP_Y = 172;
 const NAMEBAR_RIGHT_X = 466, NAMEBAR_LEFT_X = 762, NAMEBAR_TOP_Y = 608;
@@ -249,67 +378,148 @@ const OPENER_DISPLAYS = ["board", "hold", "namebar", "top"];
 const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
   ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
   ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
-  ["tspin", "s_tspin", 0], ["perfect_clear", "s_pc", 0]];
-const GAUGE_MAX = { apm: 120, pps: 4, app: 1 };   // value that fills a gauge bar
-const STYLES = ["band", "pop", "gauge", "text", "versus"];
-// display.text_weight -> [bold, semi, stroke x font size] (same as hud/overlay.py TEXT_WEIGHT_PRESETS)
-const TEXT_WEIGHTS = { normal: [700, 600, 0], bold: [700, 700, 0.05] };
+  ["tspin", "s_tspin", 0], ["tspin_single", "s_tss", 0], ["tspin_double", "s_tsd", 0], ["tspin_triple", "s_tst", 0],
+  ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];   // shown: display.summary_items
+const GAUGE_MAX = { apm: 120, pps: 4, app: 1, attack: 100, pieces: 300, ren: 12, b2b: 10 };   // value that fills a gauge bar
+const STYLES = ["band", "pop", "gauge", "text", "versus", "simple",
+                "frame", "slash", "hex", "meter", "tower", "minimal", "trend"];
+const NEW_STYLES = STYLES.slice(6);   // the later ones: hud/overlay.py NEW_STYLES
+const NEW_STYLE_GAP = 6;   // their stat blocks keep this much room from the board (as the HUD)
+const TREND_SAMPLES = 60;   // trend: one value a second, the last minute (as the HUD)
+// display.text_weight (0-100) -> [bold, semi, stroke x font size] (same as hud/overlay.py weight_style):
+// Regular thickened a little up to 30, then Bold thickened more; 65 = the old "bold"
+function weightStyle(value) {
+  const v = Math.min(100, Math.max(0, Number(value)));
+  if (!(v >= 0)) return weightStyle(65);
+  return v < 30 ? [400, 400, 0.04 * v / 30] : [700, 700, 0.10 * (v - 30) / 70];
+}
 // The overlay's own text, by display.language (event text comes from the
 // server in both languages: "text" / "text_en").
 const UI_TEXT = {
   ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", down: "認識不可",
         summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "送った段数",
         s_pieces: "置いたミノ", s_max_ren: "最大REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
+        s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
         connecting: "接続中...", disconnected: "切断されました。再接続中..." },
   en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", down: "Can't read the game",
         summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "Lines sent",
         s_pieces: "Pieces", s_max_ren: "Max REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
+        s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
-const DEFAULTS = { style: "band", text_weight: "bold", text_outline: true, language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
+const DEFAULTS = { style: "gauge", always_show: false, opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, bg_color: "#000000", text_color: "#ffffff",
+  line_color: "#ffffff",
+  font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
   summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true, opener_display: "board",
-  background_opacity: 0.85, show_apm: true, show_pps: true, show_app: true, show_clock: true,
-  show_event_log: false, event_log_count: 3 };
+  background_opacity: 0.85, stat_items: ["apm", "pps", "app"], labels: {}, player_color_left: "#3b8eea",
+  player_color_right: "#e5484d", parts: {}, show_clock: true,
+  show_event_log: false, event_log_count: 3,
+  summary_items: ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear"] };
 
 let display = { ...DEFAULTS };
 let lastState = null;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const fmt = (key, v) => v == null ? "--" : Number(v).toFixed(key === "apm" ? 1 : 2);
-const shownKeys = () => ["apm", "pps", "app"].filter((k) => display["show_" + k]);
-const style = () => STYLES.includes(display.style) ? display.style : "band";
+// stat rows (display.stat_items, in order) — same as hud/overlay.py
+const STAT_ITEMS = ["apm", "pps", "app", "attack", "pieces", "ren", "b2b"];
+const DEFAULT_LABELS = { apm: "APM", pps: "PPS", app: "APP", attack: "ATK", pieces: "PIECES", ren: "REN", b2b: "B2B" };
+const SLOT_CH = { apm: 5, pps: 4, app: 4, attack: 3, pieces: 4, ren: 2, b2b: 3 };   // widest value, in digits
+const fmt = (key, v) => {
+  if (v == null) return "--";
+  if (key === "b2b") return v ? `x${v}` : "--";      // no chain going
+  if (key === "attack" || key === "pieces" || key === "ren") return String(Math.round(v));
+  return Number(v).toFixed(key === "apm" ? 1 : 2);
+};
+const shownKeys = () => (Array.isArray(display.stat_items) ? display.stat_items : []).filter((k) => STAT_ITEMS.includes(k));
+const labelFor = (key) => esc((display.labels || {})[key] || DEFAULT_LABELS[key] || key.toUpperCase());
+const style = () => STYLES.includes(display.style) ? display.style : "gauge";
 
 // PPS = pieces placed / match seconds; APM = lines sent / match minutes (the
 // user's own definition). Both use match time, so pauses don't count.
+// The server saw this side playing Puyo Puyo: its display is hidden (as in the HUD).
+// ...or display.players shows only the other player (1P / 2P only), marked "hidden" in render()
+const isPuyo = (data) => !!(data && (data.puyo || data.hidden));
+
 function values(data) {
   data = data || {};
-  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app, opener: data.opener };
+  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app, opener: data.opener,
+           attack: data.attack, pieces: data.pieces, ren: data.ren, b2b: data.b2b };
 }
 
+// trend: each side's values, one a second of match time; starts over when the clock goes back
+const history = { left: {}, right: {} }, historyT = { left: null, right: null };
+function recordHistory(side, data, elapsed) {
+  if (elapsed == null) return;
+  if (historyT[side] != null && elapsed < historyT[side] - 0.5) { history[side] = {}; historyT[side] = null; }
+  if (historyT[side] != null && elapsed < historyT[side] + 1) return;
+  historyT[side] = elapsed;
+  const v = values(data);
+  for (const k of STAT_ITEMS) {
+    if (v[k] == null) continue;
+    (history[side][k] = history[side][k] || []).push(Number(v[k]));
+    if (history[side][k].length > TREND_SAMPLES) history[side][k].shift();
+  }
+}
+function sparkSvg(side, key) {
+  const vs = history[side][key] || [];
+  if (vs.length < 2) return `<svg viewBox="0 0 46 13" preserveAspectRatio="none"><line x1="0" y1="6.5" x2="46" y2="6.5" stroke="rgba(255,255,255,0.2)" stroke-width="1.2"/></svg>`;
+  const lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo;
+  const pts = vs.map((x, i) => `${(46 * i / (vs.length - 1)).toFixed(1)},${(span < 1e-9 ? 6.5 : 13 - 13 * (x - lo) / span).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 46 13" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const frac = (key, x) => x == null ? 0 : Math.max(0, Math.min(1, x / GAUGE_MAX[key]));
+
 function statRowsHtml(st, side, v) {
-  return shownKeys().map((key) => {
-    const lab = `<span class="lab">${key.toUpperCase()}</span>`;
+  const keys = shownKeys();
+  if (st === "hex") {   // two side by side at most, the right one half lower, more rows below (as the HUD's hex_cells)
+    const cells = keys.map((_, i) => [i % 2, Math.floor(i / 2) + (i % 2 ? 0.5 : 0)]);
+    const w = Math.max(0, ...cells.map(([c]) => c)) * 0.78 + 1, h = (Math.max(0, ...cells.map(([, r]) => r)) + 1) * 0.88;
+    return `<div class="hxwrap" style="width:calc(var(--hw) * ${w});height:calc(var(--hw) * ${h.toFixed(2)})">` +
+      keys.map((key, i) => `<div class="hx" style="left:calc(var(--hw) * ${(cells[i][0] * 0.78).toFixed(2)});` +
+        `top:calc(var(--hw) * ${(cells[i][1] * 0.88).toFixed(2)})"><span class="lab">${labelFor(key)}</span>` +
+        `<span class="val num">${fmt(key, v[key])}</span></div>`).join("") + `</div>`;
+  }
+  if (st === "tower") return keys.map((key) =>
+    `<div class="tw"><span class="val num">${fmt(key, v[key])}</span><div class="tb"><i style="height:${(frac(key, v[key]) * 100).toFixed(1)}%"></i></div>` +
+    `<span class="lab">${labelFor(key)}</span></div>`).join("");
+  if (st === "meter" && keys.length) {
+    const [first, ...rest] = keys;
+    const arc = "M 8 44 A 27 27 0 0 1 62 44";
+    const rows = rest.map((key) => `<div class="row"><span class="lab">${labelFor(key)}</span><span class="val num v-${key}">${fmt(key, v[key])}</span></div>`).join("");
+    return (rest.length ? `<div class="mrows">${rows}</div>` : "") +
+      `<div class="mbox"><svg viewBox="0 0 70 48"><path d="${arc}" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="6.5" stroke-linecap="round"/>` +
+      (frac(first, v[first]) > 0 ? `<path d="${arc}" fill="none" stroke="var(--acc)" stroke-width="6.5" stroke-linecap="round" pathLength="100" stroke-dasharray="${(frac(first, v[first]) * 100).toFixed(1)} 200"/>` : "") +
+      `</svg><div class="mval num">${fmt(first, v[first])}</div><div class="mlab">${labelFor(first)}</div></div>`;
+  }
+  const n = keys.length;
+  return keys.map((key, i) => {
+    const lab = `<span class="lab">${labelFor(key)}</span>`;
     const val = `<span class="val num v-${key}">${fmt(key, v[key])}</span>`;
     if (st === "pop") return `<div class="row"><span class="pill">${lab}${val}</span></div>`;
-    if (st === "gauge") {
-      const frac = v[key] == null ? 0 : Math.max(0, Math.min(1, v[key] / GAUGE_MAX[key]));
-      return `<div class="row">${lab}${val}<div class="bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div></div>`;
+    if (st === "gauge")
+      return `<div class="row">${lab}${val}<div class="bar"><i style="width:${(frac(key, v[key]) * 100).toFixed(1)}%"></i></div></div>`;
+    if (st === "trend") return `<div class="row">${lab}${sparkSvg(side, key)}${val}</div>`;
+    if (st === "slash") {   // stepping toward the board going down (as the HUD)
+      const step = `calc(${(n - 1 - i) * 6} * var(--u))`;
+      return `<div class="row" style="margin-${display.stats_position === "right" ? "left" : "right"}:${step}">${lab}${val}</div>`;
     }
     return `<div class="row">${lab}${val}</div>`;
   }).join("");
 }
 
-function versusHtml(left, right) {
+function versusHtml(left, right, puyo) {
+  // puyo: {left, right} — a Puyo side's numbers are left out, and the bar stays even
   return shownKeys().map((key) => {
     const a = left[key] || 0, b = right[key] || 0, total = a + b;
-    const split = total > 0
+    const split = total > 0 && !puyo.left && !puyo.right
       ? `<div class="a" style="width:${(a / total * 100).toFixed(1)}%"></div><div class="b" style="flex:1"></div>`
       : "";
-    return `<div class="vrow"><div class="vlab">${key.toUpperCase()}</div>` +
-      `<div class="vals"><span class="l num">${fmt(key, left[key])}</span><span class="r num">${fmt(key, right[key])}</span></div>` +
+    return `<div class="vrow"><div class="vlab">${labelFor(key)}</div>` +
+      `<div class="vals"><span class="l num">${puyo.left ? "" : fmt(key, left[key])}</span>` +
+      `<span class="r num">${puyo.right ? "" : fmt(key, right[key])}</span></div>` +
       `<div class="split">${split}</div></div>`;
   }).join("");
 }
@@ -320,20 +530,89 @@ function summaryHtml(state) {
   const f = (v, dec) => v == null ? "--" : Number(v).toFixed(dec);
   const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
   const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  const cell = (cls, v, dec) => dec === null
-    ? `<span class="${cls} sop">${esc(v || "--")}</span>` : `<span class="${cls}">${f(v, dec)}</span>`;
-  return `<div class="stitle">${ui().summary}&nbsp;&nbsp;${time}</div>` + SUMMARY_ROWS.map(([key, lab, dec]) =>
-    `<div class="srow">${cell("sl", L[key], dec)}<span class="slab">${ui()[lab]}</span>` +
-    `${cell("sr", R[key], dec)}</div>`).join("");
+  const cell = (cls, v, dec, puyo) => puyo ? `<span class="${cls}"></span>`   // a Puyo side's column stays empty
+    : dec === null ? `<span class="${cls} sop">${esc(v || "--")}</span>` : `<span class="${cls}">${f(v, dec)}</span>`;
+  const items = Array.isArray(display.summary_items) ? display.summary_items : SUMMARY_ROWS.map(([k]) => k);
+  return `<div class="stitle">${ui().summary}&nbsp;&nbsp;${time}</div>` +
+    SUMMARY_ROWS.filter(([key]) => items.includes(key)).map(([key, lab, dec]) =>
+    `<div class="srow">${cell("sl", L[key], dec, isPuyo(state.left))}<span class="slab">${ui()[lab]}</span>` +
+    `${cell("sr", R[key], dec, isPuyo(state.right))}</div>`).join("");
+}
+
+// display.bg_color / text_color -> CSS variables; the in-between colors are
+// mixed the same way as hud/overlay.py set_colors.
+const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ""); const v = m ? m[1] : "ffffff";
+  return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
+const mixRgb = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+function setColors(target, bgHex, textHex, opacity, lineHex) {
+  // target: the root (overall look) or one part's element (display.parts)
+  const bg = hexRgb(bgHex || "#000000"), fg = hexRgb(textHex || "#ffffff"), white = [255, 255, 255];
+  const set = (k, v) => target.style.setProperty(k, v);
+  set("--bg-rgb", bg.join(","));
+  set("--band", `rgba(${bg.join(",")},${opacity})`);
+  set("--clear", `rgba(${bg.join(",")},0)`);
+  set("--band-a", opacity);
+  set("--fg", `rgb(${fg.join(",")})`);
+  set("--soft-rgb", mixRgb(fg, bg, 0.12).join(","));
+  set("--event-rgb", mixRgb(fg, bg, 0.1).join(","));
+  set("--pop-rgb", mixRgb(bg, white, 0.08).join(","));
+  set("--outline-rgb", mixRgb(bg, white, 0.06).join(","));
+  const lum = (0.299 * fg[0] + 0.587 * fg[1] + 0.114 * fg[2]) / 255;
+  set("--to", lum >= 0.5 ? "#000" : "#fff");   // the text outline contrasts with the text
+  // the minimal design's lines (its background: the background strength, their own color)
+  set("--line-rgb", hexRgb(lineHex || "#ffffff").join(","));
+}
+
+// display.player_color_left / right (and the lighter text tints, as in the HUD)
+function setPlayerColors(leftHex, rightHex) {
+  const set = (k, v) => document.documentElement.style.setProperty(k, v);
+  for (const [side, hex] of [["left", leftHex], ["right", rightHex]]) {
+    const c = hexRgb(hex);
+    set(`--p-${side}`, `rgb(${c.join(",")})`);
+    set(`--t-${side}`, `rgb(${mixRgb(c, [255, 255, 255], 0.45).join(",")})`);
+  }
+}
+
+// display.parts: a part's own size / colors / background, else the overall ones
+const PART_ELEMENTS = { stats: ["stat-left", "stat-right", "versus"], events: ["ev-left", "ev-right"],
+                        clock: ["clockbox"], summary: ["summary"], opener: ["ob-left", "ob-right", "ob-both"] };
+const partValue = (part, key) => {
+  const own = ((display.parts || {})[part] || {})[key];
+  return own == null ? display[key] : own;
+};
+
+// display.font_family / font_file. A loaded file lives in assets/user_fonts/
+// (next to this page's folder) and is registered under the family name the
+// settings window saved for it.
+let loadedFontFile = "";
+function setFont(family, file) {
+  const fam = (family || "").replace(/["\\]/g, "");
+  if (file && file !== loadedFontFile && /^user_fonts\/[^\/\\]+\.(ttf|otf|ttc)$/i.test(file)) {
+    loadedFontFile = file;
+    const face = new FontFace(fam || "UserFont", `url("../assets/${encodeURI(file)}")`);
+    face.load().then((f) => { document.fonts.add(f); layout(); }).catch(() => {});
+  }
+  const name = fam || (file ? "UserFont" : "");
+  document.body.style.fontFamily = name ? `"${name}", "Segoe UI", "Yu Gothic UI", sans-serif` : "";
 }
 
 function layout() {
   const k = window.innerWidth / REF_W;          // screen px per reference px
   const d = display, st = style();
   document.documentElement.style.setProperty("--u", (k * d.scale) + "px");
-  document.documentElement.style.setProperty("--band", `rgba(12,22,60,${d.background_opacity})`);
-  document.documentElement.style.setProperty("--band-a", d.background_opacity);
-  const [fwBold, fwSemi, fwStroke] = TEXT_WEIGHTS[d.text_weight] || TEXT_WEIGHTS.bold;
+  setColors(document.documentElement, d.bg_color, d.text_color, d.background_opacity, d.line_color);
+  setPlayerColors(d.player_color_left, d.player_color_right);
+  for (const [part, ids] of Object.entries(PART_ELEMENTS)) {
+    for (const id of ids) {
+      const el = $(id);
+      el.style.setProperty("--u", (k * partValue(part, "scale")) + "px");
+      setColors(el, partValue(part, "bg_color"), partValue(part, "text_color"), partValue(part, "background_opacity"),
+                partValue(part, "line_color"));
+    }
+  }
+  const su = k * partValue("stats", "scale");   // the gaps next to the stat block go with its size
+  setFont(d.font_family, d.font_file);
+  const [fwBold, fwSemi, fwStroke] = weightStyle(d.text_weight);
   document.body.classList.toggle("outlined", !!d.text_outline);
   document.documentElement.style.setProperty("--fw-bold", fwBold);
   document.documentElement.style.setProperty("--fw-semi", fwSemi);
@@ -346,17 +625,20 @@ function layout() {
 
   for (const side of ["left", "right"]) {
     const stat = $("stat-" + side), ev = $("ev-" + side);
-    stat.className = `abs stat st-${st} p-${side} ${mode === "left" ? "hug-r" : "hug-l"}` + (showStat ? "" : " hidden");
-    const x = (STAT_ANCHOR_X[mode][side] + d.offset_x) * k;
+    const shown = showStat && !isPuyo((lastState || {})[side]);   // a side playing Puyo shows nothing
+    stat.className = `abs stat st-${st} p-${side} ${mode === "left" ? "hug-r" : "hug-l"}` + (shown ? "" : " hidden");
+    stat.style.setProperty("--slot", Math.max(2, ...shownKeys().map((k2) => SLOT_CH[k2])) + "ch");
+    const x = (STAT_ANCHOR_X[mode][side] + d.offset_x) * k
+      + (NEW_STYLES.includes(st) ? NEW_STYLE_GAP * su * (mode === "left" ? -1 : 1) : 0);
     const ex = x + d.event_offset_x * k;    // events: stacked above the stats, then their own offset
     let bottom = (STAT_BOTTOM_Y + d.offset_y) * k;
     for (const [el, ax] of [[stat, x], [ev, ex]]) {
       el.style.left = mode === "left" ? "auto" : ax + "px";
       el.style.right = mode === "left" ? (window.innerWidth - ax) + "px" : "auto";
     }
-    if (showStat) {
+    if (shown) {
       stat.style.top = (bottom - stat.offsetHeight) + "px";
-      bottom -= stat.offsetHeight + EVENT_GAP * k * d.scale;
+      bottom -= stat.offsetHeight + EVENT_GAP * su;
     }
     ev.style.top = (bottom + d.event_offset_y * k - ev.offsetHeight) + "px";
   }
@@ -369,7 +651,7 @@ function layout() {
   // versus: centered between the boards, just above the clock; offsets move it too.
   const vs = $("versus");
   vs.classList.toggle("hidden", !(anyStat && st === "versus"));
-  const vb = d.show_clock ? clockTop - VERSUS_GAP * k * d.scale : CLOCK_BOTTOM_Y * k;
+  const vb = d.show_clock ? clockTop - VERSUS_GAP * su : CLOCK_BOTTOM_Y * k;
   vs.style.left = ((CLOCK_CENTER_X + d.offset_x) * k - vs.offsetWidth / 2) + "px";
   vs.style.top = (vb + d.offset_y * k - vs.offsetHeight) + "px";
 
@@ -377,23 +659,22 @@ function layout() {
   const om = OPENER_DISPLAYS.includes(d.opener_display) ? d.opener_display : "board";
   for (const m of OPENER_DISPLAYS) document.body.classList.toggle("om-" + m, m === om);
   const st0 = lastState || {};
-  const names = { left: (st0.left || {}).opener, right: (st0.right || {}).opener };
+  const nameOf = (data) => isPuyo(data) ? null : (data || {}).opener;
+  const names = { left: nameOf(st0.left), right: nameOf(st0.right) };
   for (const id of ["ob-left", "ob-right", "ob-both"]) $(id).classList.add("hidden");
-  if (d.show_opener && om === "top" && (names.left || names.right)) {
+  const alphas = { left: names.left ? popupAlpha(st0.left, st0.frozen, d.opener_seconds) : 0,
+                   right: names.right ? popupAlpha(st0.right, st0.frozen, d.opener_seconds) : 0 };
+  if (d.show_opener && om === "top" && Math.max(alphas.left, alphas.right) > 0) {
+    // one box for both: up while either name is still within its few seconds
     const ob = $("ob-both");
     ob.classList.remove("hidden");
-    ob.style.opacity = 1;
+    ob.style.opacity = Math.max(alphas.left, alphas.right);
     ob.style.left = (OPENER_TOP_CENTER_X * k - ob.offsetWidth / 2) + "px";
     ob.style.top = (OPENER_TOP_Y * k) + "px";
   } else if (d.show_opener && om !== "top") {
     for (const side of ["left", "right"]) {
-      if (!names[side]) continue;
-      let alpha = 1;
-      if (om === "board") {
-        const age = (st0[side] || {}).opener_age_s;
-        if (age == null || age >= POPUP_S || st0.frozen) continue;
-        alpha = Math.min(1, (POPUP_S - age) / POPUP_FADE_S);
-      }
+      const alpha = alphas[side];
+      if (alpha <= 0) continue;
       const ob = $("ob-" + side);
       ob.classList.remove("hidden");
       ob.style.opacity = alpha;
@@ -414,20 +695,36 @@ function layout() {
   sm.style.top = ((SUMMARY_TOP_Y + d.summary_offset_y) * k) + "px";
 }
 
+function alignStatColumns(box) {
+  const labs = [...box.querySelectorAll(box.classList.contains("st-meter") ? ".mrows .lab" : ".lab")];
+  labs.forEach((l) => { l.style.minWidth = ""; });
+  if (["st-gauge", "st-hex", "st-tower"].some((c) => box.classList.contains(c))) return;
+  const w = Math.max(0, ...labs.map((l) => l.getBoundingClientRect().width));
+  labs.forEach((l) => { l.style.minWidth = w + "px"; });
+}
+
 function renderSide(side, data) {
-  $("stat-" + side).innerHTML = statRowsHtml(style(), side, values(data));
+  const box = $("stat-" + side);
+  box.innerHTML = statRowsHtml(style(), side, values(data));
+  alignStatColumns(box);
   const ev = $("ev-" + side);
   const log = ((data || {}).event_log || []).slice(0, display.event_log_count).reverse();  // oldest on top
   const key = display.language === "en" ? "text_en" : "text";
   ev.innerHTML = log.map((e) => `<div>${esc(e[key] || e.text || "")}</div>`).join("");
-  ev.classList.toggle("hidden", !(display.show_event_log && log.length));
+  ev.classList.toggle("hidden", !(display.show_event_log && log.length && !isPuyo(data)));
 }
 
 function render(state) {
   if (state.display) display = { ...DEFAULTS, ...state.display };
+  if (display.players === "left" || display.players === "right") {   // 1P / 2P only
+    const other = display.players === "left" ? "right" : "left";
+    state[other] = { ...(state[other] || {}), hidden: true };
+  }
+  for (const side of ["left", "right"]) recordHistory(side, state[side], state.match_elapsed_s);
   renderSide("left", state.left);
   renderSide("right", state.right);
-  $("versus").innerHTML = versusHtml(values(state.left), values(state.right));
+  $("versus").innerHTML = versusHtml(values(state.left), values(state.right),
+                                     { left: isPuyo(state.left), right: isPuyo(state.right) });
   $("summary").innerHTML = summaryHtml(state);
   const lab = ui().s_opener, sep = display.language === "en" ? ": " : "：";
   for (const side of ["left", "right"]) {
@@ -445,6 +742,7 @@ function render(state) {
   $("state").textContent = state.frozen ? ui().frozen
     : state.paused ? ui().paused
     : state.waiting_start ? ui().waiting : "";
+  document.body.classList.toggle("away", !display.always_show && state.match_screen === false);
   const captureDown = state.capture && state.capture.ok === false;
   document.body.classList.toggle("stale", !!captureDown);
   const msg = (display.language === "en" && state.capture && state.capture.message_en) || (state.capture || {}).message;

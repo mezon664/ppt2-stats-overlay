@@ -24,13 +24,19 @@ screenshots or OBS display capture — use the OBS browser source for that.
 import asyncio
 import ctypes
 import json
+import logging
 import sys
 import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from config_store import load_settings, display_settings
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR / "scripts"))
+from config_store import DISPLAY_DEFAULTS, load_settings, display_settings, part_value
+
+log_hud = logging.getLogger("hud")
+
+from collections import deque
 
 import websockets
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -44,6 +50,7 @@ except ImportError:
     HAS_WIN32 = False
 
 WDA_EXCLUDEFROMCAPTURE = 0x11
+WS_EX_NOACTIVATE = 0x08000000
 
 REFERENCE_W, REFERENCE_H = 1232, 692  # client size all positions below refer to
 
@@ -70,7 +77,8 @@ CLOCK_CENTER_X, CLOCK_BOTTOM_Y = 617, 576
 
 
 
-BAND_RGB = (12, 22, 60)
+BAND_RGB = (0, 0, 0)
+LINE_RGB = (255, 255, 255)   # the minimal design's lines (display.line_color; see set_colors)
 
 # The HUD's own text, by display.language (event text comes from the server
 # in both languages: "text" / "text_en").
@@ -80,12 +88,14 @@ UI_TEXT = {
            "summary": "試合結果", "s_opener": "開幕", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
            "s_lines": "送った段数", "s_pieces": "置いたミノ", "s_max_ren": "最大REN",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "パーフェクト",
+           "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
            "edit_hint": "位置調整中：黄色い枠をドラッグして動かせます（設定画面の「完了」で終了）"},
     "en": {"frozen": "Match over", "paused": "Paused", "waiting": "Waiting for start",
            "capture_down": "Can't read the game",
            "summary": "Match summary", "s_opener": "Opener", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
            "s_lines": "Lines sent", "s_pieces": "Pieces", "s_max_ren": "Max REN",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "Perfect clear",
+           "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
            "edit_hint": "Adjusting: drag the yellow boxes to move them (press Done in the settings to finish)"},
 }
 
@@ -131,6 +141,7 @@ class Band(QtWidgets.QWidget):
     def __init__(self, parent, fade="left", draggable=False):
         super().__init__(parent)
         self.fade = fade
+        self.square = False   # the "simple" style: a plain square box, no fade, no rounding
         self.opacity = 0.85
         self.dim = False
         self.draggable = draggable
@@ -138,6 +149,7 @@ class Band(QtWidgets.QWidget):
         self.editing = False   # position-adjust mode: outlined, and can be dragged
 
     def paintEvent(self, event):
+        use_colors(self)
         alpha = int(255 * self.opacity * (0.4 if self.dim else 1.0))
         p = QtGui.QPainter(self)
         r = self.rect()
@@ -152,7 +164,9 @@ class Band(QtWidgets.QWidget):
         if alpha <= 0:
             return
         solid = QtGui.QColor(*BAND_RGB, alpha)
-        if self.fade:
+        if self.square:
+            p.fillRect(r, solid)
+        elif self.fade:
             clear = QtGui.QColor(*BAND_RGB, 0)
             g = QtGui.QLinearGradient(r.left(), 0, r.right(), 0)
             ends = (clear, solid) if self.fade == "left" else (solid, clear)
@@ -183,36 +197,104 @@ class Band(QtWidgets.QWidget):
 PLAYER_COLORS = {"left": (59, 142, 234), "right": (229, 72, 77)}        # 1P blue / 2P red
 PLAYER_TEXT_COLORS = {"left": (140, 200, 255), "right": (255, 154, 158)}  # lighter, for text
 # Gauge style: the value that fills the bar (higher values just show it full).
-GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0}
+GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0, "attack": 100.0, "pieces": 300.0, "ren": 12.0, "b2b": 10.0}
 OUTLINE_RGB = (27, 36, 64)
 
-# display.text_weight -> (BOLD, SEMI, THICKEN). Same numbers as obs/overlay.html's
-# TEXT_WEIGHTS. The UI font (Yu Gothic UI) only has Semibold and Bold, so asking
-# for 800/900 still drew plain Bold (user report: the setting changed nothing).
-# Past Bold, text is thickened by stroking it in its own color, THICKEN x the
-# font size wide — that works with any font.
-TEXT_WEIGHT_PRESETS = {
-    "normal": (QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.DemiBold, 0.0),
-    "bold": (QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.Bold, 0.05),
-}
-BOLD, SEMI, THICKEN = TEXT_WEIGHT_PRESETS["bold"]
+# display.text_weight (0-100, a slider) -> (BOLD, SEMI, THICKEN); same as
+# obs/overlay.html's weightStyle. Fonts mostly come in Regular and Bold only
+# (asking for 800/900 drew plain Bold — user report: the setting changed
+# nothing), so the slider runs: Regular thickened a little (0-30), then Bold
+# thickened more (30-100) — stroked in its own color, THICKEN x the font
+# size wide, which works with any font. 65 = the old "bold" (Bold + 0.05).
+WEIGHT_SWITCH = 30
+REGULAR_THICKEN_MAX, BOLD_THICKEN_MAX = 0.04, 0.10
+
+
+def weight_style(value):
+    if isinstance(value, str):   # the old choice values
+        value = {"normal": 30, "bold": 65}.get(value, 65)
+    v = min(max(float(value), 0.0), 100.0)
+    if v < WEIGHT_SWITCH:
+        w = QtGui.QFont.Weight.Normal
+        return w, w, REGULAR_THICKEN_MAX * v / WEIGHT_SWITCH
+    return QtGui.QFont.Weight.Bold, QtGui.QFont.Weight.Bold, \
+        BOLD_THICKEN_MAX * (v - WEIGHT_SWITCH) / (100 - WEIGHT_SWITCH)
+
+
+BOLD, SEMI, THICKEN = weight_style(65)
 # display.text_outline: black outline around every text, this x the font size.
 # Black, not the "text" style's navy OUTLINE_RGB: navy is nearly the color of
 # the band / clock / summary boxes, so on them the outline didn't show (user
 # report: only some text got an outline).
 TEXT_OUTLINE_RATIO = 0.10
+# The opener (開幕テンプレ) names are thickened less than the rest (user's
+# request: just those a little thinner). Same share in obs/overlay.html.
+OPENER_NAME_THICKEN = 0.4
 TEXT_OUTLINE_RGB = (0, 0, 0)
 TEXT_OUTLINE = 0.0
 
 
 def set_text_style(weight, outline):
     global BOLD, SEMI, THICKEN, TEXT_OUTLINE
-    BOLD, SEMI, THICKEN = TEXT_WEIGHT_PRESETS.get(weight, TEXT_WEIGHT_PRESETS["bold"])
+    BOLD, SEMI, THICKEN = weight_style(weight)
     TEXT_OUTLINE = TEXT_OUTLINE_RATIO if outline else 0.0
 
 
+def hex_rgb(value):
+    v = value.lstrip("#")
+    return tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def mix(a, b, t):
+    """a moved t of the way toward b (RGB tuples)."""
+    return tuple(int(round(x + (y - x) * t)) for x, y in zip(a, b))
+
+
+def set_colors(bg_hex, text_hex, line_hex="#ffffff"):
+    """display.bg_color / text_color (and line_color, the minimal design's
+    lines). The rest follow from bg / text so any pair stays consistent; with
+    the defaults they come out about the same as the original fixed colors."""
+    global BAND_RGB, WHITE, SOFT, EVENT_RGB, POP_CLOCK_RGB, OUTLINE_RGB, TEXT_OUTLINE_RGB, LINE_RGB
+    BAND_RGB, WHITE, LINE_RGB = hex_rgb(bg_hex), hex_rgb(text_hex), hex_rgb(line_hex)
+    SOFT = mix(WHITE, BAND_RGB, 0.12)
+    EVENT_RGB = mix(WHITE, BAND_RGB, 0.1)
+    POP_CLOCK_RGB = mix(BAND_RGB, (255, 255, 255), 0.08)
+    OUTLINE_RGB = mix(BAND_RGB, (255, 255, 255), 0.06)
+    # the "outline the text" edge contrasts with the text: black around light
+    # text, white around dark text (black on dark text just thickened it into a blob)
+    TEXT_OUTLINE_RGB = (0, 0, 0) if luminance(WHITE) >= 0.5 else (255, 255, 255)
+
+
+def luminance(rgb):
+    return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255
+
+
+FONT_FAMILY = ""        # display.font_family ("" = the system UI font)
+_loaded_font_files = {}  # path -> family registered from it
+USER_FONTS_DIR = ROOT_DIR / "assets"
+
+
+def set_font(family, font_file):
+    """display.font_family / font_file. A file (under assets/user_fonts/) is
+    registered with Qt once; its own family name is used if `family` is
+    empty or doesn't match what the file holds."""
+    global FONT_FAMILY
+    if font_file:
+        path = USER_FONTS_DIR / font_file
+        if str(path) not in _loaded_font_files:
+            fid = QtGui.QFontDatabase.addApplicationFont(str(path))
+            fams = QtGui.QFontDatabase.applicationFontFamilies(fid) if fid >= 0 else []
+            _loaded_font_files[str(path)] = fams[0] if fams else ""
+            if not fams:
+                log_hud.warning("could not load font file %s", path)
+        loaded = _loaded_font_files[str(path)]
+        if loaded and family != loaded:
+            family = loaded
+    FONT_FAMILY = family
+
+
 def _font(px, weight):
-    font = QtGui.QFont()
+    font = QtGui.QFont(FONT_FAMILY) if FONT_FAMILY else QtGui.QFont()
     font.setPixelSize(max(7, int(round(px))))
     font.setWeight(weight)
     return font
@@ -222,9 +304,10 @@ def text_width(px, weight, text):
     return QtGui.QFontMetricsF(_font(px, weight)).horizontalAdvance(text)
 
 
-def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha=1.0):
+def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha=1.0, thicken_share=1.0):
     """Draws text with its left / right / center at x and its baseline at y,
     optionally with a dark outline (the "text" style, like the score digits).
+    thicken_share: how much of the text weight's thickening it gets.
     Returns the text's width."""
     font = _font(px, weight)
     w = QtGui.QFontMetricsF(font).horizontalAdvance(text)
@@ -234,7 +317,7 @@ def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha
         x -= w / 2
     path = QtGui.QPainterPath()
     path.addText(QtCore.QPointF(x, y), font, text)
-    thicken = THICKEN * px
+    thicken = THICKEN * thicken_share * px
     outline = max(outline, TEXT_OUTLINE * px)
     if outline > 0:
         oc = QtGui.QColor(*(TEXT_OUTLINE_RGB if TEXT_OUTLINE else OUTLINE_RGB))
@@ -283,10 +366,122 @@ def _draw_thick_faded(p, path, color, alpha, thicken):
     p.restore()
 
 
+# --- the designs added on 2026-10-30 (the user picked them from 22 samples) ---
+#   frame    dark box with a border in the player color ("neon" at first; the
+#            user dropped the glow and asked for a new name: カラー枠)
+#   slash    each row a slanted box, stepped like stairs, player-color edge
+#   hex      each number in its own hexagon, a honeycomb two wide that grows downward
+#   meter    the first number as a speedometer arc, the rest under it
+#   tower    a vertical bar per number, value on top
+#   minimal  no box, just a line under each number; the line is this design's
+#            background: the background strength, its own color (display.line_color)
+#   trend    each number with a small line chart of its last minute
+# Same looks in obs/overlay.html.
+NEW_STYLES = ("frame", "slash", "hex", "meter", "tower", "minimal", "trend")
+# the box the other parts (clock, events, summary, opener) get in each of them
+FRAMES = {"frame": "frame", "slash": "slash", "hex": "square",
+          "tower": "square", "meter": "rounded", "trend": "rounded", "minimal": "none"}
+# Stat blocks in these designs keep this much room (reference px) from the
+# board: their text / box went right up to the board's edge, further toward it
+# than the band style's text (user report: "everything shifted right").
+NEW_STYLE_GAP = 6
+
+
+def minimal_line(a, opacity):
+    """The minimal design's line: it is that design's background, so it takes
+    the background strength, in its own color (display.line_color, white to start)."""
+    return QtGui.QColor(*LINE_RGB, int(255 * opacity * a))
+TREND_SAMPLES = 60   # trend: one value a second, the last minute
+
+
+def frame_of(style):
+    return FRAMES.get(style)
+
+
+def hex_cells(n):
+    """hex: (column, row) of each of n hexagons, in hexagon units: at most two
+    side by side (user's request), the right one half a hexagon lower, and more
+    rows below — a honeycomb that grows downward. Read left, right, next row."""
+    return [(i % 2, i // 2 + (0.5 if i % 2 else 0)) for i in range(n)]
+
+
+def slant_dx(r, u):
+    return min(r.height() * 0.3, 10 * u)
+
+
+def slant(r, u, dx=None):
+    """A parallelogram leaning right inside r (the "slash" design)."""
+    dx = slant_dx(r, u) if dx is None else dx
+    return QtGui.QPolygonF([QtCore.QPointF(r.left() + dx, r.top()), QtCore.QPointF(r.right(), r.top()),
+                            QtCore.QPointF(r.right() - dx, r.bottom()), QtCore.QPointF(r.left(), r.bottom())])
+
+
+def paint_frame(p, r, kind, u, a, opacity, accent=None):
+    """The box behind a part in the later designs (FRAMES). r: QRectF."""
+    if kind in (None, "none"):
+        return
+    p.save()
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    fill = QtGui.QColor(*BAND_RGB)
+    if kind == "square":
+        fill.setAlphaF(opacity * a)
+        p.fillRect(r, fill)
+    elif kind == "rounded":
+        fill.setAlphaF(opacity * a)
+        p.setBrush(fill)
+        p.drawRoundedRect(r, 6 * u, 6 * u)
+    elif kind == "frame":   # the player's color (the text color for the shared parts)
+        c = accent or WHITE
+        inner = r.adjusted(1 * u, 1 * u, -1 * u, -1 * u)
+        radius = min(5 * u, inner.height() / 2)
+        fill.setAlphaF(opacity * a)
+        p.setBrush(fill)
+        p.setPen(QtGui.QPen(QtGui.QColor(*c, int(255 * a)), 2 * u))
+        p.drawRoundedRect(inner, radius, radius)
+    elif kind == "slash":
+        fill.setAlphaF(opacity * a)
+        p.setBrush(fill)
+        p.drawPolygon(slant(r, u))
+        if accent:   # a player-color edge on the slanted left side
+            dx = slant_dx(r, u)
+            p.setBrush(QtGui.QColor(*accent, int(255 * a)))
+            p.drawPolygon(slant(QtCore.QRectF(r.left(), r.top(), dx + 4 * u, r.height()), u, dx))
+    p.restore()
+
+
 # Widest value each stat is given room for, digits filled in with the font's
 # widest digit — so the label beside a value stays put as the number changes
 # (user report: APM etc. shifted left and right with every update).
-VALUE_TEMPLATES = {"apm": "{0}{0}{0}.{0}", "pps": "{0}.{0}{0}", "app": "{0}.{0}{0}"}
+VALUE_TEMPLATES = {"apm": "{0}{0}{0}.{0}", "pps": "{0}.{0}{0}", "app": "{0}.{0}{0}",
+                   "attack": "{0}{0}{0}", "pieces": "{0}{0}{0}{0}", "ren": "{0}{0}", "b2b": "x{0}{0}"}
+# The stats' labels; display.labels can reword any of them (set_labels).
+DEFAULT_LABELS = {"apm": "APM", "pps": "PPS", "app": "APP", "attack": "ATK",
+                  "pieces": "PIECES", "ren": "REN", "b2b": "B2B"}
+LABELS = dict(DEFAULT_LABELS)
+
+
+def set_labels(own):
+    global LABELS
+    LABELS = {**DEFAULT_LABELS, **(own or {})}
+
+
+def label_for(key):
+    return LABELS.get(key, key.upper())
+
+
+def set_player_colors(left_hex, right_hex):
+    """display.player_color_left / right; the lighter text tints follow."""
+    global PLAYER_COLORS, PLAYER_TEXT_COLORS
+    PLAYER_COLORS = {"left": hex_rgb(left_hex), "right": hex_rgb(right_hex)}
+    PLAYER_TEXT_COLORS = {sd: mix(c, (255, 255, 255), 0.45) for sd, c in PLAYER_COLORS.items()}
+
+
+def use_colors(widget):
+    """Each part can have its own colors (display.parts): a widget sets them
+    right before it paints, since the color names below are module-wide."""
+    if getattr(widget, "colors", None):
+        set_colors(*widget.colors)
 
 
 def value_slot_width(key, px, weight):
@@ -297,20 +492,66 @@ def value_slot_width(key, px, weight):
 def fmt_value(key, value):
     if value is None:
         return "--"
+    if key == "b2b":
+        return f"x{value}" if value else "--"   # no chain going
+    if key in ("attack", "pieces", "ren"):
+        return str(int(value))
     return f"{value:.1f}" if key == "apm" else f"{value:.2f}"   # pps / app: 2 decimals
+
+
+def is_puyo(side):
+    """This side's display is hidden: the server saw it playing Puyo Puyo, or
+    display.players shows only the other player (see mark_hidden_sides)."""
+    side = side or {}
+    return bool(side.get("puyo") or side.get("hidden"))
+
+
+def mark_hidden_sides(state, players):
+    """display.players = "left" / "right": the other side counts as hidden
+    (no stats, events, opener; empty summary column), like a Puyo side."""
+    if players not in ("left", "right"):
+        return state
+    other = "right" if players == "left" else "left"
+    return {**state, other: {**(state.get(other) or {}), "hidden": True}}
 
 
 def side_values(side):
     side = side or {}
-    return {"apm": (side.get("apm") or {}).get("apm"), "pps": side.get("pps"), "app": side.get("app")}
+    return {"apm": (side.get("apm") or {}).get("apm"), "pps": side.get("pps"), "app": side.get("app"),
+            "attack": side.get("attack"), "pieces": side.get("pieces"),
+            "ren": side.get("ren"), "b2b": side.get("b2b")}
 
 
-WHITE = (255, 255, 255)
-SOFT = (220, 228, 245)
-# Opener popup: shown for POPUP_S seconds when the opener is recognized,
-# fading out over the last POPUP_FADE_S.
+WHITE = (255, 255, 255)   # the main text color (display.text_color; see set_colors)
+SOFT = (220, 228, 245)    # labels: the text color a little toward the background
+# Opener name: shown for POPUP_S seconds when the opener is recognized,
+# fading in over POPUP_IN_S and out over the last POPUP_FADE_S — in every
+# opener_display position (user's request; "hold" / "namebar" / "top" used to
+# stay all match). Same numbers in obs/overlay.html.
 POPUP_S = 4.0
-POPUP_FADE_S = 1.0
+POPUP_IN_S = 0.25
+POPUP_FADE_S = 1.2
+
+
+def _smooth(x):
+    x = min(1.0, max(0.0, x))
+    return x * x * (3 - 2 * x)   # eases in and out, so the fade has no hard start/stop
+
+
+def popup_alpha(side_state, frozen, since_state_s=0.0, seconds=POPUP_S):
+    """Opacity of one player's opener name right now (0 = not shown).
+    since_state_s: time since side_state arrived, added to its age.
+    seconds: how long it stays up (display.opener_seconds); 0 = until the match ends."""
+    age = (side_state or {}).get("opener_age_s")
+    if age is None or frozen:
+        return 0.0
+    age += since_state_s
+    if seconds <= 0:
+        return _smooth(age / POPUP_IN_S)
+    if age >= seconds:
+        return 0.0
+    fade = min(POPUP_FADE_S, seconds / 2)
+    return min(_smooth(age / POPUP_IN_S), _smooth((seconds - age) / fade))
 # Where each opener display sits (reference px).
 BOARD_CENTER_X = {"left": 313, "right": 918}     # "board": centered on the board...
 OPENER_BOARD_TOP_Y = 150                          # ...in its upper part (empty during the opening)
@@ -332,39 +573,157 @@ class StatBlock(Band):
     "gauge", "text"). The content hugs the board side of the block (mode =
     stats_position); sizes are reference px x u."""
 
-    KEYS = ("apm", "pps", "app")
-    WIDTH = {"band": 92, "pop": 104, "gauge": 104, "text": 104}
+    KEYS = ("apm", "pps", "app", "attack", "pieces", "ren", "b2b")   # config_store.STAT_ITEMS
+    WIDTH = {"band": 92, "pop": 104, "gauge": 104, "text": 104, "simple": 92}
     # gauge: the label + value sit in the GAUGE_TEXT_W nearest the board, so
-    # the label starts where the band style's text does (74 in from the board
-    # side; user's request), while the bar keeps the full width.
-    GAUGE_TEXT_W = 80
-    ROW_H = {"band": 21, "pop": 26, "gauge": 27, "text": 23}
-    PAD = {"band": 3, "pop": 1, "gauge": 3, "text": 1}
+    # the label starts about where the band style's text does (80 in from the
+    # board side; user's requests), while the bar keeps the full width.
+    GAUGE_TEXT_W = 86
+    ROW_H = {"band": 21, "pop": 26, "gauge": 27, "text": 23, "simple": 21}
+    PAD = {"band": 3, "pop": 1, "gauge": 3, "text": 1, "simple": 3}
 
     def __init__(self, parent, side):
         super().__init__(parent, draggable=True)
         self.side = side
         self.style = "band"
         self.mode = "left"
-        self.shown = list(self.KEYS)
+        self.shown = ["apm", "pps", "app"]
         self.u = 1.0
-        self.values = {"apm": None, "pps": None, "app": None}
+        self.values = side_values(None)
+        self.reset_history()
+
+    def reset_history(self):
+        """trend: each number's values, one a second (TREND_SAMPLES)."""
+        self.history = {k: deque(maxlen=TREND_SAMPLES) for k in self.KEYS}
+        self._history_t = None
 
     def configure(self, style, mode, shown, u):
         self.style, self.mode, self.shown, self.u = style, mode, list(shown), u
-        self.fade = mode
+        self.fade = None if style in ("simple",) + NEW_STYLES else mode
+        self.square = style == "simple"
         n = max(1, len(self.shown))
-        self.setFixedSize(int(self.WIDTH[style] * u),
-                          int((self.ROW_H[style] * n + self.PAD[style] * 2) * u))
+        if style in NEW_STYLES:
+            w, h = self._new_size(u)
+            self.setFixedSize(int(w) + 1, int(h) + 1)
+        else:
+            self.setFixedSize(int(max(self.WIDTH[style] * u, self._needed_width(u))),
+                              int((self.ROW_H[style] * n + self.PAD[style] * 2) * u))
         self.update()
 
-    def update_side(self, side):
+    # --- the later designs (NEW_STYLES); sizes in reference px x u ---
+    TABLE = {   # row height, padding x, padding y, label px, value px
+        "frame": (21, 9, 4, 12, 17),
+        "minimal": (22, 3, 2, 12, 17), "trend": (20, 6, 4, 11, 14), "slash": (22, 9, 2, 11, 15),
+    }
+    GAP = 6          # between a label and its value
+    # trend: the little chart, and the gaps either side of it (kept small: the
+    # block was much wider than the others; user's request)
+    SPARK_W, SPARK_GAP = 32, 4
+    STEP = 6         # slash: how far each row steps over
+    HEX_W = 54
+    METER_W, METER_H = 70, 48
+    # tower: kept compact (user's request): short thin bars, columns close together
+    TOWER_BAR_H, TOWER_COL_W, TOWER_GAP, TOWER_PAD = 58, 22, 2, 4
+
+    def _table_cols(self, u, lab_px, val_px, keys=None):
+        keys = keys or self.shown or ["apm"]
+        lab_w = max(text_width(lab_px * u, BOLD, label_for(k)) for k in keys)
+        slot_w = max(max(value_slot_width(k, val_px * u, SEMI),
+                         text_width(val_px * u, SEMI, fmt_value(k, self.values.get(k)))) for k in keys)
+        return lab_w, slot_w
+
+    def _hex_w(self, u):
+        keys = self.shown or ["apm"]
+        need = max(max(value_slot_width(k, 14 * u, SEMI) for k in keys) + 14 * u,
+                   max(text_width(9 * u, BOLD, label_for(k)) for k in keys) + 18 * u)
+        return max(self.HEX_W * u, need)
+
+    def _tower_col_w(self, u):
+        keys = self.shown or ["apm"]
+        return max(self.TOWER_COL_W * u, max(value_slot_width(k, 11 * u, SEMI) for k in keys) + 2 * u,
+                   max(text_width(8 * u, BOLD, label_for(k)) for k in keys) + 2 * u)
+
+    def _new_size(self, u):
+        st, n = self.style, max(1, len(self.shown))
+        if st in self.TABLE:
+            row_h, pad_x, pad_y, lab_px, val_px = self.TABLE[st]
+            lab_w, slot_w = self._table_cols(u, lab_px, val_px)
+            w = lab_w + self.GAP * u + slot_w + 2 * pad_x * u
+            if st == "trend":
+                w += (self.SPARK_W + 2 * self.SPARK_GAP - self.GAP) * u
+            if st == "slash":
+                w += 10 * u + (n - 1) * self.STEP * u   # the slant, and the steps
+            return w, n * row_h * u + 2 * pad_y * u
+        if st == "hex":
+            hw = self._hex_w(u)
+            cells = hex_cells(n)
+            return (max(c for c, _ in cells) * 0.78 + 1) * hw + 2 * u, \
+                (max(r for _, r in cells) + 1) * hw * 0.88 + 2 * u
+        if st == "meter":
+            # the other numbers go under the meter, not beside it: about as
+            # narrow as the band style (it was much wider; user's request)
+            rest = self.shown[1:]
+            w = self.METER_W * u
+            if rest:
+                lab_w, slot_w = self._table_cols(u, 10, 13, rest)
+                w = max(w, lab_w + 6 * u + slot_w)
+            return w + 12 * u, (self.METER_H + len(rest) * 16 + (4 if rest else 0) + 10) * u
+        if st == "tower":
+            cw = self._tower_col_w(u)
+            return n * cw + (n - 1) * self.TOWER_GAP * u + 2 * self.TOWER_PAD * u, (14 + self.TOWER_BAR_H + 12 + 6) * u
+        return 92 * u, 21 * n * u
+
+    def _needed_width(self, u):
+        """Width the shown rows need at their widest values: reworded labels
+        (display.labels, e.g. Japanese) and added rows used to run past the
+        fixed width and get cut off."""
+        st, keys = self.style, self.shown or ["apm"]
+
+        def cols(lab_px, val_px, val_weight):
+            return (max(text_width(lab_px, BOLD, label_for(k)) for k in keys),
+                    max(value_slot_width(k, val_px, val_weight) for k in keys))
+        if st in ("band", "text", "simple"):
+            lab_w, slot_w = cols(12 * u, (20 if st == "text" else 17) * u, SEMI)
+            return lab_w + slot_w + 14 * u
+        if st == "pop":
+            lab_w, slot_w = cols(11 * u, 16 * u, BOLD)
+            return lab_w + slot_w + 31 * u
+        if st == "gauge":
+            lab_w, slot_w = cols(11 * u, 15 * u, SEMI)
+            return lab_w + slot_w + 18 * u + (self.WIDTH["gauge"] - self.GAUGE_TEXT_W) * u
+        return 0
+
+    def update_side(self, side, elapsed=None):
+        """elapsed: the match clock, for trend's one-a-second history (it
+        starts over when the clock goes back, i.e. a new match)."""
         self.values = side_values(side)
+        if elapsed is not None:
+            if self._history_t is not None and elapsed < self._history_t - 0.5:
+                self.reset_history()
+            if self._history_t is None or elapsed >= self._history_t + 1.0:
+                self._history_t = elapsed
+                for k in self.KEYS:
+                    if self.values.get(k) is not None:
+                        self.history[k].append(float(self.values[k]))
         self.update()
+
+    def _columns(self, lab_px, lab_weight, val_px, val_weight):
+        """(label width, value width) shared by every shown row, so APM / PPS /
+        APP line up as columns (user's request) instead of each row sizing to
+        its own label and value."""
+        lab_w = max(text_width(lab_px, lab_weight, label_for(k)) for k in self.shown)
+        slot_w = max(max(value_slot_width(k, val_px, val_weight),
+                         text_width(val_px, val_weight, fmt_value(k, self.values[k])))
+                     for k in self.shown)
+        return lab_w, slot_w
 
     def paintEvent(self, event):
+        use_colors(self)
+        if self.style in NEW_STYLES:
+            self._paint_new()
+            return
         # band / gauge draw the dark band behind; any style shows the edit outline
-        if self.editing or self.style in ("band", "gauge"):
+        if self.editing or self.style in ("band", "gauge", "simple"):
             super().paintEvent(event)
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -373,24 +732,20 @@ class StatBlock(Band):
         hug_right = self.mode == "left"   # placed left of the board: hug the right edge
         for i, key in enumerate(self.shown):
             top = (self.PAD[st] + i * self.ROW_H[st]) * u
-            label, value = key.upper(), fmt_value(key, self.values[key])
-            if st in ("band", "text"):
-                big = 17 if st == "band" else 20
+            label, value = label_for(key), fmt_value(key, self.values[key])
+            if st in ("band", "text", "simple"):
+                big = 20 if st == "text" else 17
                 outline = 1.6 * u if st == "text" else 0
-                base = top + (16 if st == "band" else 18) * u
-                if hug_right:
-                    x = W - 5 * u
-                    vw = draw_text(p, x, base, value, big * u, SEMI, WHITE, "right", outline, a)
-                    slot = max(vw, value_slot_width(key, big * u, SEMI))
-                    draw_text(p, x - slot - 4 * u, base, label, 12 * u, BOLD, WHITE, "right", outline, a)
-                else:
-                    x = 5 * u
-                    lw = draw_text(p, x, base, label, 12 * u, BOLD, WHITE, "left", outline, a)
-                    draw_text(p, x + lw + 4 * u, base, value, big * u, SEMI, WHITE, "left", outline, a)
+                base = top + (18 if st == "text" else 16) * u
+                lab_w, slot_w = self._columns(12 * u, BOLD, big * u, SEMI)
+                # a table: labels start in one column, values end in one column
+                lab_x = W - 5 * u - slot_w - 4 * u - lab_w if hug_right else 5 * u
+                draw_text(p, lab_x, base, label, 12 * u, BOLD, WHITE, "left", outline, a)
+                draw_text(p, lab_x + lab_w + 4 * u + slot_w, base, value, big * u, SEMI, WHITE, "right", outline, a)
             elif st == "pop":
                 h = 22 * u
-                lw, vw = text_width(11 * u, BOLD, label), text_width(16 * u, BOLD, value)
-                pw = lw + max(vw, value_slot_width(key, 16 * u, BOLD)) + 27 * u  # fixed: the pill doesn't resize
+                lab_w, slot_w = self._columns(11 * u, BOLD, 16 * u, BOLD)
+                pw = lab_w + slot_w + 27 * u  # same for every row: the pills line up and don't resize
                 x0 = W - pw - 2 * u if hug_right else 2 * u
                 fill = QtGui.QColor(*PLAYER_COLORS[self.side])
                 fill.setAlphaF(a)
@@ -428,6 +783,156 @@ class StatBlock(Band):
                     p.drawRoundedRect(fill, r, r)
 
 
+    def _paint_new(self):
+        st, u, W, H = self.style, self.u, self.width(), self.height()
+        p = QtGui.QPainter(self)
+        if self.editing:
+            p.end()
+            Band.paintEvent(self, None)
+            p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        a = 0.45 if self.dim else 1.0
+        hug_right = self.mode == "left"
+        accent, tint = PLAYER_COLORS[self.side], PLAYER_TEXT_COLORS[self.side]
+        r = QtCore.QRectF(0, 0, W, H)
+        if st in ("frame", "trend") and not self.editing:
+            paint_frame(p, r, frame_of(st), u, a, self.opacity, accent if st == "frame" else None)
+        if st in ("hex", "meter", "tower"):
+            if not self.editing and st in ("meter", "tower"):
+                paint_frame(p, r, frame_of(st), u, a, self.opacity)
+            getattr(self, "_paint_" + st)(p, u, W, H, a, accent, tint, hug_right)
+            return
+        row_h, pad_x, pad_y, lab_px, val_px = self.TABLE[st]
+        lab_w, slot_w = self._table_cols(u, lab_px, val_px)
+        extra = (self.SPARK_W + 2 * self.SPARK_GAP - self.GAP) * u if st == "trend" else 0
+        table_w = lab_w + self.GAP * u + extra + slot_w
+        outline = 1.6 * u if st == "minimal" else 0
+        lab_color = {"frame": tint, "slash": tint, "trend": SOFT}.get(st, WHITE)
+        n = len(self.shown)
+        for i, key in enumerate(self.shown):
+            top = (pad_y + i * row_h) * u
+            if st == "slash":
+                # one slanted box per row, stepping toward the board going down
+                step = (n - 1 - i) * self.STEP * u
+                box_w = table_w + 2 * pad_x * u + 10 * u
+                x0 = W - step - box_w if hug_right else step
+                row = QtCore.QRectF(x0, top + 1 * u, box_w, (row_h - 2) * u)
+                if not self.editing:
+                    paint_frame(p, row, "slash", u, a, self.opacity, accent)   # follows 背景の濃さ fully
+                lab_x = x0 + pad_x * u + 6 * u
+            else:
+                lab_x = W - pad_x * u - table_w if hug_right else pad_x * u
+            base = top + (row_h * 0.5 + val_px * 0.36) * u
+            label, value = label_for(key), fmt_value(key, self.values.get(key))
+            draw_text(p, lab_x, base, label, lab_px * u, BOLD, lab_color, "left", outline, a)
+            draw_text(p, lab_x + table_w, base, value, val_px * u, SEMI, WHITE, "right", outline, a)
+            if st == "minimal":   # the thin line under each number
+                p.fillRect(QtCore.QRectF(lab_x, top + (row_h - 2.5) * u, table_w, 1.5 * u),
+                           minimal_line(a, self.opacity))
+            if st == "trend":
+                self._sparkline(p, QtCore.QRectF(lab_x + lab_w + self.SPARK_GAP * u, top + 4 * u,
+                                                 self.SPARK_W * u, (row_h - 8) * u), key, accent, a)
+
+    def _sparkline(self, p, r, key, color, a):
+        values = list(self.history.get(key, ()))
+        p.save()
+        if len(values) < 2:   # nothing to draw yet: a faint baseline
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, int(50 * a)), 1.2 * self.u))
+            p.drawLine(QtCore.QPointF(r.left(), r.center().y()), QtCore.QPointF(r.right(), r.center().y()))
+            p.restore()
+            return
+        lo, hi = min(values), max(values)
+        span = hi - lo
+        path = QtGui.QPainterPath()
+        for i, v in enumerate(values):
+            x = r.left() + r.width() * i / (len(values) - 1)
+            y = r.center().y() if span < 1e-9 else r.bottom() - r.height() * (v - lo) / span
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        pen = QtGui.QPen(QtGui.QColor(*color, int(255 * a)), 1.8 * self.u)
+        pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawPath(path)
+        p.restore()
+
+    def _paint_hex(self, p, u, W, H, a, accent, tint, hug_right):
+        hw = self._hex_w(u)
+        hh = hw * 0.88
+        for key, (col, row) in zip(self.shown, hex_cells(len(self.shown))):
+            x, y = 1 * u + col * hw * 0.78, 1 * u + row * hh
+            pts = [(0.25, 0.0), (0.75, 0.0), (1.0, 0.5), (0.75, 1.0), (0.25, 1.0), (0.0, 0.5)]
+            poly = QtGui.QPolygonF([QtCore.QPointF(x + hw * px, y + hh * py) for px, py in pts])
+            if not self.editing:
+                fill = QtGui.QColor(*BAND_RGB)
+                fill.setAlphaF(self.opacity * a)   # follows 背景の濃さ fully (user report: it barely changed)
+                p.setBrush(fill)
+                p.setPen(QtGui.QPen(QtGui.QColor(*accent, int(255 * a)), 1.6 * u))
+                p.drawPolygon(poly)
+            cx = x + hw / 2
+            label = elide(label_for(key), 9 * u, BOLD, hw * 0.72)
+            draw_text(p, cx, y + hh * 0.42, label, 9 * u, BOLD, tint, "center", 0, a)
+            draw_text(p, cx, y + hh * 0.42 + 16 * u, fmt_value(key, self.values.get(key)), 14 * u, SEMI,
+                      WHITE, "center", 0, a)
+
+    def _paint_meter(self, p, u, W, H, a, accent, tint, hug_right):
+        first, rest = self.shown[0], self.shown[1:]
+        # the meter on top, centered; the other numbers under it
+        mx = (W - self.METER_W * u) / 2
+        box = QtCore.QRectF(mx, 5 * u, self.METER_W * u, self.METER_H * u)
+        d = min(box.width() - 8 * u, (box.height() - 4 * u) * 2)
+        arc = QtCore.QRectF(box.center().x() - d / 2, box.top() + 4 * u, d, d)
+        v = self.values.get(first)
+        frac = 0.0 if v is None else max(0.0, min(1.0, v / GAUGE_MAX[first]))
+        pen = QtGui.QPen(QtGui.QColor(255, 255, 255, int(55 * a)), 6.5 * u)
+        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawArc(arc, 180 * 16, -180 * 16)
+        if frac > 0:
+            pen.setColor(QtGui.QColor(*accent, int(255 * a)))
+            p.setPen(pen)
+            p.drawArc(arc, 180 * 16, int(-180 * 16 * frac))
+        cx = box.center().x()
+        draw_text(p, cx, arc.center().y() - 2 * u, fmt_value(first, v), 16 * u, SEMI, WHITE, "center", 0, a)
+        draw_text(p, cx, arc.center().y() + 9 * u, elide(label_for(first), 8 * u, BOLD, d * 0.8), 8 * u, BOLD,
+                  tint, "center", 0, a)
+        if rest:
+            y0 = box.bottom() + 4 * u
+            for i, key in enumerate(rest):
+                base = y0 + (i * 16 + 12) * u
+                draw_text(p, 6 * u, base, label_for(key), 10 * u, BOLD, tint, "left", 0, a)
+                draw_text(p, W - 6 * u, base, fmt_value(key, self.values.get(key)), 13 * u,
+                          SEMI, WHITE, "right", 0, a)
+
+    def _paint_tower(self, p, u, W, H, a, accent, tint, hug_right):
+        cw = self._tower_col_w(u)
+        n = len(self.shown)
+        bar_top, bar_h = 17 * u, self.TOWER_BAR_H * u
+        step, pad = cw + self.TOWER_GAP * u, self.TOWER_PAD * u
+        for i, key in enumerate(self.shown):
+            col = (n - 1 - i) if hug_right else i
+            x = W - pad - cw - col * step if hug_right else pad + col * step
+            cx = x + cw / 2
+            v = self.values.get(key)
+            draw_text(p, cx, 13 * u, fmt_value(key, v), 11 * u, SEMI, WHITE, "center", 0, a)
+            bar = QtCore.QRectF(cx - 5 * u, bar_top, 10 * u, bar_h)
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(QtGui.QColor(255, 255, 255, int(45 * a)))
+            p.drawRoundedRect(bar, 3 * u, 3 * u)
+            frac = 0.0 if v is None else max(0.0, min(1.0, v / GAUGE_MAX[key]))
+            if frac > 0:
+                fill = QtCore.QRectF(bar.left(), bar.bottom() - bar_h * frac, bar.width(), bar_h * frac)
+                g = QtGui.QLinearGradient(0, bar.top(), 0, bar.bottom())
+                g.setColorAt(0.0, QtGui.QColor(*mix(accent, (255, 255, 255), 0.45), int(255 * a)))
+                g.setColorAt(1.0, QtGui.QColor(*accent, int(255 * a)))
+                p.setBrush(QtGui.QBrush(g))
+                p.drawRoundedRect(fill, 3 * u, 3 * u)
+            draw_text(p, cx, bar.bottom() + 10 * u, elide(label_for(key), 8 * u, BOLD, cw + 2 * u), 8 * u, BOLD,
+                      tint, "center", 0, a)
+
+
 class VersusBlock(Band):
     """"versus" style: one block between the boards with both players' APM /
     PPS and a split bar showing who is ahead (left = 1P blue, right = 2P red)."""
@@ -440,6 +945,7 @@ class VersusBlock(Band):
         self.shown = ["apm", "pps", "app"]
         self.u = 1.0
         self.values = {"left": side_values(None), "right": side_values(None)}
+        self.puyo = {"left": False, "right": False}
 
     def configure(self, shown, u):
         self.shown, self.u = list(shown), u
@@ -448,9 +954,11 @@ class VersusBlock(Band):
 
     def update_sides(self, left, right):
         self.values = {"left": side_values(left), "right": side_values(right)}
+        self.puyo = {"left": is_puyo(left), "right": is_puyo(right)}   # a Puyo side's numbers are left out
         self.update()
 
     def paintEvent(self, event):
+        use_colors(self)
         super().paintEvent(event)
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -459,14 +967,16 @@ class VersusBlock(Band):
         for i, key in enumerate(self.shown):
             top = (3 + i * self.ROW_H) * u
             lv, rv = self.values["left"][key], self.values["right"][key]
-            draw_text(p, W / 2, top + 11 * u, key.upper(), 10 * u, BOLD, SOFT, "center", alpha=a)
-            draw_text(p, 7 * u, top + 15 * u, fmt_value(key, lv), 15 * u, BOLD, PLAYER_TEXT_COLORS["left"], alpha=a)
-            draw_text(p, W - 7 * u, top + 15 * u, fmt_value(key, rv), 15 * u, BOLD,
-                      PLAYER_TEXT_COLORS["right"], "right", alpha=a)
+            draw_text(p, W / 2, top + 11 * u, label_for(key), 10 * u, BOLD, SOFT, "center", alpha=a)
+            if not self.puyo["left"]:
+                draw_text(p, 7 * u, top + 15 * u, fmt_value(key, lv), 15 * u, BOLD, PLAYER_TEXT_COLORS["left"], alpha=a)
+            if not self.puyo["right"]:
+                draw_text(p, W - 7 * u, top + 15 * u, fmt_value(key, rv), 15 * u, BOLD,
+                          PLAYER_TEXT_COLORS["right"], "right", alpha=a)
             bar = QtCore.QRectF(7 * u, top + 20 * u, W - 14 * u, 6 * u)
             total = (lv or 0) + (rv or 0)
             p.setPen(QtCore.Qt.PenStyle.NoPen)
-            if total <= 0:  # nothing yet: an even, neutral bar
+            if total <= 0 or any(self.puyo.values()):  # nothing yet / nothing to compare: an even, neutral bar
                 p.setBrush(QtGui.QColor(255, 255, 255, int(60 * a)))
                 p.drawRoundedRect(bar, 3 * u, 3 * u)
                 continue
@@ -495,8 +1005,8 @@ class EventBlock(Band):
       pop            one small player-color pill with a white rim per event
       text           text only, white with a dark outline"""
 
-    MAX = 5
-    LINE_H = {"band": 14, "gauge": 14, "versus": 14, "text": 15, "pop": 19}
+    MAX = 10   # = the most display.event_log_count allows
+    LINE_H = {"band": 14, "gauge": 14, "versus": 14, "text": 15, "pop": 19, "simple": 14}
 
     def __init__(self, parent, side):
         super().__init__(parent, draggable=True)
@@ -511,7 +1021,8 @@ class EventBlock(Band):
 
     def configure(self, style, mode, count, u):
         self.style, self.mode, self.count, self.u = style, mode, count, u
-        self.fade = mode
+        self.fade = None if style == "simple" else mode
+        self.square = style == "simple"
         self._resize()
 
     def update_side(self, side):
@@ -528,16 +1039,22 @@ class EventBlock(Band):
     def _px(self):
         return 10 * self.u
 
+    # the later designs' boxes: (extra width, extra height) for their borders / slant
+    NEW_PAD = {"frame": (4, 2), "slash": (14, 2), "minimal": (-7, 0)}
+
     def _resize(self):
         u = self.u
         widest = max((text_width(self._px(), SEMI, t) for t in self.texts), default=0)
         extra = {"pop": 18, "text": 10}.get(self.style, 17)
+        add_w, add_h = self.NEW_PAD.get(self.style, (0, 0))
         n = max(1, len(self.texts))
-        self.setFixedSize(int(widest + extra * u) + 2, int((self.LINE_H[self.style] * n + 4) * u))
+        self.setFixedSize(int(widest + (extra + add_w) * u) + 2,
+                          int((self.LINE_H.get(self.style, 14) * n + 4 + add_h) * u))
 
     def paintEvent(self, event):
+        use_colors(self)
         st = self.style
-        if self.editing or st in ("band", "gauge", "versus"):
+        if self.editing or st in ("band", "gauge", "versus", "simple"):
             super().paintEvent(event)
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -549,8 +1066,17 @@ class EventBlock(Band):
             c.setAlphaF(a)
             x = W - 2 * u if hug_right else 0
             p.fillRect(QtCore.QRectF(x, 0, 2 * u, self.height()), c)
+        r = QtCore.QRectF(self.rect())
+        if frame_of(st) and not self.editing:
+            paint_frame(p, r, frame_of(st), u, a, self.opacity,
+                        PLAYER_COLORS[self.side] if st in ("frame", "slash") else None)
+        # how far the text sits in from the box's edges in the later designs
+        x_pad = (8 if st == "frame" else 6) * u
+        if st == "slash":
+            x_pad = 9 * u + slant_dx(r, u)
+        y_off = self.NEW_PAD.get(st, (0, 0))[1] / 2 * u
         for i, text in enumerate(self.texts):
-            top = (2 + i * self.LINE_H[st]) * u
+            top = (2 + i * self.LINE_H.get(st, 14)) * u + y_off
             if st == "pop":
                 tw = text_width(self._px(), SEMI, text)
                 h = 16 * u
@@ -565,12 +1091,12 @@ class EventBlock(Band):
                 draw_text(p, x0 + 7 * u, top + 12.5 * u, text, self._px(), SEMI, WHITE, alpha=a)
                 continue
             base = top + 11 * u
-            outline = 1.0 * u if st == "text" else 0
-            color = WHITE if st == "text" else EVENT_RGB
+            outline = 1.0 * u if st in ("text", "minimal") else 0
+            color = WHITE if st in ("text", "minimal") else EVENT_RGB
             if hug_right:
-                draw_text(p, W - 6 * u, base, text, self._px(), SEMI, color, "right", outline, a)
+                draw_text(p, W - x_pad, base, text, self._px(), SEMI, color, "right", outline, a)
             else:
-                draw_text(p, 6 * u, base, text, self._px(), SEMI, color, "left", outline, a)
+                draw_text(p, x_pad, base, text, self._px(), SEMI, color, "left", outline, a)
 
 
 class ClockBlock(Band):
@@ -608,7 +1134,9 @@ class ClockBlock(Band):
         return lines
 
     def _pad(self):
-        return {"pop": (13, 4), "text": (4, 1)}.get(self.style, (8, 2))
+        # band / gauge / simple: a little wider than the text needs (user's request)
+        return {"pop": (13, 4), "text": (4, 1), "versus": (8, 2), "minimal": (4, 1), "frame": (14, 3),
+                "slash": (20, 2)}.get(self.style, (14, 2))
 
     def _resize(self):
         u = self.u
@@ -619,6 +1147,7 @@ class ClockBlock(Band):
         self.setFixedSize(int(widest + px_pad * 2 * u) + 2, int(h * u))
 
     def paintEvent(self, event):
+        use_colors(self)
         st, u = self.style, self.u
         if self.editing:
             super().paintEvent(event)   # the draggable outline instead of the style's box
@@ -631,16 +1160,17 @@ class ClockBlock(Band):
         p.setPen(QtCore.Qt.PenStyle.NoPen)
         if self.editing:
             pass
-        elif st in ("band", "versus"):
+        elif st == "versus":
             p.setBrush(band)
             p.drawRoundedRect(r, 4 * u, 4 * u)
-        elif st == "gauge":
+        elif st in ("band", "gauge", "simple"):   # a plain square box (user's choice)
             p.fillRect(r, band)
-            line_h = 2.5 * u
-            for x0, x1, side in ((0, r.width() / 2, "left"), (r.width() / 2, r.width(), "right")):
-                c = QtGui.QColor(*PLAYER_COLORS[side])
-                c.setAlphaF(a)
-                p.fillRect(QtCore.QRectF(x0, r.height() - line_h, x1 - x0, line_h), c)
+            if st == "gauge":   # blue | red line along the bottom
+                line_h = 2.5 * u
+                for x0, x1, side in ((0, r.width() / 2, "left"), (r.width() / 2, r.width(), "right")):
+                    c = QtGui.QColor(*PLAYER_COLORS[side])
+                    c.setAlphaF(a)
+                    p.fillRect(QtCore.QRectF(x0, r.height() - line_h, x1 - x0, line_h), c)
         elif st == "pop":
             fill = QtGui.QColor(*POP_CLOCK_RGB)
             fill.setAlphaF(max(self.opacity, 0.6) * a)
@@ -651,7 +1181,9 @@ class ClockBlock(Band):
             p.setBrush(fill)
             p.setPen(QtGui.QPen(rim, 2.5 * u))
             p.drawRoundedRect(inner, radius, radius)
-        outline = 1.6 * u if st == "text" else 0
+        elif frame_of(st):
+            paint_frame(p, r, frame_of(st), u, a, self.opacity)
+        outline = 1.6 * u if st in ("text", "minimal") else 0
         y = self._pad()[1] * u
         for text, px, weight, color, lh in self._lines():
             y += lh * u
@@ -669,8 +1201,12 @@ SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format; None = 
     ("max_ren", "s_max_ren", "{:d}"),
     ("tetris", "s_tetris", "{:d}"),
     ("tspin", "s_tspin", "{:d}"),
+    ("tspin_single", "s_tss", "{:d}"),
+    ("tspin_double", "s_tsd", "{:d}"),
+    ("tspin_triple", "s_tst", "{:d}"),
+    ("tspin_mini", "s_tsm", "{:d}"),
     ("perfect_clear", "s_pc", "{:d}"),
-)
+)   # shown: the ones in display.summary_items (same order as config_store.SUMMARY_ITEMS)
 
 
 def summary_side(side):
@@ -678,8 +1214,9 @@ def summary_side(side):
     side = side or {}
     stats = side.get("match_stats") or {}
     out = side_values(side)
-    out.update({k: stats.get(k) for k in ("lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear")})
+    out.update({k: stats.get(k) for k, _, fmt in SUMMARY_ROWS if fmt is not None and k not in out})
     out["opener"] = side.get("opener")
+    out["puyo"] = is_puyo(side)
     return out
 
 
@@ -703,11 +1240,14 @@ class SummaryBlock(Band):
         self.language = "ja"
         self.duration = 0.0
         self.sides = {"left": summary_side(None), "right": summary_side(None)}
+        self.rows = list(SUMMARY_ROWS)
 
-    def configure(self, style, language, u):
+    def configure(self, style, language, u, items=None):
+        """items: display.summary_items (None = every row)."""
         self.style, self.language, self.u = style, language, u
+        self.rows = [r for r in SUMMARY_ROWS if items is None or r[0] in items]
         self.setFixedSize(int(self.WIDTH * u),
-                          int((self.TITLE_H + self.ROW_H * len(SUMMARY_ROWS) + 8) * u))
+                          int((self.TITLE_H + self.ROW_H * len(self.rows) + 8) * u))
         self.update()
 
     def update_match(self, state):
@@ -716,6 +1256,7 @@ class SummaryBlock(Band):
         self.update()
 
     def paintEvent(self, event):
+        use_colors(self)
         st, u = self.style, self.u
         if self.editing:
             super().paintEvent(event)
@@ -732,27 +1273,36 @@ class SummaryBlock(Band):
                 p.setBrush(fill)
                 p.setPen(QtGui.QPen(rim, 2.5 * u))
                 p.drawRoundedRect(r.adjusted(1.5 * u, 1.5 * u, -1.5 * u, -1.5 * u), 12 * u, 12 * u)
+            elif st == "minimal":   # no box: a line under the title instead
+                p.fillRect(QtCore.QRectF(r.width() * 0.15, 26 * u, r.width() * 0.7, 1.5 * u),
+                           minimal_line(a, max(self.opacity, 0.5)))
+            elif frame_of(st):
+                # a table needs some backing to be readable
+                paint_frame(p, r, "square" if st == "slash" else frame_of(st), u, a, max(self.opacity, 0.5))
             elif st != "text":
                 band = QtGui.QColor(*BAND_RGB)
                 band.setAlphaF(max(self.opacity, 0.5) * a)   # a table needs some backing to be readable
                 p.setPen(QtCore.Qt.PenStyle.NoPen)
                 p.setBrush(band)
-                p.drawRoundedRect(r, (0 if st == "gauge" else 6) * u, (0 if st == "gauge" else 6) * u)
+                radius = 0 if st in ("gauge", "simple") else 6 * u
+                p.drawRoundedRect(r, radius, radius)
                 if st == "gauge":
                     for x0, x1, side in ((0, r.width() / 2, "left"), (r.width() / 2, r.width(), "right")):
                         c = QtGui.QColor(*PLAYER_COLORS[side])
                         c.setAlphaF(a)
                         p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, 2.5 * u), c)
         ui = UI_TEXT[self.language]
-        outline = 1.3 * u if st == "text" else 0
+        outline = 1.3 * u if st in ("text", "minimal") else 0
         W = r.width()
         title = f"{ui['summary']}  {fmt_clock(self.duration)}"
         draw_text(p, W / 2, 20 * u, title, self.TITLE_PX * u, BOLD, WHITE, "center", outline, a)
-        for i, (key, label_key, fmt) in enumerate(SUMMARY_ROWS):
+        for i, (key, label_key, fmt) in enumerate(self.rows):
             base = (self.TITLE_H + 4 + i * self.ROW_H + 15) * u
             draw_text(p, W / 2, base, ui[label_key], self.LABEL_PX * u, SEMI, SOFT, "center", outline, a)
             # each player's column centered on its own side (user's request)
             for side, x in (("left", W * self.COL_X), ("right", W * (1 - self.COL_X))):
+                if self.sides[side].get("puyo"):   # a Puyo side's column stays empty
+                    continue
                 v = self.sides[side].get(key)
                 if fmt is None:     # text row (opener): a little smaller, cut to its column
                     text = "--" if not v else elide(v, self.TEXT_PX * u, BOLD, 2 * W * self.COL_X - 12 * u)
@@ -763,11 +1313,12 @@ class SummaryBlock(Band):
 
 
 class OpenerBadge(Band):
-    """The recognized opener (開幕テンプレ), drawn for display.opener_display:
-      "board"   big over the player's own board for POPUP_S seconds (A)
-      "hold"    small under the HOLD box, rest of the match (B)
-      "namebar" one line on the player's name bar, rest of the match (C)
-      "top"     both players at the top center, rest of the match (D)
+    """The recognized opener (開幕テンプレ), drawn for display.opener_display,
+    each for POPUP_S seconds after it's recognized (see popup_alpha):
+      "board"   big over the player's own board (A)
+      "hold"    small under the HOLD box (B)
+      "namebar" one line on the player's name bar (C)
+      "top"     both players at the top center (D)
     side is "left" / "right", or "both" for "top". The box follows the chosen
     style, with the player's color as the accent."""
 
@@ -809,7 +1360,8 @@ class OpenerBadge(Band):
             w, h = text_width(self.NAMEBAR_PX * u, BOLD, self._namebar_text()) + 22 * u, 20 * u
         elif m == "top":
             l, r = self.names["left"] or "--", self.names["right"] or "--"
-            w = (text_width(18 * u, BOLD, l) + text_width(18 * u, BOLD, r)
+            # "vs" sits in the middle, so each half fits the longer name
+            w = (2 * max(text_width(18 * u, BOLD, l), text_width(18 * u, BOLD, r))
                  + text_width(13 * u, BOLD, "vs") + 52 * u)
             w, h = max(w, 200 * u), 50 * u
         else:
@@ -817,6 +1369,9 @@ class OpenerBadge(Band):
             w = max(text_width(self.NAME_PX[m] * u, BOLD, name),
                     text_width(self.LABEL_PX[m] * u, BOLD, self._label())) + (44 if m == "board" else 24) * u
             h = (68 if m == "board" else 42) * u
+        if self.style == "slash" and m != "namebar":
+            # the slanted ends cut into the box: longer, so the name keeps clear of them (user's request)
+            w += 2 * slant_dx(QtCore.QRectF(0, 0, w, h), u) + 16 * u
         self.setFixedSize(int(w), int(h))
         self.update()
 
@@ -830,6 +1385,7 @@ class OpenerBadge(Band):
         return out
 
     def paintEvent(self, event):
+        use_colors(self)
         st, u, m = self.style, self.u, self.mode
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -846,11 +1402,17 @@ class OpenerBadge(Band):
             p.setPen(QtGui.QPen(rim, 2.5 * u))
             inner = r.adjusted(1.5 * u, 1.5 * u, -1.5 * u, -1.5 * u)
             p.drawRoundedRect(inner, min(radius, inner.height() / 2), min(radius, inner.height() / 2))
+        elif frame_of(st):
+            kind = frame_of(st)
+            if m == "namebar" and kind in ("square", "slash"):
+                kind = "rounded"   # a pill on the name bar
+            accent = PLAYER_COLORS[self.side] if self.side in PLAYER_COLORS and st in ("frame", "slash") else None
+            paint_frame(p, r, kind, u, a, max(self.opacity, 0.78), accent)
         elif st != "text":
             band = QtGui.QColor(*BAND_RGB)
             band.setAlphaF(max(self.opacity, 0.78) * a)
             p.setBrush(band)
-            rr = 0 if st == "gauge" else radius
+            rr = 0 if st in ("gauge", "simple") else radius
             p.drawRoundedRect(r, rr, rr)
             if m == "namebar":   # accent ring around the pill
                 p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
@@ -861,27 +1423,31 @@ class OpenerBadge(Band):
                 n = len(accents)
                 for i, c in enumerate(accents):
                     p.fillRect(QtCore.QRectF(r.width() * i / n, r.height() - bar_h, r.width() / n, bar_h), c)
-        outline = 1.6 * u if st == "text" else 0
+        outline = 1.6 * u if st in ("text", "minimal") else 0
         W, H = r.width(), r.height()
         if m == "namebar":
             draw_text(p, W / 2, H / 2 + 4.2 * u, self._namebar_text(), self.NAMEBAR_PX * u, BOLD, WHITE,
-                      "center", outline, a)
+                      "center", outline, a, OPENER_NAME_THICKEN)
         elif m == "top":
             draw_text(p, W / 2, 15 * u, self._label(), 11 * u, BOLD, SOFT, "center", outline, a)
-            draw_text(p, 14 * u, 38 * u, self.names["left"] or "--", 18 * u, BOLD,
-                      PLAYER_TEXT_COLORS["left"], "left", outline, a)
+            inset = (26 if st == "slash" else 14) * u   # past the slanted ends
+            draw_text(p, inset, 38 * u, self.names["left"] or "--", 18 * u, BOLD,
+                      PLAYER_TEXT_COLORS["left"], "left", outline, a, OPENER_NAME_THICKEN)
             draw_text(p, W / 2, 37 * u, "vs", 13 * u, BOLD, SOFT, "center", outline, a)
-            draw_text(p, W - 14 * u, 38 * u, self.names["right"] or "--", 18 * u, BOLD,
-                      PLAYER_TEXT_COLORS["right"], "right", outline, a)
+            draw_text(p, W - inset, 38 * u, self.names["right"] or "--", 18 * u, BOLD,
+                      PLAYER_TEXT_COLORS["right"], "right", outline, a, OPENER_NAME_THICKEN)
         else:
             label_color = (235, 242, 255) if st == "pop" else PLAYER_TEXT_COLORS[self.side]
             name = self.names.get(self.side) or ""
             if m == "board":
                 draw_text(p, W / 2, 20 * u, self._label(), self.LABEL_PX[m] * u, BOLD, label_color, "center", outline, a)
-                draw_text(p, W / 2, 54 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "center", outline, a)
+                draw_text(p, W / 2, 54 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "center", outline, a,
+                          OPENER_NAME_THICKEN)
             else:   # hold
-                draw_text(p, 12 * u, 14 * u, self._label(), self.LABEL_PX[m] * u, BOLD, label_color, "left", outline, a)
-                draw_text(p, 12 * u, 33 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "left", outline, a)
+                lx = (12 + (14 if st == "slash" else 0)) * u   # past the slanted edge
+                draw_text(p, lx, 14 * u, self._label(), self.LABEL_PX[m] * u, BOLD, label_color, "left", outline, a)
+                draw_text(p, lx, 33 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "left", outline, a,
+                          OPENER_NAME_THICKEN)
 
 
 class HudWindow(QtWidgets.QWidget):
@@ -895,12 +1461,18 @@ class HudWindow(QtWidgets.QWidget):
         self.settings = settings
         self.edit_mode = False
         self._drag = None
+        # Never takes the keyboard focus, not even when shown: the game pauses
+        # itself when it loses focus (user report: a window flashed, the game
+        # stopped taking input and paused — that was the HUD / settings
+        # window appearing on start-up and taking the focus).
         self.setWindowFlags(
             QtCore.Qt.WindowType.FramelessWindowHint
             | QtCore.Qt.WindowType.WindowStaysOnTopHint
             | QtCore.Qt.WindowType.Tool
+            | QtCore.Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
@@ -918,6 +1490,10 @@ class HudWindow(QtWidgets.QWidget):
         self._size = (REFERENCE_W, REFERENCE_H)
         self._scale = 1.0
         self._last_state = {}
+        self._state_t = time.monotonic()   # when _last_state arrived (opener fade timing)
+        self._fade = QtCore.QTimer(self)   # repaints the opener names while they're up
+        self._fade.setInterval(16)
+        self._fade.timeout.connect(self._place_openers)
         self._last_server_display = None
         self._local_until = 0.0
         # Applied right away from the file, then kept in step with the server's
@@ -961,52 +1537,83 @@ class HudWindow(QtWidgets.QWidget):
         s = self._scale
         d = self.display
         set_text_style(d["text_weight"], d["text_outline"])
-        u = s * d["scale"]
+        set_colors(d["bg_color"], d["text_color"], d["line_color"])
+        set_font(d["font_family"], d["font_file"])
+        set_labels(d["labels"])
+        set_player_colors(d["player_color_left"], d["player_color_right"])
+
+        def pu(part):   # this part's size (its own, or the overall one)
+            return s * part_value(d, part, "scale")
+
+        def look(widget, part):   # this part's background strength and colors
+            widget.opacity = part_value(d, part, "background_opacity")
+            widget.colors = (part_value(d, part, "bg_color"), part_value(d, part, "text_color"),
+                             part_value(d, part, "line_color"))
+
         mode = d["stats_position"]
-        shown = [k for k in StatBlock.KEYS if d[f"show_{k}"]]
+        shown = list(d["stat_items"])
         self.resize(int(w), int(h))
         for side in ("left", "right"):
             stat, ev = self.stats[side], self.events[side]
-            for band in (stat, ev):
-                band.opacity = d["background_opacity"]
+            look(stat, "stats")
+            look(ev, "events")
             if shown and d["style"] != "versus":
-                stat.configure(d["style"], mode, shown, u)
+                stat.configure(d["style"], mode, shown, pu("stats"))
             ev.language = d["language"]
-            ev.configure(d["style"], mode, d["event_log_count"], u)
-        self.versus.opacity = d["background_opacity"]
+            ev.configure(d["style"], mode, d["event_log_count"], pu("events"))
+        look(self.versus, "stats")
         if shown and d["style"] == "versus":
-            self.versus.configure(shown, u)
-        self.clock.opacity = d["background_opacity"]
-        self.clock.configure(d["style"], u)
-        self.summary.opacity = d["background_opacity"]
-        self.summary.configure(d["style"], d["language"], u)
+            self.versus.configure(shown, pu("stats"))
+        look(self.clock, "clock")
+        self.clock.configure(d["style"], pu("clock"))
+        look(self.summary, "summary")
+        self.summary.configure(d["style"], d["language"], pu("summary"), d["summary_items"])
         for badge in self.badges.values():
-            badge.opacity = d["background_opacity"]
-            badge.configure(d["opener_display"], d["style"], d["language"], u)
+            look(badge, "opener")
+            badge.configure(d["opener_display"], d["style"], d["language"], pu("opener"))
         self._place()
+
+    def _away_from_match(self):
+        """Nothing is shown off the match screen (home, menus, character
+        select) unless display.always_show — or while positioning parts.
+        With no word from the server yet, it shows as before."""
+        return (not self.display["always_show"] and not self.edit_mode
+                and self._last_state.get("match_screen") is False)
 
     def _place(self):
         """Positions everything whose size depends on content: the stat blocks
         (bottom-anchored beside the score), the events stacked above them, and
         the clock (bottom-anchored above the マッチポイント banner)."""
         s, d = self._scale, self.display
-        u = s * d["scale"]
+        away = self._away_from_match()
+        for w in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
+                  *self.badges.values()):
+            if away:
+                w.setVisible(False)
+        if away:
+            self._fade.stop()
+            return
+        u = s * part_value(d, "stats", "scale")   # the gaps next to the stat block go with its size
         mode = d["stats_position"]
-        any_stat = any(d[f"show_{k}"] for k in StatBlock.KEYS)
+        any_stat = bool(d["stat_items"])
         versus = d["style"] == "versus"
         shown = any_stat and not versus
         for side in ("left", "right"):
             stat, ev = self.stats[side], self.events[side]
             anchor_x = (STAT_ANCHOR_X[mode][side] + d["offset_x"]) * s
+            if d["style"] in NEW_STYLES:   # a little room from the board (see NEW_STYLE_GAP)
+                anchor_x += NEW_STYLE_GAP * u * (-1 if mode == "left" else 1)
             bottom = (STAT_BOTTOM_Y + d["offset_y"]) * s
-            stat.setVisible(shown)
-            if shown:
+            # a side playing Puyo shows nothing (still shown while positioning)
+            puyo = is_puyo(self._last_state.get(side)) and not self.edit_mode
+            stat.setVisible(shown and not puyo)
+            if shown and not puyo:
                 x = anchor_x - stat.width() if mode == "left" else anchor_x
                 stat.move(int(x), int(bottom - stat.height()))
                 bottom -= stat.height() + EVENT_GAP * u
             # (Not ev.isVisible(): that is also False whenever the window
             # itself isn't shown, which would skip placing it.)
-            show_events = d["show_event_log"] and ev.update_side(self._last_state.get(side))
+            show_events = d["show_event_log"] and not puyo and ev.update_side(self._last_state.get(side))
             ev.setVisible(show_events)
             if show_events:
                 # stacked above the stats by default; its own offsets move it from there
@@ -1019,41 +1626,7 @@ class HudWindow(QtWidgets.QWidget):
         clock_top = CLOCK_BOTTOM_Y * s - self.clock.height()   # default spot (the versus block uses it)
         self.clock.move(int((CLOCK_CENTER_X + d["clock_offset_x"]) * s - self.clock.width() / 2),
                         int(clock_top + d["clock_offset_y"] * s))
-        # opener (開幕テンプレ): where display.opener_display says (see OpenerBadge)
-        omode = d["opener_display"]
-        st = self._last_state
-        names = {sd: (st.get(sd) or {}).get("opener") for sd in ("left", "right")}
-        for badge in self.badges.values():
-            badge.setVisible(False)
-        if d["show_opener"] and omode == "top":
-            if any(names.values()):
-                badge = self.badges["both"]
-                badge.set_names(names)
-                badge.setVisible(True)
-                badge.move(int(OPENER_TOP_CENTER_X * s - badge.width() / 2), int(OPENER_TOP_Y * s))
-        elif d["show_opener"]:
-            for side in ("left", "right"):
-                if not names[side]:
-                    continue
-                alpha = 1.0
-                if omode == "board":   # only for a few seconds after it's recognized
-                    age = (st.get(side) or {}).get("opener_age_s")
-                    if age is None or age >= POPUP_S or st.get("frozen"):
-                        continue
-                    alpha = min(1.0, (POPUP_S - age) / POPUP_FADE_S)
-                badge = self.badges[side]
-                badge.set_names(names, alpha)
-                badge.setVisible(True)
-                if omode == "board":
-                    x = BOARD_CENTER_X[side] * s - badge.width() / 2
-                    y = OPENER_BOARD_TOP_Y * s
-                elif omode == "hold":   # right edge under the HOLD box, growing away from the board
-                    x = HOLD_RIGHT_X[side] * s - badge.width()
-                    y = OPENER_HOLD_TOP_Y * s
-                else:                   # namebar: at the end of the bar away from the avatar
-                    x = (NAMEBAR_RIGHT_X * s - badge.width()) if side == "left" else NAMEBAR_LEFT_X * s
-                    y = NAMEBAR_TOP_Y * s
-                badge.move(int(x), int(y))
+        self._place_openers()
         # summary: while a finished match is on screen (or always while
         # positioning, so it can be found and dragged)
         show_summary = d["show_summary"] and (self._summary_ready() or self.edit_mode)
@@ -1099,6 +1672,7 @@ class HudWindow(QtWidgets.QWidget):
     # --- data ---
     def on_state(self, state):
         self._last_state = state
+        self._state_t = time.monotonic()
         # Follow the server's copy only when IT changes (someone edited the
         # file): a change made in the settings window is applied here at once,
         # and the server's copy lags it by up to ~1s — applying that stale copy
@@ -1108,6 +1682,8 @@ class HudWindow(QtWidgets.QWidget):
             self._last_server_display = server_display
             if time.monotonic() >= self._local_until:
                 self.apply_display(display_settings({"display": server_display}))
+        # 1P / 2P only (display.players): the other side shows nothing
+        self._last_state = state = mark_hidden_sides(state, self.display["players"])
         ui = UI_TEXT[self.display["language"]]
         if state.get("frozen"):
             text = ui["frozen"]
@@ -1123,7 +1699,7 @@ class HudWindow(QtWidgets.QWidget):
         self.clock.set_texts(fmt_clock(state.get("match_elapsed_s", 0)), text,
                              f"⚠ {msg or ui['capture_down']}" if stale else "")
         for side in ("left", "right"):
-            self.stats[side].update_side(state.get(side))
+            self.stats[side].update_side(state.get(side), state.get("match_elapsed_s"))
         self.versus.update_sides(state.get("left"), state.get("right"))
         self.summary.update_match(state)
         # Dim rather than hide when capture is down: the numbers shown are the
@@ -1133,6 +1709,46 @@ class HudWindow(QtWidgets.QWidget):
             band.dim = stale
             band.update()
         self._place()
+
+    def _place_openers(self):
+        """The opener (開幕テンプレ) names, where display.opener_display says (see
+        OpenerBadge), at their popup opacity. Ages come from the server only
+        ~10 times a second, so the time since the last state is added here and
+        the fade timer re-runs this every frame while a name is up — the fade
+        used to step visibly (user report)."""
+        s, d, st = self._scale, self.display, self._last_state
+        since = time.monotonic() - self._state_t
+        omode = d["opener_display"]
+        names = {sd: None if is_puyo(st.get(sd)) else (st.get(sd) or {}).get("opener") for sd in ("left", "right")}
+        alphas = {sd: popup_alpha(st.get(sd), st.get("frozen"), since, d["opener_seconds"]) if names[sd] else 0.0
+                  for sd in ("left", "right")}
+        shown = {}
+        if d["show_opener"] and omode == "top":
+            # one box for both: up while either name is still within its few seconds
+            if max(alphas.values()) > 0:
+                shown["both"] = max(alphas.values())
+        elif d["show_opener"]:
+            shown = {sd: a for sd, a in alphas.items() if a > 0}
+        for key, badge in self.badges.items():
+            if key not in shown:
+                badge.setVisible(False)
+                continue
+            badge.set_names(names, shown[key])
+            badge.setVisible(True)
+            if key == "both":
+                x, y = OPENER_TOP_CENTER_X * s - badge.width() / 2, OPENER_TOP_Y * s
+            elif omode == "board":
+                x, y = BOARD_CENTER_X[key] * s - badge.width() / 2, OPENER_BOARD_TOP_Y * s
+            elif omode == "hold":     # right edge under the HOLD box, growing away from the board
+                x, y = HOLD_RIGHT_X[key] * s - badge.width(), OPENER_HOLD_TOP_Y * s
+            else:                     # namebar: at the end of the bar away from the avatar
+                x = (NAMEBAR_RIGHT_X * s - badge.width()) if key == "left" else NAMEBAR_LEFT_X * s
+                y = NAMEBAR_TOP_Y * s
+            badge.move(int(x), int(y))
+        if shown and not self._fade.isActive():
+            self._fade.start()
+        elif not shown:
+            self._fade.stop()
 
     def _summary_ready(self):
         """A match was played and has ended: the server froze the numbers."""
@@ -1194,6 +1810,7 @@ class HudWindow(QtWidgets.QWidget):
             return
         hwnd = int(self.winId())
         ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        ex_style |= WS_EX_NOACTIVATE   # clicking it (while dragging parts) never takes the game's focus
         if enabled:
             ex_style |= win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT
         else:
@@ -1232,8 +1849,7 @@ def main():
         win.show()
         # These need the native window handle, which exists only after show().
         # Click-through matters even more now: the window covers the whole game.
-        if settings["hud"]["click_through"]:
-            win.apply_click_through(True)
+        win.apply_click_through(settings["hud"]["click_through"])
         if settings["hud"]["hide_from_capture"]:
             win.hide_from_capture()
 
@@ -1258,9 +1874,33 @@ def main():
     tray.activated.connect(lambda reason: settings_win.open()
                            if reason == QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick else None)
     tray.show()
-    # Open the settings right away, so someone launching the tool for the
-    # first time sees where to change things; closing it keeps the HUD.
-    settings_win.open()
+    # A newer version (scripts/updater.py): said by a notification, which
+    # doesn't take the focus; clicking it opens the settings on the update tab.
+    def update_found(info):
+        ja = win.display["language"] != "en"
+        tray.showMessage("PPT2 Stats Overlay",
+                         f"新しい版 v{info['version']} があります。ここをクリックして更新できます。" if ja else
+                         f"Version v{info['version']} is available. Click here to update.",
+                         QtWidgets.QSystemTrayIcon.MessageIcon.Information, 10000)
+    settings_win.update_available.connect(update_found)
+    tray.messageClicked.connect(lambda: settings_win.show_update_tab() if settings_win._update_info else None)
+    if settings.get("update", {}).get("check_on_start", True):
+        settings_win.check_for_update(silent=True)
+    # Open the settings right away, so someone launching the tool sees where to
+    # change things (closing it keeps the HUD) — but not while the game is
+    # running: a new window takes the keyboard focus, and the game pauses
+    # itself when it loses focus (user report: a window flashed, the game
+    # stopped taking input and paused). Then a notification (which doesn't
+    # take the focus) says where the settings are.
+    game_running = HAS_WIN32 and find_game_hwnd() is not None
+    if game_running:
+        ja = win.display["language"] != "en"
+        tray.showMessage("PPT2 Stats Overlay",
+                         "起動しました。設定はタスクバー右下のアイコンから開けます。" if ja else
+                         "Running. Open the settings from the tray icon (bottom right of the taskbar).",
+                         QtWidgets.QSystemTrayIcon.MessageIcon.Information, 5000)
+    else:
+        settings_win.open()
     sys.exit(app.exec())
 
 

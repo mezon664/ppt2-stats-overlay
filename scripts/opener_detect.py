@@ -11,13 +11,19 @@ as board_read.board_is_clear, so stage art and the dim ghost piece don't
 count) and compared with every shape: the bottom rows must equal the shape
 exactly and every row above it must be empty, except the top few rows where
 the next piece has already spawned. An exact match only — a board that is
-one cell off, or has garbage under it, is not called anything.
+one cell off is not called anything.
+
+Garbage (お邪魔) received during the opening pushes the shape up: whole
+garbage rows at the bottom are set aside first (user's request), and the
+shape must then sit exactly on top of them. Only rows that are plainly
+garbage count — see garbage_rows.
 """
 import json
 import re
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from board_read import cell_center, LEFT_BOX, RIGHT_BOX, ROWS, COLS, CLEAR_V_MIN
 from capture_profile import scale_box, REFERENCE_PROFILE
@@ -39,6 +45,11 @@ CLEAR_ROWS_ABOVE = 2
 # A cell is a block when this share of its sample patch is bright: blocks fill
 # the cell, while sparkle particles are a few bright pixels.
 BLOCK_FILL = 0.5
+# Garbage rows: every cell but one holds a block, and those blocks are grey.
+# Measured (burst2): garbage blocks saturation 0, piece blocks 120-255 (one
+# lit-up cell 44). A row with any colored block is not garbage, so a player's
+# own nearly full row is never taken for one.
+GARBAGE_SAT_MAX = 30
 
 
 def _shape_rows(fumen):
@@ -95,6 +106,27 @@ def read_occupancy(frame, box):
     return rows
 
 
+def garbage_rows(frame, box):
+    """How many rows at the bottom of the board are garbage: exactly one empty
+    cell, every block grey (see GARBAGE_SAT_MAX). Counted from the bottom up,
+    stopping at the first row that isn't one."""
+    x1, y1, x2, y2 = box
+    hsv = cv2.cvtColor(frame[y1:y2 + 4, x1:x2 + 4], cv2.COLOR_BGR2HSV)
+    count = 0
+    for row in range(ROWS - 1, -1, -1):          # bottom row first
+        filled, grey = 0, True
+        for col in range(COLS):
+            cx, cy = cell_center(box, col, row)
+            patch = hsv[cy - y1 - 3:cy - y1 + 3, cx - x1 - 3:cx - x1 + 3].reshape(-1, 3)
+            if (patch[:, 2] >= CLEAR_V_MIN).mean() >= BLOCK_FILL:
+                filled += 1
+                grey = grey and float(np.median(patch[:, 1])) <= GARBAGE_SAT_MAX
+        if filled != COLS - 1 or not grey:
+            break
+        count += 1
+    return count
+
+
 _OPENERS = None
 
 
@@ -134,7 +166,11 @@ class OpenerDetector:
         return self._check(frame)
 
     def _check(self, frame):
-        names = match_openers(read_occupancy(frame, self.box), openers())
+        occupancy = read_occupancy(frame, self.box)
+        lifted = garbage_rows(frame, self.box)
+        if lifted:   # the shape sits on top of the garbage it was pushed up by
+            occupancy = occupancy[lifted:] + [[False] * COLS for _ in range(lifted)]
+        names = match_openers(occupancy, openers())
         if not names:
             return None
         name = " / ".join(names)      # shapes shared by two openers: show both

@@ -1,0 +1,43 @@
+# A new version: push a tag v<version> (it must equal scripts/version.py's
+# VERSION) and this builds the release zip and publishes it as a GitHub
+# release. The app's updater (scripts/updater.py) offers the newest release.
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag matches the app's version
+        shell: bash
+        run: |
+          v=$(python -c "import sys; sys.path.insert(0, 'scripts'); from version import VERSION; print(VERSION)")
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} but scripts/version.py says $v"; exit 1; }
+      - name: Tests
+        shell: bash
+        run: |
+          python -m pip install -r requirements.txt pytest
+          QT_QPA_PLATFORM=offscreen python -m pytest -q tests
+      - name: Build the zip
+        run: python tools/make_release.py
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip --title "${GITHUB_REF_NAME}" --notes-file "$notes"
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip --title "${GITHUB_REF_NAME}" --notes ""
+          fi
