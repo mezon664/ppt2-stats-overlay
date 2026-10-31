@@ -314,3 +314,57 @@ def test_snapshot_reports_frozen_state():
         mp.process_frame(blank_frame(), t)
         t += EMPTY_CHECK_INTERVAL_S
     assert mp.snapshot()["frozen"] is True
+
+
+class ScriptedGate:
+    """On screen except between the given capture times (a pause menu and
+    the countdown, where the queues are empty)."""
+    def __init__(self, closed_from, closed_to):
+        self.closed = (closed_from, closed_to)
+        self.t = 0.0
+        self.last_reason = None
+
+    def update(self, frame):
+        off = self.closed[0] <= self.t < self.closed[1]
+        self.last_reason = "pause" if off else None
+        return not off
+
+
+def run_with_gate(mp, gate, go_t, t_end, monkeypatch):
+    # (the detector is given game time, which leaves the pause out: go by capture time here)
+    monkeypatch.setattr(mp.boundary_detector, "update", lambda frame, tt: (False, abs(gate.t - go_t) < 1e-6))
+    t = 10.0
+    while t < t_end:
+        gate.t = t
+        mp.process_frame(frame_with_pieces(), t)
+        t = round(t + 0.1, 2)
+
+
+def test_start_over_from_the_pause_menu_starts_a_new_match(monkeypatch):
+    """User: opener names stopped showing — "Start Over" mid-match shows a
+    countdown and GO!, but the GO! was ignored (not frozen, no empty boards
+    seen), so the old match went on and the opening wasn't looked at."""
+    gate = ScriptedGate(15.0, 22.0)            # pause menu, then the countdown
+    mp = MatchPipeline(gate=gate)
+    mp.left.apm.add_event(11.0, 4)
+    run_with_gate(mp, gate, 24.4, 25.0, monkeypatch)   # GO! gone ~2.4 s after the countdown
+    assert mp.match_reset_count == 1
+    assert mp.left.apm.total_events == 0
+
+
+def test_a_short_flicker_then_a_go_like_edge_mid_match_is_not_a_restart(monkeypatch):
+    gate = ScriptedGate(15.0, 15.3)            # the gate blinks for a moment
+    mp = MatchPipeline(gate=gate)
+    mp.left.apm.add_event(11.0, 4)
+    run_with_gate(mp, gate, 16.0, 17.0, monkeypatch)
+    assert mp.match_reset_count == 0
+    assert mp.left.apm.total_events == 1
+
+
+def test_resuming_from_pause_without_go_keeps_the_match(monkeypatch):
+    gate = ScriptedGate(15.0, 22.0)
+    mp = MatchPipeline(gate=gate)
+    mp.left.apm.add_event(11.0, 4)
+    run_with_gate(mp, gate, -1.0, 26.0, monkeypatch)   # no GO! at all
+    assert mp.match_reset_count == 0
+    assert mp.left.apm.total_events == 1

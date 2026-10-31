@@ -622,6 +622,15 @@ BLACK_MEAN = 2.0
 # winner's board is still full there, so an edge without empty boards shortly
 # before it is ignored.
 GO_EMPTY_LOOKBACK_S = 4.0
+# The countdown before GO! empties the NEXT queues, so the match screen reads
+# "not visible" for a stretch that ends ~2.4 s before every real GO! edge (all
+# 13 recordings). Restarting from the pause menu ("Start Over" / やりなおし)
+# shows the countdown too, but the boards aren't seen empty first (the pause
+# menu is up), so the empty-boards check above missed it, and mid-match a GO!
+# wasn't looked at at all (user: opener names stopped showing). A GO! edge
+# right after such a stretch is a match start too, frozen or not. Resuming
+# from pause shows no GO!, and a flicker of the gate mid-match is far shorter.
+GO_CLOSED_MIN_S = 1.0
 # A side playing Puyo Puyo (user's request: hide that side's display, for
 # Tetris vs Puyo and when playing Puyo yourself). Puyo has no "NEXT" label box
 # where Tetris has one: on the match screen that label scores 0.24-0.37 on a
@@ -708,6 +717,8 @@ class MatchPipeline:
         # the new match is confirmed by GO! (or the timeout + queue movement).
         self._awaiting_go_since = None
         self._last_both_empty_t = None  # last game time both boards read empty
+        self._closed_since = None       # capture time the match screen stopped showing (gate closed)
+        self._last_closed_span = None   # (start, end) capture times of the last such stretch
         self._probe_queues = None       # NEXT trackers used only for the GO! timeout
         self._probe_advances = 0
         # wait_for_start (the live server): begin in the frozen state and count
@@ -917,9 +928,16 @@ class MatchPipeline:
             self._frozen = True
             self._fallback_saw_empty_since_freeze = False
             log.info("match concluded (victory banner) — freezing numbers")
+        span = self._last_closed_span
+        after_countdown = (span is not None and span[1] - span[0] >= GO_CLOSED_MIN_S
+                           and raw - span[1] <= GO_EMPTY_LOOKBACK_S)
+        if go_disappeared_edge and not self._frozen and after_countdown:
+            self.reset_match(reason="GO! after a countdown mid-match — restarted from the pause menu",
+                             clock_start_t=t)
+            return False
         if go_disappeared_edge and self._frozen:
-            if (self._last_both_empty_t is not None
-                    and raw - self._last_both_empty_t <= GO_EMPTY_LOOKBACK_S):
+            if after_countdown or (self._last_both_empty_t is not None
+                                   and raw - self._last_both_empty_t <= GO_EMPTY_LOOKBACK_S):
                 self._frozen = False
                 self._fallback_saw_empty_since_freeze = False
                 self.reset_match(reason="GO! disappeared — new match started", clock_start_t=t)
@@ -1007,6 +1025,11 @@ class MatchPipeline:
             self._off_match_screen_since = t
         elif t - self._off_match_screen_since >= MATCH_SCREEN_HIDE_S:
             self.match_screen = False
+        if not on_screen and self._closed_since is None:
+            self._closed_since = t
+        elif on_screen and self._closed_since is not None:
+            self._last_closed_span = (self._closed_since, t)
+            self._closed_since = None
         if not on_screen:
             # off the match screen: a missing label only counts while it's in view
             self._puyo_pending = {"left": None, "right": None}
