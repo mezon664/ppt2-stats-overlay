@@ -1507,8 +1507,8 @@ CAT_SCALE = 1.25          # clip px -> reference px (user: a bit bigger; was 1.0
 # is in the clip's middle, so it stands over each board's middle at any size;
 # a bigger clip just starts its walk further off the screen's edge.
 CAT_CENTER_X = {"left": 320, "right": 912}
-CAT_MIN_STILL_S = 0.5
-CAT_PAPER_MIN_PX = 40     # smallest name text on the paper (200x140 box); longer names run off its sides     # the standing-still part is never squeezed below this           # clip pixels per reference px
+CAT_MIN_STILL_S = 0.5     # the standing-still part is never squeezed below this
+CAT_PAPER_MIN_PX = 30     # smallest one-line name on the paper (200x140 box); longer names run off its sides
 
 
 def load_cat():
@@ -1568,8 +1568,8 @@ def cat_frame(cat, age, seconds):
 
 
 PAPER_W, PAPER_H = 184, 130   # room for the name on the paper (its 200x140 box less a margin)
-PAPER_MAX_PX = 54
-PAPER_TWO_LINE_MIN_PX = 26    # two lines as small as this still beat running off the paper
+PAPER_MAX_PX = 40              # (user: smaller; was 54)
+PAPER_TWO_LINE_MIN_PX = 22    # two lines as small as this still beat running off the paper
 
 
 def paper_layout(name, measure):

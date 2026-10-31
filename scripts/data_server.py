@@ -27,6 +27,12 @@ from live_pipeline import MatchPipeline, VideoReplaySource  # noqa: E402
 from config_store import load_settings, display_settings, CONFIG_PATH
 from i18n import capture_message_en
 
+# Changes when the OBS page's files change (an update, a new cat clip): the
+# page reloads itself when it sees a different value (obs/overlay.html).
+_PAGE_FILES = ("obs/overlay.html", "assets/cat/cat.js")
+_ROOT = Path(__file__).resolve().parent.parent
+PAGE_REV = "-".join(str(int((_ROOT / f).stat().st_mtime)) if (_ROOT / f).exists() else "0" for f in _PAGE_FILES)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("data_server")
 
@@ -151,6 +157,7 @@ async def broadcaster():
         state = PIPELINE.snapshot()
         state["capture"] = CAPTURE_STATUS
         state["display"] = display
+        state["page_rev"] = PAGE_REV
         payload = json.dumps(state, ensure_ascii=False)
         dead = set()
         # A copy: each send awaits, and a client disconnecting meanwhile is

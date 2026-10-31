@@ -466,7 +466,7 @@ function openerOffset(d, side) {
 }
 const paperFor = { left: null, right: null }, paperLayout = { left: null, right: null };
 function paperLayoutOf(name, measure) {   // hud/overlay.py paper_layout
-  const W = 184, H = 130, MAX = 54, MIN_ONE = 40, MIN_TWO = 26;
+  const W = 184, H = 130, MAX = 40, MIN_ONE = 30, MIN_TWO = 22;
   const one = Math.min(MAX, W * 100 / Math.max(1, measure(name)));
   if (one >= MIN_ONE) return [[name], one];
   const spaces = [...name].map((c, i) => c === " " ? i : -1).filter((i) => i >= 0);
@@ -553,6 +553,7 @@ const DEFAULTS = { style: "gauge", always_show: false, enabled: true, opener_lan
 
 let display = { ...DEFAULTS };
 let lastState = null;
+let pageRev = null;   // the server's page_rev when this page loaded (see onmessage)
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -911,7 +912,17 @@ function connect() {
     setTimeout(connect, 2000);
   };
   ws.onerror = () => { ws.close(); };
-  ws.onmessage = (event) => { lastState = JSON.parse(event.data); render(lastState); };
+  ws.onmessage = (event) => {
+    lastState = JSON.parse(event.data);
+    // OBS keeps a page as it first loaded it: when the app's files change
+    // (an update, a new cat) the server says so and the page loads them again
+    // (user: the cat wasn't in OBS — it still had the page from before the cat).
+    if (lastState.page_rev) {
+      if (pageRev === null) pageRev = lastState.page_rev;
+      else if (lastState.page_rev !== pageRev) { location.reload(); return; }
+    }
+    render(lastState);
+  };
 }
 window.addEventListener("resize", layout);
 render({});

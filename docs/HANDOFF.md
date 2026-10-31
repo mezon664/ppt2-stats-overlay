@@ -258,3 +258,6 @@
 - 猫を 1.25 倍（`CAT_SCALE`）、置き方を「クリップの真ん中を盤面の真ん中（`CAT_CENTER_X` 320 / 912）」に変更（大きくしても盤面の中央に立つ）。HUD/OBS。
 - HUD の Python 例外で PyQt6 がアプリごと落ちていた（Windows ログ: Qt6Core fail-fast 0xc0000409、猫の表示が出た直後に 2 回）。`log_errors()` で `sys.excepthook` を差し替え → 落ちずに `logs/hud.log` に記録。ネイティブの落ち方は `logs/hud_crash.log`。原因の例外自体はオフスクリーン・試験用 HUD・録画再生では再現せず未特定 → 次に起きたら hud.log を見る。
 - ライセンス GPL-3.0（`LICENSE`、配布 zip にも入る。PyQt6 が GPL のため）。
+- v0.2.0 を公開（2026-10-31 16:45、GitHub Actions 成功。full 版をダウンロードして Python なしで読み込めることを確認）。
+- 紙の文字を小さく（`PAPER_MAX_PX` 54→40、1 行の最小 30、2 行の最小 22。HUD/OBS）。
+- OBS のページは読み込んだ時点のまま（猫を入れる前のページで猫が出なかった）→ サーバーが `page_rev`（overlay.html と cat.js の更新時刻）を送り、ページは変わったら自動で読み込み直す。v0.2.1 として用意。
