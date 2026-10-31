@@ -95,7 +95,7 @@ TEXT = {
                      "en": "◐ Overlay ON: hidden off the match screen (click to show it)"},
     "enabled_forced": {"ja": "● 表示オン：試合画面の外でも表示中（クリックでオフ）",
                        "en": "● Overlay ON: shown off the match screen too (click to turn off)"},
-    "up.current": {"ja": "今の版: v{}　　作者: めぞん", "en": "This version: v{}    Made by めぞん (mezon)"},
+    "up.current": {"ja": "今の版: v{}　　作者: めぞん、Claude", "en": "This version: v{}    Made by めぞん (mezon) and Claude"},
     "up.check_on_start": {"ja": "起動したときに新しい版があるか確認する", "en": "Look for a new version when the app starts"},
     "up.check": {"ja": "今すぐ確認", "en": "Check now"},
     "up.checking": {"ja": "確認しています…", "en": "Checking…"},

@@ -1,7 +1,7 @@
 # PPTetrics
 
 > 非公式のファンツールです。セガ（ぷよぷよテトリス2）・The Tetris Company とは関係ありません。
-> 作者: めぞん
+> 作者: めぞん、Claude（Anthropic の AI）
 
 ぷよぷよテトリス2（PC版）のテトリスの対戦画面に、APM・PPS・APP などの数値、イベント履歴、開幕テンプレ名、試合結果を重ねて表示するツールです。
 ゲームの画面を見て読み取るだけで、ゲームのメモリや入力には一切触れません。
@@ -44,9 +44,9 @@ python -m venv .venv
 
 ## クレジット
 
-- 作者: めぞん
+- 作者: めぞん、Claude（Anthropic の AI。設計から実装まで一緒に作りました）
 - 開幕テンプレのデータ: テトリステンプレ整理Wiki（https://w.atwiki.jp/sasasa123/ ）
 - 開幕テンプレの英語名: Hard Drop Tetris Wiki（https://harddrop.com/wiki/ ）
-- 猫のアニメーション: 作者が生成 AI（Gemini）で作った動画から切り抜いたもの
+- 猫のアニメーション: めぞんが生成 AI（Gemini）で作った動画から切り抜いたもの
 
 不具合や要望は、GitHub の Issues か X（Twitter）でお知らせください。
