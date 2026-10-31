@@ -5,12 +5,35 @@ the tray also stops the server it started.
 Double-click start.bat (no console window), or: python launch.py
 Server output goes to logs/server.log.
 """
+
 import atexit
 import os
 import socket
 import subprocess
 import sys
+import traceback
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+
+# pythonw.exeでも起動時のエラーを記録する
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+_launch_log = open(
+    LOG_DIR / "launch.log",
+    "a",
+    encoding="utf-8",
+    buffering=1
+)
+
+sys.stdout = _launch_log
+sys.stderr = _launch_log
+
+print("\n========== PPTetrics launch ==========")
+print("Python:", sys.executable)
+print("Arguments:", sys.argv)
+
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "scripts"))
