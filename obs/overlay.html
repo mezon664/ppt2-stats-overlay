@@ -381,7 +381,7 @@ const OPENER_TOP_CENTER_X = 615.6, OPENER_TOP_Y = 14;
 const OPENER_DISPLAYS = ["board", "hold", "namebar", "top", "cat"];
 // --- the 「猫」 opener display (same as hud/overlay.py CatPopup / cat_frame):
 // 1P's cat mirrored, in from the left edge; 2P's in from the right
-const CAT_BOTTOM_Y = 632, CAT_SCALE = 1.25, CAT_MIN_STILL_S = 0.5;
+const CAT_BOTTOM_Y = 632, CAT_SCALE = 0.625, CAT_MIN_STILL_S = 0.5;   // the clip is 1280 wide, shown 800 wide (as the HUD)
 const CAT_CENTER_X = { left: 320, right: 912 };   // as hud/overlay.py: the clip's middle over each board
 const CAT_IMAGES = {};
 let catStateTime = performance.now(), catRunning = false;

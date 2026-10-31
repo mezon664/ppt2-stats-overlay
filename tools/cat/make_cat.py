@@ -20,8 +20,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "assets" / "cat"
 STEP = 1          # every frame: 24 fps (12 looked choppy; user)
-OUT_W = 640       # the clip is shrunk to this width (1280x720 -> 640x360, 1920x1080 -> 640x360):
-                  # the HUD places the 640-wide picture with its edge on the screen's edge
+OUT_W = 1280      # the clip is shrunk to this width (1920x1080 -> 1280x720). It was 640: shown
+                  # at 1.8x on a 1756-wide game it looked blurry (user). The HUD's CAT_SCALE
+                  # turns these pixels into reference px (0.625: 1280 px = 800 ref px)
 SCALE = 0.5       # set from the clip's width in main()
 
 
@@ -228,7 +229,7 @@ def main(video):
                 x1, x2, y1, y2 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
                 crop = bgra[y1:y2, x1:x2]
                 name = f"f_{k:03d}.webp"   # about a tenth of a PNG's size, transparency kept
-                cv2.imwrite(str(OUT / name), crop, [cv2.IMWRITE_WEBP_QUALITY, 82])
+                cv2.imwrite(str(OUT / name), crop, [cv2.IMWRITE_WEBP_QUALITY, 88])
                 quad = paper_quad(bgra)
                 entry = {"file": name, "x": int(x1), "y": int(y1), "paper": quad}
             grey = None

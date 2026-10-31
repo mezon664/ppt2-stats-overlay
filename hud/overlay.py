@@ -1502,8 +1502,8 @@ class OpenerBadge(Band):
 # mirrored, so it comes in from the left edge; 2P's from the right.
 CAT_DIR = ROOT_DIR / "assets" / "cat"
 CAT_BOTTOM_Y = 632        # the clip's bottom edge, reference px (the cat stands about on the score)
-CAT_SCALE = 1.25          # clip px -> reference px (user: a bit bigger; was 1.0)
-# Where the middle of the 640-wide clip goes (reference px): the standing cat
+CAT_SCALE = 0.625         # clip px -> reference px: the clip is 1280 wide (sharper), shown 800 wide (user: a bit bigger than the old 640)
+# Where the middle of the clip goes (reference px): the standing cat
 # is in the clip's middle, so it stands over each board's middle at any size;
 # a bigger clip just starts its walk further off the screen's edge.
 CAT_CENTER_X = {"left": 320, "right": 912}
