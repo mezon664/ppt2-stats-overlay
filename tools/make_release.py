@@ -20,7 +20,7 @@ from version import VERSION  # noqa: E402
 
 TOP = "PPTetrics"     # the folder inside the zip
 LEGACY_NAME = "ppt2-stats-overlay"   # the app's name up to v0.1.0
-INCLUDE = ["launch.py", "start.bat", "README.md", "requirements.txt", "scripts", "hud", "obs", "assets",
+INCLUDE = ["launch.py", "start.bat", "README.md", "LICENSE", "requirements.txt", "scripts", "hud", "obs", "assets",
            "config/attack_table.json"]   # the game's attack table (the settings file next to it is each user's own)
 SKIP_PARTS = {"__pycache__", "user_fonts", ".pytest_cache"}
 SKIP_SUFFIXES = {".pyc", ".tmp", ".log"}

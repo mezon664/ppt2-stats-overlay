@@ -49,4 +49,9 @@ python -m venv .venv
 - 開幕テンプレの英語名: Hard Drop Tetris Wiki（https://harddrop.com/wiki/ ）
 - 猫のアニメーション: めぞんが用意した動画から切り抜いたもの
 
+## ライセンス
+
+GPL-3.0（`LICENSE` を参照）。Copyright (C) 2026 めぞん, Claude
+画面部品に PyQt6（GPL-3.0）を使っています。
+
 不具合や要望は、GitHub の Issues か X（Twitter）でお知らせください。

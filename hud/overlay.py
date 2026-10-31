@@ -1502,7 +1502,11 @@ class OpenerBadge(Band):
 # mirrored, so it comes in from the left edge; 2P's from the right.
 CAT_DIR = ROOT_DIR / "assets" / "cat"
 CAT_BOTTOM_Y = 632        # the clip's bottom edge, reference px (the cat stands about on the score)
-CAT_SCALE = 1.0
+CAT_SCALE = 1.25          # clip px -> reference px (user: a bit bigger; was 1.0)
+# Where the middle of the 640-wide clip goes (reference px): the standing cat
+# is in the clip's middle, so it stands over each board's middle at any size;
+# a bigger clip just starts its walk further off the screen's edge.
+CAT_CENTER_X = {"left": 320, "right": 912}
 CAT_MIN_STILL_S = 0.5
 CAT_PAPER_MIN_PX = 40     # smallest name text on the paper (200x140 box); longer names run off its sides     # the standing-still part is never squeezed below this           # clip pixels per reference px
 
@@ -2134,7 +2138,7 @@ class HudWindow(QtWidgets.QWidget):
             u = self._scale * CAT_SCALE * part_value(self.display, "opener", "scale")
             cat_w.show_frame(self._cat, pos, names[sd], u)
             w, h = self._cat["size"][0] * u, self._cat["size"][1] * u
-            x = 0 if sd == "left" else REFERENCE_W * self._scale - w   # in from the screen's own edge
+            x = CAT_CENTER_X[sd] * self._scale - w / 2   # its middle over the board (see CAT_CENTER_X)
             dx, dy = opener_offset(self.display, sd)
             s = self._scale
             cat_w.move(int(x + dx * s), int(CAT_BOTTOM_Y * s - h + dy * s))
@@ -2315,9 +2319,34 @@ def already_running():
     return False
 
 
+def log_errors():
+    """An unhandled Python exception in a paint, timer or signal handler makes
+    PyQt6 end the whole app (user: it closed as an opener name came up; Windows
+    logged a fail-fast in Qt6Core). With our own hook PyQt only reports it:
+    it's written to logs/hud.log with the time and the app keeps running.
+    Native crashes go to logs/hud_crash.log (faulthandler)."""
+    import faulthandler
+    import traceback
+    logs = ROOT_DIR / "logs"
+    logs.mkdir(exist_ok=True)
+    try:
+        faulthandler.enable(open(logs / "hud_crash.log", "a", encoding="utf-8"))
+    except OSError:
+        pass
+
+    def hook(kind, value, tb):
+        try:
+            with open(logs / "hud.log", "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "".join(traceback.format_exception(kind, value, tb)) + "\n")
+        except OSError:
+            pass
+    sys.excepthook = hook
+
+
 def main():
     from settings_window import SettingsWindow
 
+    log_errors()
     settings = load_settings()
     app = QtWidgets.QApplication(sys.argv)
     app.setWindowIcon(make_tray_icon())   # the settings window's title bar and taskbar button
