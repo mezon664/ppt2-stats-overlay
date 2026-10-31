@@ -47,6 +47,6 @@ python -m venv .venv
 - 作者: めぞん、Claude（Anthropic の AI。設計から実装まで一緒に作りました）
 - 開幕テンプレのデータ: テトリステンプレ整理Wiki（https://w.atwiki.jp/sasasa123/ ）
 - 開幕テンプレの英語名: Hard Drop Tetris Wiki（https://harddrop.com/wiki/ ）
-- 猫のアニメーション: めぞんが生成 AI（Gemini）で作った動画から切り抜いたもの
+- 猫のアニメーション: めぞんが用意した動画から切り抜いたもの
 
 不具合や要望は、GitHub の Issues か X（Twitter）でお知らせください。

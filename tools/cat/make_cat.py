@@ -1,4 +1,6 @@
-"""Cuts the cat out of the user's green-screen clip for the 「猫」 opener display:
+"""Cuts the cat out of the user's clip for the 「猫」 opener display (a green
+screen, or a black background — the user's second clip is DNxHR with its
+alpha channel, which ffmpeg can't decode yet, shown on black):
 a cat walks in, holds up a sheet of paper (the opener name is drawn on it at
 run time), and walks off.
 
@@ -18,11 +20,28 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "assets" / "cat"
 STEP = 1          # every frame: 24 fps (12 looked choppy; user)
-SCALE = 0.5       # 1280x720 -> 640x360
+OUT_W = 640       # the clip is shrunk to this width (1280x720 -> 640x360, 1920x1080 -> 640x360):
+                  # the HUD places the 640-wide picture with its edge on the screen's edge
+SCALE = 0.5       # set from the clip's width in main()
 
 
-BG_BGR = np.array([57, 178, 24], np.float32)   # the green screen (sampled at the corners)
-KEY_LO, KEY_HI = 30, 95   # greenness (G - max(R, B)): <= LO is the cat, >= HI the screen
+BG_BGR = np.array([57, 178, 24], np.float32)   # the green screen: measured per clip (calibrate_green)
+KEY_LO, KEY_HI = 30, 95   # greenness (G - max(R, B)): <= LO is the cat, >= HI the screen (per clip too)
+
+
+def calibrate_green(frame):
+    """The screen's colour and how green it is, from the first frame. Clips differ: the third one's
+    green is paler and uneven (greenness 80-99, the floor shadow 74-80), where
+    the first's was 95+; fixed values left a faint green veil."""
+    global BG_BGR, KEY_LO, KEY_HI
+    px = frame.reshape(-1, 3).astype(np.float32)          # the first frame: the screen, the cat just a sliver
+    greenness = px[:, 1] - np.maximum(px[:, 0], px[:, 2])
+    screen = px[greenness > 40]
+    BG_BGR = np.median(screen, axis=0)
+    # below the screen's darkest green (the dim lower corners, the floor shadow)
+    KEY_HI = float(np.percentile(greenness[greenness > 40], 0.5)) - 6
+    KEY_LO = max(20.0, KEY_HI - 55)
+    print(f"green screen BGR {BG_BGR.round()}, key {KEY_LO:.0f}-{KEY_HI:.0f}")
 
 
 def key(frame):
@@ -54,6 +73,53 @@ def key(frame):
     # despill, both ways: no greener than red/blue, and (un-mixing overshoots
     # a little) no pink rim either: green stays at least the smaller of the two
     fg[..., 1] = np.clip(fg[..., 1], np.minimum(fg[..., 0], fg[..., 2]), np.maximum(fg[..., 0], fg[..., 2]) + 6)
+    pre = np.dstack([fg * a, alpha * 255])
+    pre = cv2.resize(pre, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
+    al = pre[..., 3:4]
+    col = pre[..., :3] * 255 / np.maximum(al, 1e-3)
+    out = np.dstack([np.clip(col, 0, 255), al]).round().astype(np.uint8)
+    out[al[..., 0] < 1] = 0
+    return out
+
+
+SHADOW_MAX, SHADOW_GREY = 60, 18
+HOLE_MAX = 1500   # px at 1920x1080: holes up to this size are inside the cat (an eye is ~200)
+BLACK_LO, BLACK_HI = 18, 56   # brightest channel: <= LO is the background (and the faint floor
+                              # glow under the feet), >= HI fully the cat
+
+
+def key_black(frame):
+    """key() for a clip on black: alpha from how bright each pixel is, near
+    the outline only — inside the cat's outline (dark stripes, pupils, the
+    nose) stays solid. The picture on black is the cat already multiplied by
+    its alpha, so it's divided back out at the soft edge."""
+    f = frame.astype(np.float32)
+    m = f.max(axis=2)
+    # the floor shadow under the feet: dark and grey (brightest channel <= 49,
+    # channels within 11 of each other), where the cat's darkest fur is
+    # brown (48+ apart) — it goes with the background
+    m = np.where((m < SHADOW_MAX) & (m - f.min(axis=2) < SHADOW_GREY), 0, m)
+    soft = np.clip((m - BLACK_LO) / (BLACK_HI - BLACK_LO), 0, 1)
+    hard = (m > BLACK_LO).astype(np.uint8)
+    hard = cv2.morphologyEx(hard, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    hard = cv2.morphologyEx(hard, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    # fill the small holes only (pupils, nose, dark stripes): background
+    # enclosed by legs, body and paper is a big hole and stays background
+    # (filling every enclosed hole painted those gaps solid black; user: buggy cat)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((hard == 0).astype(np.uint8), connectivity=4)
+    h, w = hard.shape
+    inside = hard.astype(bool)
+    for i in range(1, n):
+        x, y, bw, bh, area = stats[i]
+        on_border = x == 0 or y == 0 or x + bw == w or y + bh == h
+        if not on_border and area <= HOLE_MAX:
+            inside |= labels == i
+    keep = cv2.dilate(inside.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
+    solid = cv2.erode(inside.astype(np.uint8), np.ones((7, 7), np.uint8)).astype(bool)
+    alpha = np.where(solid, 1.0, np.where(keep, soft, 0.0))
+    alpha = cv2.GaussianBlur(alpha, (3, 3), 0)
+    a = alpha[..., None]
+    fg = np.where(a > 0.02, np.clip(f / np.maximum(a, 1e-3), 0, 255), 0)   # un-premultiply the edge
     pre = np.dstack([fg * a, alpha * 255])
     pre = cv2.resize(pre, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
     al = pre[..., 3:4]
@@ -109,12 +175,44 @@ def still_part(frames):
     return best
 
 
+WALK_CYCLE = 12   # frames: the last ones repeated to finish walking off
+
+
+def finish_walking_off(frames, width):
+    """The second clip ends with the cat still half in the picture: it would
+    vanish on the spot. The last WALK_CYCLE frames are repeated, each slid
+    further toward the edge at the speed it was walking, until the cat is out
+    of the picture. (Same images, new positions: no extra files.)"""
+    last = frames[-1]
+    if not last["file"] or last["x"] >= width:
+        return
+    n = len(frames)
+    speed = max(4.0, (last["x"] - frames[n - 5]["x"]) / 4)   # px a frame, from the tail's left edge
+    cycle = frames[n - WALK_CYCLE:]
+    target, j = float(last["x"]), 0
+    while target < width:
+        target += speed
+        src = cycle[j % WALK_CYCLE]
+        # each repeated frame's left edge (the tail) keeps moving at the same speed
+        frames.append({"file": src["file"], "x": int(round(target)), "y": src["y"], "paper": None, "_grey": None})
+        j += 1
+
+
 def main(video):
     OUT.mkdir(parents=True, exist_ok=True)
     for old in list(OUT.glob("f_*.png")) + list(OUT.glob("f_*.webp")):
         old.unlink()
+    global SCALE
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24
+    SCALE = OUT_W / cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    ok, first = cap.read()
+    corners = [first[2, 2], first[2, -3], first[-3, 2], first[-3, -3]]
+    cut = key_black if max(int(c.max()) for c in corners) < 20 else key   # black background, or green
+    if cut is key:
+        calibrate_green(first)
+    print("background:", "black" if cut is key_black else "green", "scale", round(SCALE, 4))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     frames, i, k = [], 0, 0
     size = None
     while True:
@@ -122,7 +220,7 @@ def main(video):
         if not ok:
             break
         if i % STEP == 0:
-            bgra = key(f)
+            bgra = cut(f)
             size = [bgra.shape[1], bgra.shape[0]]
             ys, xs = np.nonzero(bgra[..., 3] > 8)
             entry = {"file": None, "x": 0, "y": 0, "paper": None}
@@ -140,6 +238,7 @@ def main(video):
             frames.append(entry)
             k += 1
         i += 1
+    finish_walking_off(frames, OUT_W)
     still = still_part(frames)
     held = [n for n, e in enumerate(frames) if e["paper"]]
     # a few frames while the paper is held up miss it (it's still being
