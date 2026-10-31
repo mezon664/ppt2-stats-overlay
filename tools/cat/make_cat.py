@@ -141,10 +141,18 @@ def paper_quad(bgra):
         return None
     i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
     x, y, w, h, area = stats[i]
-    if area < 1500 or w < 60 or area < 0.72 * w * h:   # not a flat sheet facing us (0.75 before the softer cut, which trims the sheet's rim a little)
+    if area < 1500 or w < 60:
         return None
     contour = cv2.findContours((labels == i).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0][0]
-    box = cv2.boxPoints(cv2.minAreaRect(contour))       # 4 corners
+    rect = cv2.minAreaRect(contour)
+    rw, rh = rect[1]
+    # a flat sheet facing us, tilted or not: it fills most of its own (turned)
+    # rectangle, and it's landscape like the paper (200x140), not a thin
+    # edge-on strip. (Measuring against the upright bounding box missed the
+    # tilted paper as the cat lifts it: blank paper for a moment; user.)
+    if rw * rh == 0 or area < 0.77 * rw * rh or not 1.0 <= max(rw, rh) / min(rw, rh) <= 1.8:
+        return None
+    box = cv2.boxPoints(rect)                           # 4 corners
     # order: top-left, top-right, bottom-right, bottom-left
     s = box.sum(axis=1)
     d = np.diff(box, axis=1).ravel()

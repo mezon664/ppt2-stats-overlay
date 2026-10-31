@@ -368,3 +368,32 @@ def test_resuming_from_pause_without_go_keeps_the_match(monkeypatch):
     run_with_gate(mp, gate, -1.0, 26.0, monkeypatch)   # no GO! at all
     assert mp.match_reset_count == 0
     assert mp.left.apm.total_events == 1
+
+
+def left_empty_right_full():
+    f = blank_frame()
+    x1, y1, x2, y2 = RIGHT_BOX
+    f[y1:y2, x1:x2] = (0, 0, 255)
+    return f
+
+
+def test_go_against_a_puyo_player_counts_the_tetris_board_only(monkeypatch):
+    """User: the opener sometimes wasn't recognized — against Puyo, the Puyo
+    board never reads clear, so every next match's GO! was ignored."""
+    mp = MatchPipeline(gate=AlwaysOnScreen())
+    mp.puyo["right"] = True
+    mp._frozen = True
+    monkeypatch.setattr(mp.boundary_detector, "update", lambda frame, tt: (False, tt == 11.0))
+    mp.process_frame(left_empty_right_full(), 10.0)
+    mp.process_frame(left_empty_right_full(), 11.0)
+    assert mp._frozen is False and mp.match_reset_count == 1
+
+
+def test_go_with_both_boards_full_is_still_ignored_against_puyo(monkeypatch):
+    mp = MatchPipeline(gate=AlwaysOnScreen())
+    mp.puyo["right"] = True
+    mp._frozen = True
+    monkeypatch.setattr(mp.boundary_detector, "update", lambda frame, tt: (False, tt == 11.0))
+    mp.process_frame(frame_with_pieces(), 10.0)
+    mp.process_frame(frame_with_pieces(), 11.0)
+    assert mp._frozen is True and mp.match_reset_count == 0

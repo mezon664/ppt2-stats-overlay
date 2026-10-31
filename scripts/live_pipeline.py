@@ -919,9 +919,15 @@ class MatchPipeline:
             profile = self.profile or REFERENCE_PROFILE
             # Bright cells only (board_read.board_is_clear): stage art inside
             # the boards must not count as blocks.
-            both_empty = (board_is_clear(frame, scale_box(LEFT_BOX, profile))
-                          and board_is_clear(frame, scale_box(RIGHT_BOX, profile)))
-            if both_empty:
+            clear = {"left": board_is_clear(frame, scale_box(LEFT_BOX, profile)),
+                     "right": board_is_clear(frame, scale_box(RIGHT_BOX, profile))}
+            both_empty = clear["left"] and clear["right"]
+            # For the GO! check, a Puyo side's board doesn't count: it's never
+            # read as clear (its frame, puyos, garbage), so against a Puyo
+            # player every next match's GO! was ignored and the opener missed
+            # (user: the opener sometimes isn't recognized)
+            tetris_sides = [sd for sd in ("left", "right") if not self.puyo[sd]]
+            if tetris_sides and all(clear[sd] for sd in tetris_sides):
                 self._last_both_empty_t = raw
 
         if victory_edge and not self._frozen:

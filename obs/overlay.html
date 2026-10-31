@@ -395,7 +395,7 @@ function catPos(cat, age, seconds) {
   const n = cat.frames.length, hs = cat.hold_start, he = cat.hold_end;
   const s0 = cat.still_start ?? hs, s1 = cat.still_end ?? he, span = Math.max(1, s1 - s0);
   const pingpong = k => s0 + (k <= span ? k : 2 * span - k);
-  let t = age * cat.fps, pos;
+  let t = Math.max(0, age) * cat.fps, pos;   // never before the start (the age can be a hair below 0)
   if (t < s0) pos = t;
   else {
     const u = t - s0;

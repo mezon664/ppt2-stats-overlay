@@ -221,3 +221,14 @@ def test_app_icon():
     assert img != off                                                                    # greyed when off
     data = (overlay.ROOT_DIR / "assets" / "app.ico").read_bytes()
     assert data[:4] == b"\x00\x00\x01\x00" and int.from_bytes(data[4:6], "little") >= 5
+
+
+def test_cat_at_a_negative_age_starts_at_the_first_frame():
+    """The server's opener age can be a hair below 0 as the opener is
+    recognized: that gave a negative blend weight and an exception while
+    painting (the app closed; user: it closed as the name came up)."""
+    cat = overlay.load_cat()
+    assert overlay.cat_pos(cat, -0.3, 4) == (0, 1, 0.0)
+    w = overlay.CatPopup(None, "right")
+    w.show_frame(cat, overlay.cat_pos(cat, -0.01, 4), "開幕TSD", 1.0)
+    w.grab()   # no exception

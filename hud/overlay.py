@@ -1539,7 +1539,11 @@ def cat_pos(cat, age, seconds):
     hs, he = cat["hold_start"], cat["hold_end"]
     s0, s1 = cat.get("still_start", hs), cat.get("still_end", he)
     span = max(1, s1 - s0)
-    t = age * cat["fps"]
+    # never before the clip's start: the server's opener age can be a hair
+    # below 0 right as the opener is recognized, which made a negative blend
+    # weight (an exception in paintEvent: before log_errors the app closed,
+    # after it the cat skipped frames — user: it closed / the paper went blank)
+    t = max(0.0, age) * cat["fps"]
     if t < s0:
         pos = t
     else:
@@ -1716,7 +1720,7 @@ class CatPopup(QtWidgets.QWidget):
         # weights (1 - frac, frac), so where both are solid it stays solid. (Qt's
         # additive mode ignores the opacity and drew one over the other: the
         # cat went pale and see-through halfway between frames.)
-        wb = int(round(frac * 256))
+        wb = int(round(min(max(frac, 0.0), 1.0) * 256))
         parts = [(f, wt) for f, wt in ((a, 256 - wb), (b, wb)) if f is not None and wt]
         # only the area the two frames cover (the cat is a small part of the clip)
         X1 = min(x for (arr, x, y), _ in parts)
