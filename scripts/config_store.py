@@ -52,6 +52,19 @@ DISPLAY_DEFAULTS = {
     "event_offset_y": 0,
     "summary_offset_x": 0,       # move the end-of-match summary
     "summary_offset_y": 0,
+    # Each player's numbers on their own, on top of offset_x/y (which moves both)
+    "stats_left_offset_x": 0,
+    "stats_left_offset_y": 0,
+    "stats_right_offset_x": 0,
+    "stats_right_offset_y": 0,
+    # the opener name: both players at once, then each one on its own on top
+    # (any opener display; the top-center one moves with "both" only)
+    "opener_offset_x": 0,
+    "opener_offset_y": 0,
+    "opener_left_offset_x": 0,
+    "opener_left_offset_y": 0,
+    "opener_right_offset_x": 0,
+    "opener_right_offset_y": 0,
     "background_opacity": 0.85,  # 0 = no background band
     # Which numbers the stat block shows, top to bottom (any of STAT_ITEMS).
     # Replaces the old show_apm / show_pps / show_app switches (still read, see
@@ -71,6 +84,17 @@ DISPLAY_DEFAULTS = {
     # select; hidden again back at the home screen / menus — see
     # live_pipeline.MATCH_SCREEN_HIDE_S). True: always shown.
     "always_show": False,
+    # dragging on the game screen moves 1P's and 2P's numbers / opener name
+    # separately (off: both together)
+    "drag_each_side": False,
+    # The tool's on/off switch (top of the settings window, and the tray menu):
+    # off hides everything, on the HUD and in OBS. Recognition keeps running,
+    # so turning it back on shows the current numbers straight away.
+    "enabled": True,
+    # Shown off the match screen too, for now (user: switch it on from the
+    # home screen with the on/off button). Cleared when a match screen next
+    # comes up, so the usual hiding is back after that.
+    "force_show": False,
     "show_clock": True,          # match time, above the マッチポイント banner
     "show_event_log": False,     # recent clears / REN breaks above the stats
     "show_summary": True,        # both players' totals between the boards when a match ends
@@ -85,6 +109,8 @@ DISPLAY_DEFAULTS = {
     "opener_display": "board",
     # how long the opener name stays up, seconds; 0 = until the match ends
     "opener_seconds": 4,
+    # the opener's name in Japanese or English; "auto" = the same as "language"
+    "opener_language": "auto",
     # whose display is shown: "both", "left" (1P only) or "right" (2P only)
     "players": "both",
     "event_log_count": 3,        # 1 - 10 (was 5; user: allow more)
@@ -103,6 +129,16 @@ DISPLAY_RANGES = {
     "event_offset_y": (-692, 692),
     "summary_offset_x": (-1232, 1232),
     "summary_offset_y": (-692, 692),
+    "stats_left_offset_x": (-1232, 1232),
+    "stats_left_offset_y": (-692, 692),
+    "stats_right_offset_x": (-1232, 1232),
+    "stats_right_offset_y": (-692, 692),
+    "opener_offset_x": (-1232, 1232),
+    "opener_offset_y": (-692, 692),
+    "opener_left_offset_x": (-1232, 1232),
+    "opener_left_offset_y": (-692, 692),
+    "opener_right_offset_x": (-1232, 1232),
+    "opener_right_offset_y": (-692, 692),
     "background_opacity": (0.0, 1.0),
     "event_log_count": (1, 10),
     "opener_seconds": (0, 30),
@@ -118,10 +154,18 @@ STYLES = ("band", "pop", "gauge", "text", "versus", "simple",
 STYLE_RENAMES = {"neon": "frame"}
 # allowed values for the text options
 LANGUAGES = ("ja", "en")
-OPENER_DISPLAYS = ("board", "hold", "namebar", "top")
+OPENER_DISPLAYS = ("board", "hold", "namebar", "top", "cat")   # cat: a cat walks over the board holding up the name
 PLAYERS = ("both", "left", "right")
+OPENER_LANGUAGES = ("auto", "ja", "en")
 DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES,
-                   "opener_display": OPENER_DISPLAYS, "players": PLAYERS}
+                   "opener_display": OPENER_DISPLAYS, "players": PLAYERS, "opener_language": OPENER_LANGUAGES}
+
+
+def opener_language(display):
+    """The language opener names are shown in: display.opener_language, or
+    the overlay's own language while that's "auto"."""
+    lang = display.get("opener_language", "auto")
+    return display.get("language", "ja") if lang == "auto" else lang
 # free-form text options: the pattern a value must match
 COLOR_PATTERN = r"#[0-9a-fA-F]{6}"
 DISPLAY_PATTERNS = {"bg_color": COLOR_PATTERN, "text_color": COLOR_PATTERN, "line_color": COLOR_PATTERN,

@@ -14,10 +14,16 @@ import threading
 import time
 from pathlib import Path
 
+import sys
+
 import cv2
 import websockets
 
-from live_pipeline import MatchPipeline, VideoReplaySource
+# The full package's bundled Python doesn't put this script's own folder on
+# the import path (its ._pth file fixes the path), so do it here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from live_pipeline import MatchPipeline, VideoReplaySource  # noqa: E402
 from config_store import load_settings, display_settings, CONFIG_PATH
 from i18n import capture_message_en
 

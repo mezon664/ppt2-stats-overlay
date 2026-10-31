@@ -144,7 +144,10 @@
    - ライン消去あり = `tspin_mini`（表示「T-SPIN Mini Single」、攻撃0段・B2B対象、1段の光が必要）。なし = 攻撃でもクリアでもない、イベント履歴に「T-SPIN Mini」だけ出す（`mini_no_line_events`）。
    - 実戦（2026-10-30 19:10頃、ユーザー操作）: Mini Single 4回（うち2回はB2Bで+1）、ライン消去なし1回を認識。誤って捨てたバナーなし。
    - 注意: 盤面の一番上の段を消したとき（burst_boundary 右 t=107.5、負け直前）、光の段数を2段と測り、Miniバナーが段数不一致で捨てられた。光の測り方の既知の弱点（Mini に限らない）。
-2. **開幕テンプレを全部** — テトリステンプレ整理Wiki の全テンプレのタグ（テト譜）を `assets/openers.json` に追加。数が多いので重複・似た形の確認（tests/test_opener.py）が重要。
+2. ~~**開幕テンプレを全部**~~ → 済（2026-10-31、v0.2.0）。テトリステンプレ整理Wiki のテンプレ一覧の全1455開幕・4409形（`tools/opener_import/`、経緯は `docs/opener_import_progress.md`）。
+   - 1巡目で段を消す開幕（タグに埋まった行がある 1269 形）は、ゲームでは埋まった行がすぐ消えるので、「T を入れる直前の盤面」で判定（`opener_detect._before_the_t_spin`）。消えたあとの残りは14マス以上のときだけ使い、置いた数が足りるまで待つ（`MIN_LEFTOVER_CELLS`、`PLACEMENT_SLACK`）。
+   - 形はおよそ1万8千の盤面になるので、表引き（`OpenerIndex`）。同じ盤面が複数の開幕にあるときは名前2つまで＋「ほか」（`shown_name`）。
+   - Wiki は Cloudflare で curl 不可（回避はしない）。内蔵ブラウザで開いてページ内の fetch で集めた。データを作り直すときも同じやり方で。
 3. **他言語** = 英語版のぷよテト2に対応（表示の言語ではなく、ゲーム側が英語のとき）。「やった!」「ゴー!」等のテンプレが英語表記で違うはず → 英語版での録画が必要（配布準備の「英語版ゲームの『やった!』対応」と同じ件）。
 4. ~~**縁あり（文字に縁をつける）を初期値に**~~ → 済（`DISPLAY_DEFAULTS["text_outline"] = True`、OBS の DEFAULTS も）。
 5. ~~**キャラ選択後から表示、ホームに戻ったら非表示**~~ → 済（2026-10-31）。画面の種類を個別に見分けるのではなく「試合画面（NEXT 枠が見える／ポーズ中）が出ている間だけ表示」にした: 試合画面が `live_pipeline.MATCH_SCREEN_HIDE_S`（3秒）見えなければ隠す（試合と試合の間に試合画面から外れるのは全録画で最長0.65秒）。snapshot の `match_screen`、設定 `display.always_show`（「ホーム画面やメニューでも常に表示する」、初期値オフ）。HUD `_away_from_match`、OBS `body.away`。
@@ -160,6 +163,31 @@
 9. **試合結果の背景などをかっこよく** — デザイン案を作って見てもらう。
 10. **デザイン「ネコ」** = 猫の実写素材を使ったネタデザイン。ライン消去のたびに猫の鳴き声が鳴る。
     → 写真・音声は使ってよいライセンスの素材が必要（フリー素材の候補を探してユーザーに確認）。音を鳴らす仕組みは HUD/OBS に新規。
+
+## 2026-10-31 後半に入れたもの
+- **開幕名の表示「猫」**（`opener_display: "cat"`、設定では「E 猫」）: ユーザー提供のグリーンバック動画（10秒・猫が右から来て白い紙を掲げて左へ去る）を `tools/cat/make_cat.py` で切り抜き → `assets/cat/`（24fps・半分の大きさ・WebP 207枚 1.3MB。12fps はカクカクするとのことで全コマに、`cat.json` に各コマの位置と紙の四隅、OBS 用に同じものを `cat.js`）。
+  1P は左右反転して左の画面端から、2P は右端から、盤面の上に重なる（ユーザー「猫が盤面の邪魔をしてくる」）。紙に開幕名（英語表示なら英語名）を、紙の四隅に合わせて変形して描く。紙を持つ時間は「開幕テンプレ名を出しておく時間」、長いときは持っているコマを往復。
+  HUD `CatPopup`/`cat_pos`、OBS `catTick`（canvas）。
+  なめらかさ（ユーザー「もっと滑らかに」）: ①猫は出始めからこの PC の時計だけで進める（サーバーから毎秒10回来る経過時間は数十ms揺れ、追いかけるとカクついた。0.35秒以上ずれたときだけ合わせ直す）②コマとコマの間を重みづけで混ぜて60fps相当に（Qt の加算モードは不透明度を無視して半透明になったので numpy で合成、OBS は canvas の lighter）③拡大済みのコマを「猫」を選んだ時点で全部用意（初回の拡大で引っかかった）④HUD のタイマーを PreciseTimer に。1回の描画は約7.5ms。紙の検出が抜けた4コマは前後から補間。動画はユーザーが Gemini で生成したもの（配布可）。
+- **オン／オフ**（ユーザー希望、わかりやすい場所に）: 設定画面のいちばん上の大きなボタン（緑＝オン）と、トレイ右クリックメニューのいちばん上「表示する（オン／オフ）」。
+  `display.enabled`。オフで HUD・OBS とも全部消える（認識は動いたまま）。トレイのアイコンもオフで灰色。
+  トレイからの切り替えは、設定画面を一度も開いていなくても保存済みの設定を読んでから on/off だけ変える（`SettingsWindow.set_enabled`。開いていない画面の初期値で上書きしないため）。
+- **英語の開幕名**（表示言語が English のとき）: ユーザーのルール「Hard Drop の名前、なければ日本語」。1455 中 410 に英語名（Hard Drop の綴り 78、Wiki ページ冒頭の「日本語 / English」の英語名 332）、残りは日本語のまま。
+  `assets/openers.json` の `name_en`（`tools/opener_import/build_openers.py`、元データ `wiki_heads.json`・`harddrop.json`）。検出は日英両方を持つ（`OpenerDetector.name_en`、snapshot `opener_en`、イベント `text_en`）。
+  Hard Drop の日本語での一致は「そのページに日本語が4語以下」のときだけ（たくさん並べたページで SDパフェ→Mini Triple Double のような誤対応が出たため）。
+- **Python なしで動く完全版**: `tools/build_full.py` → `dist/PPTetrics-full-v<版>.zip`（約150MB、Windows の組み込み用 Python と必要なライブラリを `runtime/` に同梱）。`start.bat` は runtime → .venv → PATH の順に使う。
+  更新はふだん小さいコードだけの zip（runtime はそのまま。`updater.PRESERVE`）。requirements.txt を変えたら `version.RUNTIME` を上げる → 古い runtime の人には「完全版を入れ直して」と出す（`updater.NEEDS_FULL`）。
+  組み込み Python は スクリプトの置き場所を import パスに入れないので、`data_server.py` は自分で入れる。完全版を空のフォルダに展開して、同梱 Python だけでサーバーが起動し実画面を読めることを確認済み。
+  リリースの自動作業は `build_full.py` を実行するので、公開すると完全版も一緒に出る。
+- **配布 zip の不具合を修正**: v0.1.0 の zip に `config/attack_table.json` が入っておらず、起動できなかった（`make_release.INCLUDE` に追加。zip を展開して起動まで試すテスト `test_the_release_zip_runs`）。
+- ぷよ相手でポーズすると試合終了になる件: ぷよ側がいるときは「両方の盤面が空」で終了にしない（ぷよ側はいつも空に見えるため、ポーズ直前にテトリス側が一瞬消えるだけで終了していた）。
+
+## アプリ名: PPTetrics（2026-10-31 ユーザー決定）
+- 表示名（トレイ・設定画面・OBS ページ・README）は PPTetrics。README と設定の「アップデート」タブに「非公式のファンツール。セガ・The Tetris Company とは無関係」と、開幕データの出典（テトリステンプレ整理Wiki）を明記。
+  「Tetrics」は Tetris に綴りが近く、The Tetris Company が問題にしやすいことはユーザーに伝えたうえでの決定。
+- 中身の識別子（フォルダ名、プリセット形式 `ppt2-stats-overlay-preset`、GitHub リポジトリ名）は変えていない。リリースの zip は `PPTetrics-v<版>.zip` と、v0.1.0 の更新確認が探す旧名 `ppt2-stats-overlay-v<版>.zip` の2つ（`tools/make_release.py`）。
+- GitHub のリポジトリ名を変えるなら（ユーザーが GitHub の Settings で）、旧名からは自動で転送されるので古い版の更新確認も届く。そのあと `updater.UPDATE_REPO` と git remote を新しい名前に。
+- 開幕データ（v0.2.0 の全テンプレ）の公開は、Wiki 管理者さんへの相談（ユーザーが X の DM で送る）の返事待ち。
 
 ## 2026-10-31 に入れたもの・残り
 - **勝手にポーズされる件**: このゲームはフォーカスを失うと自動でポーズする。アプリ起動時に HUD・設定画面がフォーカスを奪っていた（作業中の再起動のたびに起きていた）。
@@ -193,3 +221,34 @@
 ## ユーザーへの連絡でよく使うこと
 - 録画を頼むとき: 「録画して」と言ってもらえれば `capture_burst.py` で始める。
 - 画像を見せるときは SendUserFile（リモート操作中のことがある）。
+
+### 二重起動防止（2026-10-31）
+- デスクトップのショートカット `PPTetrics.lnk`（`.venv\Scripts\pythonw.exe launch.py`、アイコン `assets/app.ico`）。
+- `hud/overlay.py` の `already_running()`: QLocalServer `PPTetrics-hud` が既にあれば "show" を送って即終了 → 起動中のアプリが設定画面を開く。
+
+### 猫の切り抜き改善（2026-10-31）
+- `tools/cat/make_cat.py` `key()`: 緑の度合いで柔らかい透明度、縁の色を背景から逆算（緑/ピンクのフチ除去）、原寸でキーしてから半分に縮小。素材 1.3→1.8 MB。
+- 紙の判定の閾値を 0.75→0.72（縁が削れた分）。紙を掲げる区間は 21–182（旧 22–182）。
+- 帰りのコマ飛び修正: 紙の表示時間に合わせるのは「猫が止まっている区間」(`still_start`–`still_end`、make_cat.py が自動検出、今は 56–174) だけ。短ければ早送り、長ければ奇数回往復して still_end で終わる → 退場は撮影どおり連続。`cat_pos`（HUD）/`catPos`（OBS）同じ計算。`CAT_MIN_STILL_S = 0.5`。
+
+### 英語版のぷよテト2（2026-10-31、録画 debug_frames/burst_english）
+- 確認できたもの（変更なしで動く）: 「Ready?」「START!」（色で GO! 判定）、T-SPIN Double/Triple/Mini Single、BACK-to-BACK、PERFECT CLEAR、テトリス（フラッシュ）、NEXT 表示（ぷよ側判定・試合画面判定）、メインメニューで非表示。
+- 直したもの: 勝利の「Yeah!」→ `assets/templates/t_yeah_live.png`（match_boundary.py で「やった!」と並べて照合。英語 0.88–1.00、日本語の録画では最大 0.45）。これがないと試合終了が約 3 秒遅れ、その間に偽のテトリスが 1 回出ていた。
+- REN は英語だと「1 Combo」表示で、REN バッジの見本は合わない。ただし REN 数は連続消去から数えているので表示は正しい（録画で 1REN・2REN を確認）。
+- 追加録画 debug_frames/burst_english2 で確認（変更なしで正しい）: T-SPIN Single、ライン消去なし T-SPIN、相手がぷよ（右をぷよと判定して非表示）、TSD→テトリスの 1REN（画面の「1 Combo」と一致）、「Yeah!」で試合終了。
+
+### 2026-10-31 追加
+- 英語の REN → Combo: イベント「2 Combo」「Combo ended (no clear)」、結果「Max combo」、項目「Current combo」、英語のときの標準ラベル `COMBO`（`DEFAULT_LABELS_EN`、HUD/OBS/設定画面）。日本語は REN のまま。
+- 開幕テンプレ名の言語 `display.opener_language`: auto（表示の言語と同じ・初期値）/ ja / en。`config_store.opener_language(d)`。バッジ・猫・試合結果・イベント履歴（開幕の行は prefix が表示言語、名前がこの設定）。イベントに `opener_en` を追加。
+- 猫の紙: 名前は 1 行、40px（紙 200x140 基準）まで縮めて、それより長いと紙の外へはみ出す（ユーザー了承）。
+- 開幕名の位置: 1P/2P 別 `opener_left_offset_x/y`, `opener_right_offset_x/y`。設定「位置」タブの対象に「1P のテンプレ名」「2P のテンプレ名」、位置調整モードで見本の名前（猫なら紙を持った猫）が出てドラッグ可。上中央にまとめる表示は 1P の値で動く。
+- 英語の開幕名も（…）部分を外す（`load_english` で `screen_name`、同じ英語名は1つにまとめる）。
+- 英語版で相手がぷよのときのポーズ: メニューが自分の NEXT 欄にかぶって「ミノあり」と読んでいた → ポーズメニューの「Start Over」「Quit Game」ボタンの見本（`t_pause_en_*.png`、gameplay_gate `PAUSE_WINDOW`）。ポーズ中 1.0、他の全録画 0.46 以下。日本語版で相手ぷよのポーズは録画がなく未確認。
+- 位置: 数値も 1P/2P 別（`stats_left/right_offset_*`、`offset_x/y` が両方）。テンプレ名は `opener_offset_*`（両方）＋ 1P/2P。設定の「動かすもの」はプルダウン 9 項目、「ドラッグで 1P と 2P を別々に動かす」(`drag_each_side`)。位置調整中は枠の上でホイール → その部分の大きさ（`wheel_resize`、`part_resized` → 設定画面が保存）。
+- 表示オンのボタン: オン中に試合画面の外で隠れているときは「◐ … クリックで表示」→ `force_show`（次に試合画面になったら自動で解除）。トレイでオンにしたときも、その場で見えるようにする。
+- 相手がぷよのとき、テトリス側の盤面の枠が外側に 12px 広い（白線 1P x=173 / 2P x=778、通常 186 / 791）→ 数値が枠に乗って右にずれて見えた。`VS_PUYO_SHIFT_X`（左下モードのみ -12、HUD/OBS）。あわせて左下の基準を 186/790 → 184/788（テトリス同士でも白線の 1 列目にかかっていた。実画面で線の手前 2px に止まるのを確認）。
+- 中央: 盤面の白線（185.9 / 439.9 / 791.3 / 1045.4、3 録画で一致）の中点は 615.6。`CLOCK_CENTER_X` / `OPENER_TOP_CENTER_X` を 617 → 615.6（試合時間・試合結果・数値の対戦表示・上中央の開幕名、HUD/OBS）。2P 左下の基準 788 → 789.2 で 1P/2P とも白線まで 2px。初回コミットからの値で、急にずれたのではなく、ぷよ相手で 12px かぶって目立った。
+
+### アイコン（2026-10-31）
+- ユーザーが選んだ案: 左下に紫の T ミノ、右上に棒グラフ（白・青・赤）、暗い角丸。`hud/overlay.py` `draw_app_icon` / `icon_image` / `make_tray_icon`（16〜256px を描き分け、オフ時は灰色）。`app.setWindowIcon` で設定画面のタイトルバー・タスクバーも同じ。
+- `assets/app.ico` は `python tools/make_icon.py` で同じ絵から書き出す（PNG 入り ico、9 サイズ）。デスクトップのショートカットはこれを参照。

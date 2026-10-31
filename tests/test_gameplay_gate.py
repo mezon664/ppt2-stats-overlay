@@ -59,3 +59,15 @@ def test_real_frames(name, expected, reason):
     gate = GameplayGate(compute_profile(frame.shape[1], frame.shape[0]))
     assert gate.update(frame) is expected
     assert gate.last_reason == reason
+
+
+def test_english_pause_against_puyo():
+    """User: in the English game against a Puyo player, pausing didn't hold the
+    numbers — the menu covers the only NEXT queue. Its buttons are recognized."""
+    import cv2
+    from gameplay_gate import GameplayGate
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    gate = GameplayGate()
+    assert gate.update(cv2.imread(str(fixtures / "en_pause_vs_puyo.jpg"))) is False
+    assert gate.last_reason == "pause"
+    assert gate.update(cv2.imread(str(fixtures / "en_play_vs_puyo.jpg"))) is True

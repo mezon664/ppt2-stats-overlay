@@ -119,3 +119,20 @@ def test_hud_hides_the_puyo_side():
     assert not win.badges["left"].isHidden() and win.badges["right"].isHidden()
     assert win.summary.sides["right"]["puyo"] is True
 
+
+
+def test_against_puyo_an_empty_tetris_board_does_not_end_the_match(monkeypatch):
+    """Pausing blanks the Tetris board for a moment, and the Puyo side's area
+    reads empty: that must not end the match (user report)."""
+    gate = ScoreGate()
+    mp = lp.MatchPipeline(gate=gate)
+    frame = cv2.imread(str(FIXTURES / "puyo_right.jpg"))
+    h, w = frame.shape[:2]
+    mp.profile = compute_profile(w, h)
+    monkeypatch.setattr(lp, "board_is_clear", lambda f, box: True)   # both boards read empty
+    mp.puyo["right"] = True
+    mp.process_frame(frame, 10.0)
+    assert not mp._frozen
+    mp.puyo["right"] = False                                         # Tetris vs Tetris: as before
+    mp.process_frame(frame, 10.5)
+    assert mp._frozen

@@ -82,3 +82,10 @@ def test_opener_name_time():
     assert popup_alpha(up, False, seconds=10) == 1.0
     assert popup_alpha({"opener_age_s": 300.0}, False, seconds=0) == 1.0   # 0 = until the match ends
     assert popup_alpha({"opener_age_s": 300.0}, True, seconds=0) == 0.0
+
+
+def test_switched_off_hides_everything():
+    off = hud_with({"match_screen": True}, enabled=False, always_show=True)
+    assert off.stats["left"].isHidden() and off.clock.isHidden()
+    on = hud_with({"match_screen": True}, enabled=True)
+    assert not on.stats["left"].isHidden()

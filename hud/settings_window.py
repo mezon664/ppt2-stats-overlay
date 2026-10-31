@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from config_store import (load_settings, save_settings, display_settings, preset_of, preset_file,
                           read_preset_file, part_value, DISPLAY_DEFAULTS, DISPLAY_RANGES, STAT_ITEMS, PARTS,
-                          SUMMARY_ITEMS)
+                          SUMMARY_ITEMS, OPENER_LANGUAGES)
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -57,15 +57,21 @@ TARGET_KEYS = {
     "clock": ("clock_offset_x", "clock_offset_y"),
     "event": ("event_offset_x", "event_offset_y"),
     "summary": ("summary_offset_x", "summary_offset_y"),
+    "stats_left": ("stats_left_offset_x", "stats_left_offset_y"),
+    "stats_right": ("stats_right_offset_x", "stats_right_offset_y"),
+    "opener": ("opener_offset_x", "opener_offset_y"),
+    "opener_left": ("opener_left_offset_x", "opener_left_offset_y"),
+    "opener_right": ("opener_right_offset_x", "opener_right_offset_y"),
 }
-TARGET_ORDER = ("stats", "clock", "event", "summary")
+TARGET_ORDER = ("stats", "stats_left", "stats_right", "opener", "opener_left", "opener_right",
+                "clock", "event", "summary")
 # simplest first (user's request)
 STYLE_ORDER = ("text", "minimal", "simple", "band", "frame", "slash", "pop",
                "gauge", "trend", "tower", "meter", "hex", "versus")
 ROOT = Path(__file__).resolve().parent.parent
 USER_FONTS = ROOT / "assets" / "user_fonts"
 OBS_PAGE = ROOT / "obs" / "overlay.html"   # what an OBS browser source loads
-OPENER_DISPLAY_ORDER = ("board", "hold", "namebar", "top")
+OPENER_DISPLAY_ORDER = ("board", "hold", "namebar", "top", "cat")
 PLAYER_ORDER = ("both", "left", "right")
 OPENER_SECONDS_ORDER = (2, 3, 4, 6, 8, 10, 0)   # 0 = until the match ends
 # "Look" target: everything at once ("all"), or one part (display.parts)
@@ -74,15 +80,22 @@ LOOK_KEYS = ("scale", "background_opacity", "bg_color", "text_color", "line_colo
 COLOR_KEYS = ("bg_color", "text_color", "line_color")   # what 全体をこの色に合わせる copies
 DEFAULT_LABELS = {"apm": "APM", "pps": "PPS", "app": "APP", "attack": "ATK",
                   "pieces": "PIECES", "ren": "REN", "b2b": "B2B"}   # same as hud/overlay.py
+DEFAULT_LABELS_EN = {**DEFAULT_LABELS, "ren": "COMBO"}   # English: the game says "Combo"
 
 TEXT = {
-    "title": {"ja": "PPT2 Stats Overlay - 表示設定", "en": "PPT2 Stats Overlay - Display settings"},
+    "title": {"ja": "PPTetrics - 表示設定", "en": "PPTetrics - Display settings"},
     "tab.show": {"ja": "表示", "en": "Show"},
     "tab.look": {"ja": "デザイン", "en": "Look"},
     "tab.place": {"ja": "位置", "en": "Position"},
     "tab.obs": {"ja": "OBSに映す", "en": "Show in OBS"},
     "tab.update": {"ja": "アップデート", "en": "Updates"},
-    "up.current": {"ja": "今の版: v{}", "en": "This version: v{}"},
+    "enabled_on": {"ja": "● 表示オン（クリックでオフ）", "en": "● Overlay ON (click to turn off)"},
+    "enabled_off": {"ja": "○ 表示オフ（クリックでオン）", "en": "○ Overlay OFF (click to turn on)"},
+    "enabled_away": {"ja": "◐ 表示オン：試合画面ではないので隠れています（クリックで表示）",
+                     "en": "◐ Overlay ON: hidden off the match screen (click to show it)"},
+    "enabled_forced": {"ja": "● 表示オン：試合画面の外でも表示中（クリックでオフ）",
+                       "en": "● Overlay ON: shown off the match screen too (click to turn off)"},
+    "up.current": {"ja": "今の版: v{}　　作者: めぞん", "en": "This version: v{}    Made by めぞん (mezon)"},
     "up.check_on_start": {"ja": "起動したときに新しい版があるか確認する", "en": "Look for a new version when the app starts"},
     "up.check": {"ja": "今すぐ確認", "en": "Check now"},
     "up.checking": {"ja": "確認しています…", "en": "Checking…"},
@@ -96,8 +109,12 @@ TEXT = {
     "up.downloading": {"ja": "ダウンロードしています… {}", "en": "Downloading… {}"},
     "up.install_failed": {"ja": "更新できませんでした: {}", "en": "Couldn't update: {}"},
     "up.notes": {"ja": "この版の変更点", "en": "What's new"},
-    "up.note": {"ja": "更新しても、設定・読み込んだフォント・プリセットはそのまま残ります。勝手に更新されることはありません。",
-                "en": "Updating keeps your settings, loaded fonts and presets. Nothing updates without you pressing the button."},
+    "up.note": {"ja": "更新しても、設定・読み込んだフォント・プリセットはそのまま残ります。勝手に更新されることはありません。\n\n"
+                      "PPTetrics は非公式のファンツールです。セガ・The Tetris Company とは関係ありません。\n"
+                      "開幕テンプレのデータ: テトリステンプレ整理Wiki（https://w.atwiki.jp/sasasa123/）",
+                "en": "Updating keeps your settings, loaded fonts and presets. Nothing updates without you pressing the button.\n\n"
+                      "PPTetrics is an unofficial fan tool, not affiliated with SEGA or The Tetris Company.\n"
+                      "Opener data: テトリステンプレ整理Wiki (https://w.atwiki.jp/sasasa123/)"},
     "obs_title": {"ja": "OBS にこの表示を重ねる手順", "en": "Putting this display on top of the game in OBS"},
     "obs_steps": {
         "ja": "<ol style='margin-left:-20px'>"
@@ -149,7 +166,7 @@ TEXT = {
     "item.app": {"ja": "APP（1ミノあたりの火力）", "en": "APP (attack per piece)"},
     "item.attack": {"ja": "攻撃の合計（送った段数）", "en": "Attack (lines sent)"},
     "item.pieces": {"ja": "置いたミノ数", "en": "Pieces placed"},
-    "item.ren": {"ja": "今のREN", "en": "Current REN"},
+    "item.ren": {"ja": "今のREN", "en": "Current combo"},
     "item.b2b": {"ja": "B2B（続いている回数）", "en": "Back-to-Back chain"},
     "move_up": {"ja": "▲", "en": "▲"}, "move_down": {"ja": "▼", "en": "▼"},
     "labels": {"ja": "ラベルの文言（空欄＝標準）", "en": "Label wording (blank = default)"},
@@ -162,9 +179,13 @@ TEXT = {
     "pl.right": {"ja": "2P だけ", "en": "2P only"},
     "opener_seconds": {"ja": "開幕テンプレ名を出しておく時間", "en": "Opener name shown for"},
     "os.forever": {"ja": "試合が終わるまで", "en": "Until the match ends"},
+    "opener_language": {"ja": "開幕テンプレ名の言語", "en": "Opener name language"},
+    "ol.auto": {"ja": "表示の言語と同じ", "en": "Same as the display language"},
+    "ol.ja": {"ja": "日本語", "en": "Japanese"},
+    "ol.en": {"ja": "英語（英語名がなければ日本語）", "en": "English (Japanese where there's no English name)"},
     "os.seconds": {"ja": "{} 秒", "en": "{} s"},
     "show_clock": {"ja": "試合時間を表示", "en": "Show match time"},
-    "show_event_log": {"ja": "イベント履歴を表示（TETRIS / REN など）", "en": "Show event history (TETRIS, REN, ...)"},
+    "show_event_log": {"ja": "イベント履歴を表示（TETRIS / REN など）", "en": "Show event history (TETRIS, combos, ...)"},
     "event_log_count": {"ja": "イベント履歴の件数", "en": "Events shown"},
     "count_suffix": {"ja": " 件", "en": ""},
     "show_opener": {"ja": "開幕テンプレ名を表示（認識できたとき）", "en": "Show the opener name (when recognized)"},
@@ -173,13 +194,15 @@ TEXT = {
     "od.hold": {"ja": "B HOLDの下に小さく（数秒）", "en": "B  Small under HOLD (a few seconds)"},
     "od.namebar": {"ja": "C 名前の帯の上（数秒）", "en": "C  On the name bar (a few seconds)"},
     "od.top": {"ja": "D 上の中央に両者まとめて（数秒）", "en": "D  Both at the top center (a few seconds)"},
+    "od.cat": {"ja": "E 猫",
+               "en": "E  Cat"},
     "show_summary": {"ja": "試合が終わったら試合結果（まとめ）を表示", "en": "Show a match summary when a match ends"},
     "summary_items": {"ja": "試合結果に出す項目", "en": "Summary rows"},
     "sum.opener": {"ja": "開幕テンプレ", "en": "Opener"},
     "sum.apm": {"ja": "APM", "en": "APM"}, "sum.pps": {"ja": "PPS", "en": "PPS"}, "sum.app": {"ja": "APP", "en": "APP"},
     "sum.lines_sent": {"ja": "送った段数", "en": "Lines sent"},
     "sum.pieces": {"ja": "置いたミノ", "en": "Pieces"},
-    "sum.max_ren": {"ja": "最大REN", "en": "Max REN"},
+    "sum.max_ren": {"ja": "最大REN", "en": "Max combo"},
     "sum.tetris": {"ja": "TETRIS の回数", "en": "TETRIS count"},
     "sum.tspin": {"ja": "T-SPIN の回数（全部まとめて）", "en": "T-SPIN count (all kinds)"},
     "sum.tspin_single": {"ja": "T-SPIN Single の回数", "en": "T-SPIN Single count"},
@@ -230,10 +253,17 @@ TEXT = {
     "pos.right": {"ja": "盤面の右下", "en": "Lower right of each board"},
     "adjust": {"ja": "位置の調整", "en": "Position"},
     "move_what": {"ja": "動かすもの", "en": "Move"},
-    "target.stats": {"ja": "数値", "en": "Numbers"},
+    "target.stats": {"ja": "数値（1P と 2P 一緒に）", "en": "Numbers (1P and 2P together)"},
+    "target.stats_left": {"ja": "1P の数値", "en": "1P numbers"},
+    "target.stats_right": {"ja": "2P の数値", "en": "2P numbers"},
+    "target.opener": {"ja": "テンプレ名（1P と 2P 一緒に）", "en": "Opener names (1P and 2P together)"},
+    "drag_each_side": {"ja": "ゲーム画面でドラッグするとき 1P と 2P を別々に動かす（オフ＝一緒に）",
+                       "en": "Dragging on the game screen moves 1P and 2P separately (off = together)"},
     "target.clock": {"ja": "試合時間", "en": "Match time"},
     "target.event": {"ja": "イベント履歴", "en": "Event history"},
     "target.summary": {"ja": "試合結果", "en": "Summary"},
+    "target.opener_left": {"ja": "1P のテンプレ名", "en": "1P opener"},
+    "target.opener_right": {"ja": "2P のテンプレ名", "en": "2P opener"},
     "up": {"ja": "上へ", "en": "Up"}, "down": {"ja": "下へ", "en": "Down"},
     "left": {"ja": "左へ", "en": "Left"}, "right": {"ja": "右へ", "en": "Right"},
     "reset_pos": {"ja": "初期位置に戻す", "en": "Back to default position"},
@@ -241,8 +271,8 @@ TEXT = {
     "drag_done": {"ja": "完了（ドラッグでの調整を終わる）", "en": "Done (stop dragging)"},
     "hint": {"ja": "矢印は押し続けると連続で動きます。●で初期位置に戻ります。",
              "en": "Hold an arrow to keep moving. ● returns to the default position."},
-    "hint_drag": {"ja": "ドラッグ中は、どの枠もそのままつかんで動かせます。",
-                  "en": " While dragging is on, grab any box on the game screen to move it."},
+    "hint_drag": {"ja": "ドラッグ中は、どの枠もそのままつかんで動かせます。枠の上でマウスホイールを回すと大きさが変わります。",
+                  "en": " While dragging is on, grab any box on the game screen to move it; turn the mouse wheel over it to resize it."},
     "at_default": {"ja": "初期位置", "en": "Default position"},
     "from_default": {"ja": "初期位置から ", "en": "From default: "},
     "note": {"ja": "変更はすぐに HUD と OBS の表示に反映され、自動で保存されます。",
@@ -357,6 +387,14 @@ class SettingsWindow(QtWidgets.QWidget):
         self._save_timer.timeout.connect(self._save)
         self._row_labels = {}
 
+        # The on/off switch, above everything (user: easy to find)
+        # off -> on; on but hidden (home screen etc.) -> shown anyway
+        # (display.force_show, user's request); on -> off
+        self._enabled, self._force = True, False
+        self._off_match_screen = False   # from the HUD (set_match_screen)
+        self.enabled_button = QtWidgets.QPushButton()
+        self.enabled_button.setMinimumHeight(40)
+        self.enabled_button.clicked.connect(self._enabled_clicked)
         self.tabs = QtWidgets.QTabWidget()
         # the look first: it's what people come to change, and the window opens on it
         self.tabs.addTab(self._scrolling(self._build_look_tab()), "")
@@ -384,6 +422,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.note.setWordWrap(True)
 
         lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(self.enabled_button)
         lay.addWidget(self.tabs)
         lay.addWidget(self.note)
         lay.addLayout(buttons)
@@ -469,13 +508,15 @@ class SettingsWindow(QtWidgets.QWidget):
         self.labels_box = QtWidgets.QGroupBox()
         lf = QtWidgets.QGridLayout(self.labels_box)
         self.label_edits = {}
+        self.label_names = {}   # the default name beside each box (by language: retranslate)
         for i, key in enumerate(STAT_ITEMS):
             e = QtWidgets.QLineEdit()
             e.setMaxLength(12)
             e.setPlaceholderText(DEFAULT_LABELS[key])
             e.textChanged.connect(self._changed)
             self.label_edits[key] = e
-            lf.addWidget(QtWidgets.QLabel(DEFAULT_LABELS[key]), i // 2, (i % 2) * 2)
+            self.label_names[key] = QtWidgets.QLabel(DEFAULT_LABELS[key])
+            lf.addWidget(self.label_names[key], i // 2, (i % 2) * 2)
             lf.addWidget(e, i // 2, (i % 2) * 2 + 1)
         lay.addWidget(self.labels_box)
 
@@ -520,6 +561,11 @@ class SettingsWindow(QtWidgets.QWidget):
             self.opener_seconds.addItem("", sec)
         self.opener_seconds.currentIndexChanged.connect(self._changed)
         self._row(pf, "opener_seconds", self.opener_seconds)
+        self.opener_language = QtWidgets.QComboBox()
+        for key in OPENER_LANGUAGES:
+            self.opener_language.addItem("", key)
+        self.opener_language.currentIndexChanged.connect(self._changed)
+        self._row(pf, "opener_language", self.opener_language)
         self.parts_box.setLayout(pf)
         lay.addWidget(self.parts_box)
         lay.addStretch(1)
@@ -713,6 +759,62 @@ class SettingsWindow(QtWidgets.QWidget):
         lay.addStretch(1)
         return page
 
+    def _hidden_off_screen(self):
+        """On, but hidden because the game isn't on the match screen."""
+        return self._enabled and self._off_match_screen and not self._force and not self.always_show.isChecked()
+
+    def _paint_enabled(self):
+        if not self._enabled:
+            key, look = "enabled_off", "background: #e4e4e7; color: #3f3f46; }"
+        elif self._hidden_off_screen():
+            key, look = "enabled_away", "background: #f59e0b; color: white; }"
+        else:
+            key = "enabled_forced" if self._force and self._off_match_screen else "enabled_on"
+            look = "background: #16a34a; color: white; }"
+        self.enabled_button.setText(self.tr_(key))
+        self.enabled_button.setStyleSheet(
+            "QPushButton { font-size: 15px; font-weight: bold; border-radius: 6px; padding: 6px; " + look)
+
+    def _enabled_clicked(self):
+        if not self._enabled:
+            self._enabled, self._force = True, self._off_match_screen   # on, and seen at once
+        elif self._hidden_off_screen():
+            self._force = True
+        else:
+            self._enabled, self._force = False, False
+        self._paint_enabled()
+        self._changed()
+
+    def set_match_screen(self, on_screen):
+        """From the HUD: the game went to / left the match screen. Back on it,
+        a "show anyway" ends (the usual hiding returns after this match)."""
+        self._off_match_screen = not on_screen
+        # (the file's value: the window may never have been opened this session)
+        if on_screen and display_settings(load_settings())["force_show"]:
+            self._apply_saved(force_show=False)
+        self._paint_enabled()
+
+    def set_enabled(self, on):
+        """The tray menu's switch. The window may never have been opened, so
+        the saved values are read first: only on/off changes, nothing else
+        (saving whatever the unopened window holds would put the defaults
+        over the user's settings)."""
+        if self._save_timer.isActive():   # an edit still waiting to be saved goes first
+            self._save_timer.stop()
+            self._save()
+        self._apply_saved(enabled=on, force_show=on and self._off_match_screen)
+
+    def _apply_saved(self, **changes):
+        """Changes just these display values on top of the saved ones (the
+        window may never have been opened: see set_enabled), then saves and
+        applies them."""
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self._save()
+        d = display_settings(load_settings())
+        self._show_values(display_settings({"display": {**d, **changes}}))
+        self._changed()
+
     def _save_update_setting(self, on):
         settings = load_settings()
         settings.setdefault("update", {})["check_on_start"] = bool(on)
@@ -827,6 +929,11 @@ class SettingsWindow(QtWidgets.QWidget):
         """Sets every visible string for the current language."""
         t = self.tr_
         self.setWindowTitle(t("title"))
+        self._paint_enabled()
+        names = DEFAULT_LABELS_EN if self.lang == "en" else DEFAULT_LABELS
+        for key, e in self.label_edits.items():
+            e.setPlaceholderText(names[key])
+            self.label_names[key].setText(names[key])
         for i, key in enumerate(("tab.look", "tab.show", "tab.place", "tab.obs", "tab.update")):
             self.tabs.setTabText(i, t(key))
         self.obs_title.setText(t("obs_title"))
@@ -862,6 +969,8 @@ class SettingsWindow(QtWidgets.QWidget):
             self.players.setItemText(i, t("pl." + key))
         for i, sec in enumerate(OPENER_SECONDS_ORDER):
             self.opener_seconds.setItemText(i, t("os.forever") if sec == 0 else t("os.seconds").format(sec))
+        for i, key in enumerate(OPENER_LANGUAGES):
+            self.opener_language.setItemText(i, t("ol." + key))
         self.always_show.setText(t("always_show"))
         self.show_event_log.setText(t("show_event_log"))
         self.show_summary.setText(t("show_summary"))
@@ -901,7 +1010,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.position_section.setTitle(t("adjust"))
         self.move_label.setText(t("move_what"))
         for i, key in enumerate(TARGET_ORDER):
-            self.target_group.button(i).setText(t("target." + key))
+            self.target_box.setItemText(i, t("target." + key))
+        self.drag_each_side.setText(t("drag_each_side"))
         for b, key in self.arrow_buttons:
             b.setToolTip(t(key))
         self.center_button.setToolTip(t("reset_pos"))
@@ -1124,16 +1234,16 @@ class SettingsWindow(QtWidgets.QWidget):
         targets = QtWidgets.QHBoxLayout()
         self.move_label = QtWidgets.QLabel()
         targets.addWidget(self.move_label)
-        self.target_group = QtWidgets.QButtonGroup(self)
-        for i, key in enumerate(TARGET_ORDER):
-            rb = QtWidgets.QRadioButton()
-            rb.setProperty("target", key)
-            rb.setChecked(key == self._target)
-            self.target_group.addButton(rb, i)
-            targets.addWidget(rb)
-        targets.addStretch(1)
-        self.target_group.buttonToggled.connect(self._target_changed)
+        self.target_box = QtWidgets.QComboBox()   # 9 choices: a dropdown, not a row of buttons
+        for key in TARGET_ORDER:
+            self.target_box.addItem("", key)
+        self.target_box.setCurrentIndex(TARGET_ORDER.index(self._target))
+        self.target_box.currentIndexChanged.connect(self._target_changed)
+        targets.addWidget(self.target_box, 1)
         outer.addLayout(targets)
+        self.drag_each_side = QtWidgets.QCheckBox()
+        self.drag_each_side.toggled.connect(self._changed)
+        outer.addWidget(self.drag_each_side)
 
         pad = QtWidgets.QGridLayout()
         pad.setSpacing(2)
@@ -1179,10 +1289,9 @@ class SettingsWindow(QtWidgets.QWidget):
         outer.addWidget(self.hint)
         return box
 
-    def _target_changed(self, button, checked):
-        if checked:
-            self._target = button.property("target")
-            self._update_offset_label()
+    def _target_changed(self, *_):
+        self._target = self.target_box.currentData()
+        self._update_offset_label()
 
     def _update_offset_label(self):
         x, y = self._offsets[self._target]
@@ -1217,11 +1326,19 @@ class SettingsWindow(QtWidgets.QWidget):
         self.drag_button.setText(self.tr_("drag_done") if on else self.tr_("drag"))
         self.edit_mode_changed.emit(on)
 
+    def set_part_scale_from_hud(self, part, size):
+        """The wheel resized a part on the HUD (already shown): keep it as that
+        part's own size, show it if that part is the one being edited, save."""
+        self._parts[part]["scale"] = size
+        if self._look_target == part:
+            self._show_look()
+        self._save_timer.start()
+
     def set_offset_from_hud(self, target, x, y, finished):
         """The user dragged a part on the HUD (already moved there): show it
         as the part being adjusted, and save once the drag ends."""
         if target != self._target:
-            self.target_group.button(TARGET_ORDER.index(target)).setChecked(True)
+            self.target_box.setCurrentIndex(TARGET_ORDER.index(target))
         self._set_offset(target, x, y)
         if finished:
             self._save_timer.start()
@@ -1257,6 +1374,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.position.setCurrentIndex(self.position.findData(d["stats_position"]))
         for key, (kx, ky) in TARGET_KEYS.items():
             self._set_offset(key, d[kx], d[ky])
+        self.drag_each_side.setChecked(d["drag_each_side"])
         # stat rows: the shown ones first in their order (ticked), the rest after
         shown = list(d["stat_items"])
         order = shown + [k for k in STAT_ITEMS if k not in shown]
@@ -1286,7 +1404,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.font_box.setCurrentIndex(i)
         self.show_clock.setChecked(d["show_clock"])
         self.always_show.setChecked(d["always_show"])
+        self._enabled, self._force = d["enabled"], d["force_show"]
+        self._paint_enabled()
         self.players.setCurrentIndex(max(0, self.players.findData(d["players"])))
+        self.opener_language.setCurrentIndex(max(0, self.opener_language.findData(d["opener_language"])))
         i = self.opener_seconds.findData(d["opener_seconds"])
         if i < 0:   # a hand-edited value not in the list: add it so it shows and stays
             self.opener_seconds.addItem(self.tr_("os.seconds").format(d["opener_seconds"]), d["opener_seconds"])
@@ -1325,8 +1446,11 @@ class SettingsWindow(QtWidgets.QWidget):
             "font_file": self._font_file,
             "show_clock": self.show_clock.isChecked(),
             "always_show": self.always_show.isChecked(),
+            "enabled": self._enabled,
+            "force_show": self._enabled and self._force,
             "players": self.players.currentData(),
             "opener_seconds": self.opener_seconds.currentData(),
+            "opener_language": self.opener_language.currentData(),
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
             "summary_items": [self.summary_items.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
@@ -1338,6 +1462,7 @@ class SettingsWindow(QtWidgets.QWidget):
         }
         for key, (kx, ky) in TARGET_KEYS.items():
             d[kx], d[ky] = self._offsets[key]
+        d["drag_each_side"] = self.drag_each_side.isChecked()
         return display_settings({"display": d})
 
     # --- font ---

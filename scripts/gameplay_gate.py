@@ -45,6 +45,16 @@ ON_SCREEN_THRESHOLD = 0.7
 QUEUE_SLOTS = [(0, 22, 52, 50), (-2, 70, 50, 102), (-2, 120, 50, 152), (-2, 170, 50, 202), (-2, 220, 50, 252)]
 SLOT_EMPTY_RATIO = 0.05  # colored-pixel ratio below which a slot holds no piece
 
+# The English game's pause menu covers the left queue with its bright buttons,
+# so with a Puyo opponent (no right queue to look at) the pause went unseen
+# (user report). Its "Start Over" / "Quit Game" buttons (either: the cursor
+# highlights one at a time) score 1.0 while paused (debug_frames/burst_english*)
+# and <= 0.46 on every other frame of every recording.
+PAUSE_TEMPLATE_PATHS = [SCRIPTS_DIR / ".." / "assets" / "templates" / n
+                        for n in ("t_pause_en_start_over.png", "t_pause_en_quit_game.png")]
+PAUSE_WINDOW = (470, 270, 770, 600)
+PAUSE_THRESHOLD = 0.75
+
 
 class GameplayGate:
     def __init__(self, profile=None):
@@ -55,6 +65,9 @@ class GameplayGate:
         self.template = scale_template(tmpl, self.profile)
         self.windows = {side: scale_box(box, self.profile) for side, box in NEXT_WINDOWS.items()}
         self.slots = [tuple(int(round(v * self.profile.scale_x)) for v in s) for s in QUEUE_SLOTS]
+        self._pause_raw = [cv2.imread(str(p)) for p in PAUSE_TEMPLATE_PATHS]   # kept: see scale_template
+        self.pause_templates = [scale_template(t, self.profile) for t in self._pause_raw if t is not None]
+        self.pause_window = scale_box(PAUSE_WINDOW, self.profile)
         self.last_scores = {}
         self.last_reason = None  # None (match screen), "no_match_ui" or "pause"
 
@@ -66,6 +79,14 @@ class GameplayGate:
             if reg.size and ((reg[..., 1] > 120) & (reg[..., 2] > 120)).mean() >= SLOT_EMPTY_RATIO:
                 return False
         return True
+
+    def _pause_menu(self, frame):
+        x1, y1, x2, y2 = self.pause_window
+        region = frame[y1:y2, x1:x2]
+        for t in self.pause_templates:
+            if region.shape[0] >= t.shape[0] and region.shape[1] >= t.shape[1] and                     cv2.matchTemplate(region, t, cv2.TM_CCOEFF_NORMED).max() >= PAUSE_THRESHOLD:
+                return True
+        return False
 
     def update(self, frame):
         th, tw = self.template.shape[:2]
@@ -84,7 +105,10 @@ class GameplayGate:
             self.last_reason = "no_match_ui"
             return False
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        if any(self._queue_empty(hsv, lx, ly) for lx, ly in found.values()):
+        # the pause menu is only looked for with one NEXT queue on screen (a Puyo
+        # opponent): with two, the clean right queue already shows a pause, and
+        # the menu check costs ~14 ms a frame
+        if any(self._queue_empty(hsv, lx, ly) for lx, ly in found.values()) or                 (len(found) == 1 and self._pause_menu(frame)):
             self.last_reason = "pause"
             return False
         self.last_reason = None

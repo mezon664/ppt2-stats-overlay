@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>PPT2 Stats Overlay (OBS)</title>
+<title>PPTetrics (OBS)</title>
 <style>
   /* Size this browser source to cover the game capture exactly (16:9).
      Same layout, styles and settings as the desktop HUD (hud/overlay.py): the
@@ -350,13 +350,17 @@
   <div class="abs ob hidden" id="ob-left"></div>
   <div class="abs ob hidden" id="ob-right"></div>
   <div class="abs ob hidden" id="ob-both"></div>
+  <!-- the 「猫」 opener display: a cat over each player's board holding up the name -->
+  <canvas class="abs cat hidden" id="cat-left"></canvas>
+  <canvas class="abs cat hidden" id="cat-right"></canvas>
+<script src="../assets/cat/cat.js"></script>
 
 <script>
 // Layout in reference px (1232x692 game client) — same numbers as hud/overlay.py.
 const REF_W = 1232;
-const STAT_ANCHOR_X = { left: { left: 186, right: 790 }, right: { left: 448, right: 1052 } };
+const STAT_ANCHOR_X = { left: { left: 184, right: 789.2 }, right: { left: 448, right: 1052 } };   // as hud/overlay.py
 const STAT_BOTTOM_Y = 562, EVENT_GAP = 2, VERSUS_GAP = 4;
-const CLOCK_CENTER_X = 617, CLOCK_BOTTOM_Y = 576;
+const CLOCK_CENTER_X = 615.6, CLOCK_BOTTOM_Y = 576;   // midway between the boards (as hud/overlay.py)
 const SUMMARY_TOP_Y = 120;
 // opener displays (same numbers as hud/overlay.py)
 // Opener name: up for POPUP_S seconds in every position, eased in/out (same as hud/overlay.py popup_alpha)
@@ -373,8 +377,136 @@ function popupAlpha(sideState, frozen, seconds = POPUP_S) {
 const BOARD_CENTER_X = { left: 313, right: 918 }, OPENER_BOARD_TOP_Y = 150;
 const HOLD_RIGHT_X = { left: 191, right: 797 }, OPENER_HOLD_TOP_Y = 172;
 const NAMEBAR_RIGHT_X = 466, NAMEBAR_LEFT_X = 762, NAMEBAR_TOP_Y = 608;
-const OPENER_TOP_CENTER_X = 617, OPENER_TOP_Y = 14;
-const OPENER_DISPLAYS = ["board", "hold", "namebar", "top"];
+const OPENER_TOP_CENTER_X = 615.6, OPENER_TOP_Y = 14;
+const OPENER_DISPLAYS = ["board", "hold", "namebar", "top", "cat"];
+// --- the 「猫」 opener display (same as hud/overlay.py CatPopup / cat_frame):
+// 1P's cat mirrored, in from the left edge; 2P's in from the right
+const CAT_BOTTOM_Y = 632, CAT_SCALE = 1.0, CAT_MIN_STILL_S = 0.5;
+const CAT_IMAGES = {};
+let catStateTime = performance.now(), catRunning = false;
+function catImage(file) {
+  if (!CAT_IMAGES[file]) { const im = new Image(); im.src = "../assets/cat/" + file; CAT_IMAGES[file] = im; }
+  return CAT_IMAGES[file];
+}
+// [frame, next frame, how far toward it] (blended, as hud/overlay.py cat_pos), or null when gone
+function catPos(cat, age, seconds) {
+  // same as hud/overlay.py cat_pos: only the standing-still part is fitted to the time
+  const n = cat.frames.length, hs = cat.hold_start, he = cat.hold_end;
+  const s0 = cat.still_start ?? hs, s1 = cat.still_end ?? he, span = Math.max(1, s1 - s0);
+  const pingpong = k => s0 + (k <= span ? k : 2 * span - k);
+  let t = age * cat.fps, pos;
+  if (t < s0) pos = t;
+  else {
+    const u = t - s0;
+    if (!(seconds > 0)) pos = pingpong(u % (2 * span));
+    else {
+      const fit = Math.max(CAT_MIN_STILL_S * cat.fps, seconds * cat.fps - (s0 - hs) - (he - s1));
+      if (u < fit) {
+        const passes = 2 * Math.round((fit / span - 1) / 2) + 1;
+        pos = pingpong((u * passes * span / fit) % (2 * span));
+      } else { pos = s1 + (u - fit); if (pos > n - 1) return null; }
+    }
+  }
+  const i = Math.floor(pos);
+  return [i, Math.min(i + 1, n - 1), pos - i];
+}
+// each cat on this page's own clock from when it started (the ages arriving 10 times a second jitter)
+const catStart = { left: null, right: null }, catName = { left: null, right: null };
+function drawCat(side, pos, name, u) {
+  const cat = window.CAT, el = $("cat-" + side);
+  const [i, j, frac] = pos;
+  const [w, h] = cat.size;
+  const cw = Math.round(w * u), ch = Math.round(h * u);
+  if (el.width !== cw || el.height !== ch) { el.width = cw; el.height = ch; }
+  const ctx = el.getContext("2d");
+  ctx.clearRect(0, 0, el.width, el.height);
+  const mirror = side === "left";
+  // the two frames added up with weights (1 - frac, frac): stays solid where both are
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.scale(u, u);
+  if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+  for (const [k, weight] of [[i, 1 - frac], [j, frac]]) {
+    const f = cat.frames[k];
+    if (!f.file || weight < 0.004) continue;
+    const im = catImage(f.file);
+    if (!im.complete) continue;
+    ctx.globalAlpha = weight;
+    ctx.drawImage(im, f.x, f.y);
+  }
+  ctx.restore();
+  const pa = cat.frames[i].paper, pb = cat.frames[j].paper;
+  const paper = pa && pb ? pa.map((p, n) => [p[0] + (pb[n][0] - p[0]) * frac, p[1] + (pb[n][1] - p[1]) * frac]) : (pa || pb);
+  if (!paper || !name) return;
+  // the name on the paper: corners top-left, top-right, (bottom-right), bottom-left
+  let q = paper.map(([x, y]) => [mirror ? w - x : x, y]);
+  if (mirror) q = [q[1], q[0], q[3], q[2]];
+  const [tl, tr, , bl] = q;
+  ctx.save();
+  ctx.setTransform(u * (tr[0] - tl[0]) / 200, u * (tr[1] - tl[1]) / 200, u * (bl[0] - tl[0]) / 140, u * (bl[1] - tl[1]) / 140, u * tl[0], u * tl[1]);
+  const fam = getComputedStyle(document.body).fontFamily;
+  // one line, two lines, or running off the paper (same as the HUD's paper_layout)
+  if (paperFor[side] !== name) {
+    ctx.font = `bold 100px ${fam}`;
+    paperFor[side] = name;
+    paperLayout[side] = paperLayoutOf(name, (t) => ctx.measureText(t).width);
+  }
+  const [lines, sz] = paperLayout[side];
+  ctx.font = `bold ${Math.round(sz)}px ${fam}`;
+  ctx.fillStyle = "rgb(25,25,30)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  lines.forEach((line, i) => ctx.fillText(line, 100, 70 + (i - (lines.length - 1) / 2) * sz * 1.1));
+  ctx.restore();
+}
+// hud/overlay.py opener_offset: both players' shift, plus the player's own ("both": shared only)
+function openerOffset(d, side) {
+  let x = d.opener_offset_x || 0, y = d.opener_offset_y || 0;
+  if (side === "left" || side === "right") { x += d[`opener_${side}_offset_x`] || 0; y += d[`opener_${side}_offset_y`] || 0; }
+  return [x, y];
+}
+const paperFor = { left: null, right: null }, paperLayout = { left: null, right: null };
+function paperLayoutOf(name, measure) {   // hud/overlay.py paper_layout
+  const W = 184, H = 130, MAX = 54, MIN_ONE = 40, MIN_TWO = 26;
+  const one = Math.min(MAX, W * 100 / Math.max(1, measure(name)));
+  if (one >= MIN_ONE) return [[name], one];
+  const spaces = [...name].map((c, i) => c === " " ? i : -1).filter((i) => i >= 0);
+  const cuts = spaces.length ? spaces : Array.from({ length: name.length - 1 }, (_, i) => i + 1);
+  let best = null;
+  for (const i of cuts) {
+    const a = name.slice(0, i).trimEnd(), b = name.slice(i).trimStart();
+    if (!a || !b) continue;
+    const size = Math.min(MAX, H / 2.3, W * 100 / Math.max(1, measure(a), measure(b)));
+    if (!best || size > best[1]) best = [[a, b], size];
+  }
+  return best && best[1] >= MIN_TWO ? best : [[name], MIN_ONE];
+}
+function catTick() {
+  const d = display, st = lastState || {};
+  const on = d.show_opener && d.opener_display === "cat" && window.CAT && !st.frozen;
+  let any = false;
+  for (const side of ["left", "right"]) {
+    const el = $("cat-" + side), data = st[side] || {};
+    const name = isPuyo(data) ? null : openerOf(data);
+    const age = data.opener_age_s;
+    let pos = null;
+    if (on && name && age != null) {
+      const now = performance.now() / 1000, serverAge = age + (performance.now() - catStateTime) / 1000;
+      if (catStart[side] == null || catName[side] !== name || Math.abs((now - catStart[side]) - serverAge) > 0.35) {
+        catStart[side] = now - serverAge; catName[side] = name;   // new opener, or drifted: start over
+      }
+      pos = catPos(window.CAT, now - catStart[side], d.opener_seconds);
+    }
+    if (pos == null) { el.classList.add("hidden"); catStart[side] = null; continue; }
+    const k = window.innerWidth / REF_W, u = k * CAT_SCALE * partValue("opener", "scale");
+    drawCat(side, pos, name, u);
+    const [odx, ody] = openerOffset(d, side);
+    el.style.left = ((side === "left" ? 0 : window.innerWidth - el.width) + odx * k) + "px";
+    el.style.top = (CAT_BOTTOM_Y * k - el.height + ody * k) + "px";
+    el.classList.remove("hidden");
+    any = true;
+  }
+  catRunning = any;
+  if (any) requestAnimationFrame(catTick);
+}
 const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
   ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
   ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
@@ -403,12 +535,12 @@ const UI_TEXT = {
         connecting: "接続中...", disconnected: "切断されました。再接続中..." },
   en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", down: "Can't read the game",
         summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "Lines sent",
-        s_pieces: "Pieces", s_max_ren: "Max REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
+        s_pieces: "Pieces", s_max_ren: "Max combo", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
         s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
-const DEFAULTS = { style: "gauge", always_show: false, opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, bg_color: "#000000", text_color: "#ffffff",
+const DEFAULTS = { style: "gauge", always_show: false, enabled: true, opener_language: "auto", opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, bg_color: "#000000", text_color: "#ffffff",
   line_color: "#ffffff",
   font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
   clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
@@ -434,7 +566,9 @@ const fmt = (key, v) => {
   return Number(v).toFixed(key === "apm" ? 1 : 2);
 };
 const shownKeys = () => (Array.isArray(display.stat_items) ? display.stat_items : []).filter((k) => STAT_ITEMS.includes(k));
-const labelFor = (key) => esc((display.labels || {})[key] || DEFAULT_LABELS[key] || key.toUpperCase());
+const DEFAULT_LABELS_EN = { ...DEFAULT_LABELS, ren: "COMBO" };   // the English game says "Combo" for REN
+const labelFor = (key) => esc((display.labels || {})[key]
+  || (display.language === "en" ? DEFAULT_LABELS_EN : DEFAULT_LABELS)[key] || key.toUpperCase());
 const style = () => STYLES.includes(display.style) ? display.style : "gauge";
 
 // PPS = pieces placed / match seconds; APM = lines sent / match minutes (the
@@ -442,10 +576,14 @@ const style = () => STYLES.includes(display.style) ? display.style : "gauge";
 // The server saw this side playing Puyo Puyo: its display is hidden (as in the HUD).
 // ...or display.players shows only the other player (1P / 2P only), marked "hidden" in render()
 const isPuyo = (data) => !!(data && (data.puyo || data.hidden));
+// the opener's name in the overlay's language (English names: Japanese where there's none)
+// display.opener_language: "ja" / "en", or "auto" = the overlay's language (config_store.opener_language)
+const openerLang = () => (display.opener_language && display.opener_language !== "auto") ? display.opener_language : display.language;
+const openerOf = (data) => data && ((openerLang() === "en" && data.opener_en) || data.opener);
 
 function values(data) {
   data = data || {};
-  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app, opener: data.opener,
+  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app, opener: openerOf(data),
            attack: data.attack, pieces: data.pieces, ren: data.ren, b2b: data.b2b };
 }
 
@@ -628,10 +766,13 @@ function layout() {
     const shown = showStat && !isPuyo((lastState || {})[side]);   // a side playing Puyo shows nothing
     stat.className = `abs stat st-${st} p-${side} ${mode === "left" ? "hug-r" : "hug-l"}` + (shown ? "" : " hidden");
     stat.style.setProperty("--slot", Math.max(2, ...shownKeys().map((k2) => SLOT_CH[k2])) + "ch");
-    const x = (STAT_ANCHOR_X[mode][side] + d.offset_x) * k
+    // against a Puyo player the Tetris frame is wider (hud/overlay.py VS_PUYO_SHIFT_X)
+    const otherData = (lastState || {})[side === "left" ? "right" : "left"] || {};
+    const vsPuyo = otherData.puyo ? (mode === "left" ? -12 : 0) : 0;
+    const x = (STAT_ANCHOR_X[mode][side] + vsPuyo + d.offset_x + (d[`stats_${side}_offset_x`] || 0)) * k   // both, then this player's own
       + (NEW_STYLES.includes(st) ? NEW_STYLE_GAP * su * (mode === "left" ? -1 : 1) : 0);
     const ex = x + d.event_offset_x * k;    // events: stacked above the stats, then their own offset
-    let bottom = (STAT_BOTTOM_Y + d.offset_y) * k;
+    let bottom = (STAT_BOTTOM_Y + d.offset_y + (d[`stats_${side}_offset_y`] || 0)) * k;
     for (const [el, ax] of [[stat, x], [ev, ex]]) {
       el.style.left = mode === "left" ? "auto" : ax + "px";
       el.style.right = mode === "left" ? (window.innerWidth - ax) + "px" : "auto";
@@ -659,18 +800,23 @@ function layout() {
   const om = OPENER_DISPLAYS.includes(d.opener_display) ? d.opener_display : "board";
   for (const m of OPENER_DISPLAYS) document.body.classList.toggle("om-" + m, m === om);
   const st0 = lastState || {};
-  const nameOf = (data) => isPuyo(data) ? null : (data || {}).opener;
+  const nameOf = (data) => isPuyo(data) ? null : openerOf(data);
   const names = { left: nameOf(st0.left), right: nameOf(st0.right) };
   for (const id of ["ob-left", "ob-right", "ob-both"]) $(id).classList.add("hidden");
   const alphas = { left: names.left ? popupAlpha(st0.left, st0.frozen, d.opener_seconds) : 0,
                    right: names.right ? popupAlpha(st0.right, st0.frozen, d.opener_seconds) : 0 };
-  if (d.show_opener && om === "top" && Math.max(alphas.left, alphas.right) > 0) {
+  catStateTime = performance.now();   // ages just arrived with this state
+  if (om === "cat") { if (!catRunning) catTick(); }
+  else for (const side of ["left", "right"]) $("cat-" + side).classList.add("hidden");
+  if (om === "cat") { /* names shown by the cat (catTick) */ }
+  else if (d.show_opener && om === "top" && Math.max(alphas.left, alphas.right) > 0) {
     // one box for both: up while either name is still within its few seconds
     const ob = $("ob-both");
     ob.classList.remove("hidden");
     ob.style.opacity = Math.max(alphas.left, alphas.right);
-    ob.style.left = (OPENER_TOP_CENTER_X * k - ob.offsetWidth / 2) + "px";
-    ob.style.top = (OPENER_TOP_Y * k) + "px";
+    const [odx, ody] = openerOffset(d, "both");
+    ob.style.left = ((OPENER_TOP_CENTER_X + odx) * k - ob.offsetWidth / 2) + "px";
+    ob.style.top = ((OPENER_TOP_Y + ody) * k) + "px";
   } else if (d.show_opener && om !== "top") {
     for (const side of ["left", "right"]) {
       const alpha = alphas[side];
@@ -682,8 +828,9 @@ function layout() {
       if (om === "board") { x = BOARD_CENTER_X[side] * k - ob.offsetWidth / 2; y = OPENER_BOARD_TOP_Y * k; }
       else if (om === "hold") { x = HOLD_RIGHT_X[side] * k - ob.offsetWidth; y = OPENER_HOLD_TOP_Y * k; }
       else { x = side === "left" ? NAMEBAR_RIGHT_X * k - ob.offsetWidth : NAMEBAR_LEFT_X * k; y = NAMEBAR_TOP_Y * k; }
-      ob.style.left = x + "px";
-      ob.style.top = y + "px";
+      const [odx, ody] = openerOffset(d, side);
+      ob.style.left = (x + odx * k) + "px";
+      ob.style.top = (y + ody * k) + "px";
     }
   }
 
@@ -710,7 +857,10 @@ function renderSide(side, data) {
   const ev = $("ev-" + side);
   const log = ((data || {}).event_log || []).slice(0, display.event_log_count).reverse();  // oldest on top
   const key = display.language === "en" ? "text_en" : "text";
-  ev.innerHTML = log.map((e) => `<div>${esc(e[key] || e.text || "")}</div>`).join("");
+  const text = (e) => (e.ren_source === "opener" && e.opener)    // an opener: its name in openerLang()
+    ? (display.language === "en" ? "Opener: " : "開幕：") + ((openerLang() === "en" && e.opener_en) || e.opener)
+    : (e[key] || e.text || "");
+  ev.innerHTML = log.map((e) => `<div>${esc(text(e))}</div>`).join("");
   ev.classList.toggle("hidden", !(display.show_event_log && log.length && !isPuyo(data)));
 }
 
@@ -728,21 +878,22 @@ function render(state) {
   $("summary").innerHTML = summaryHtml(state);
   const lab = ui().s_opener, sep = display.language === "en" ? ": " : "：";
   for (const side of ["left", "right"]) {
-    const name = esc(((state[side] || {}).opener) || "");
+    const name = esc(openerOf(state[side]) || "");
     $("ob-" + side).innerHTML = display.opener_display === "namebar"
       ? `<span class="olab">${lab}${sep}</span><span class="oname">${name}</span>`
       : `<div class="olab">${lab}</div><div class="oname">${name}</div>`;
   }
   $("ob-both").innerHTML = `<div class="olab">${lab}</div><div class="orow">` +
-    `<span class="ol">${esc((state.left || {}).opener || "--")}</span><span class="ovs">vs</span>` +
-    `<span class="or">${esc((state.right || {}).opener || "--")}</span></div>`;
+    `<span class="ol">${esc(openerOf(state.left) || "--")}</span><span class="ovs">vs</span>` +
+    `<span class="or">${esc(openerOf(state.right) || "--")}</span></div>`;
   // Match clock is game time: it stops while paused and resumes after.
   const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
   $("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   $("state").textContent = state.frozen ? ui().frozen
     : state.paused ? ui().paused
     : state.waiting_start ? ui().waiting : "";
-  document.body.classList.toggle("away", !display.always_show && state.match_screen === false);
+  document.body.classList.toggle("away", display.enabled === false   // switched off
+    || (!display.always_show && !display.force_show && state.match_screen === false));
   const captureDown = state.capture && state.capture.ok === false;
   document.body.classList.toggle("stale", !!captureDown);
   const msg = (display.language === "en" && state.capture && state.capture.message_en) || (state.capture || {}).message;

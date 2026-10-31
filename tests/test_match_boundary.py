@@ -99,3 +99,15 @@ def test_background_drift_then_black_screen_is_not_a_go(monkeypatch):
     # the false start: background creeping just past 0.10, then a transition
     ratios = [0.097] * 10 + [0.105, 0.11, 0.104] + [0.0] * 5
     assert not any(_go_edges(monkeypatch, ratios))
+
+
+def test_english_game_yeah_ends_the_match():
+    """The English game says "Yeah!" where the Japanese one says 「やった!」
+    (debug_frames/burst_english): either side's win is seen, ordinary play isn't."""
+    import cv2
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    for name, won in (("en_yeah_left.jpg", True), ("en_yeah_right.jpg", True), ("en_play.jpg", False)):
+        det = MatchBoundaryDetector()
+        frame = cv2.imread(str(fixtures / name))
+        victory, _ = det.update(frame, 0.0)
+        assert victory is won, (name, det.last_yatta_conf)

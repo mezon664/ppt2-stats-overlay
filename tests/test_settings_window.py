@@ -124,3 +124,68 @@ def test_text_weight_slider(tmp_path, monkeypatch):
     # 65 looks exactly like the old "bold": Bold, thickened by 0.05 of the font size
     assert overlay.weight_style(65)[2] == pytest.approx(0.05)
     assert overlay.weight_style(0)[2] == 0 and overlay.weight_style(100)[2] == pytest.approx(0.10)
+
+
+def test_on_off_switch_from_the_tray_keeps_the_rest(tmp_path, monkeypatch):
+    """The tray switch works even if the window was never opened: it reads
+    the saved settings first and only changes on/off (it mustn't save the
+    unopened window's defaults over the user's file)."""
+    w = window(tmp_path, monkeypatch)
+    saved = display_settings({"display": {"style": "hex", "bg_color": "#123456", "scale": 1.4}})
+    config_store.save_settings({**config_store.DEFAULTS, "display": saved})
+    w.set_enabled(False)
+    w._save_timer.stop()
+    w._save()
+    d = display_settings(config_store.load_settings())
+    assert d["enabled"] is False
+    assert d["style"] == "hex" and d["bg_color"] == "#123456" and d["scale"] == 1.4
+    assert w.enabled_button.text().startswith("○")
+    w.set_enabled(True)
+    assert w.values()["enabled"] is True and w.enabled_button.text().startswith("●")
+
+
+def test_opener_language_and_each_players_opener_position(tmp_path, monkeypatch):
+    w = window(tmp_path, monkeypatch)
+    d = display_settings({"display": {"opener_language": "en", "opener_left_offset_x": 30,
+                                      "opener_right_offset_y": -12}})
+    w._show_values(d)
+    assert w.values() == d
+    import settings_window
+    assert "opener_left" in settings_window.TARGET_ORDER and "opener_right" in settings_window.TARGET_ORDER
+    w._set_offset("opener_right", 5, 6)
+    assert w.values()["opener_right_offset_x"] == 5 and w.values()["opener_right_offset_y"] == 6
+    assert w.values()["opener_left_offset_x"] == 30                  # 1P untouched
+
+
+def test_combo_label_in_english(tmp_path, monkeypatch):
+    w = window(tmp_path, monkeypatch)
+    w.lang = "en"
+    w.retranslate()
+    assert w.label_names["ren"].text() == "COMBO"
+    w.lang = "ja"
+    w.retranslate()
+    assert w.label_names["ren"].text() == "REN"
+
+
+def test_on_button_shows_it_anyway_off_the_match_screen(tmp_path, monkeypatch):
+    """User: when it's hidden on the home screen, the on button shows it anyway
+    (display.force_show) — until a match screen comes up again."""
+    w = window(tmp_path, monkeypatch)
+    config_store.save_settings({**config_store.DEFAULTS, "display": display_settings({"display": {"style": "hex"}})})
+    w._show_values(display_settings(config_store.load_settings()))   # as open() does
+    w.set_match_screen(False)                        # home screen: on, but hidden
+    assert w.enabled_button.text().startswith("◐")
+    w._enabled_clicked()                             # -> shown anyway
+    assert w.values()["force_show"] is True and w.values()["enabled"] is True
+    w._save_timer.stop()
+    w._save()
+    w.set_match_screen(True)                         # a match: back to the usual hiding
+    w._save_timer.stop()
+    w._save()
+    d = display_settings(config_store.load_settings())
+    assert d["force_show"] is False and d["enabled"] is True and d["style"] == "hex"
+    w._enabled_clicked()                             # on the match screen: on -> off
+    assert w.values()["enabled"] is False
+    w.set_match_screen(False)
+    w._enabled_clicked()                             # off, at home: on and shown at once
+    assert w.values()["enabled"] is True and w.values()["force_show"] is True

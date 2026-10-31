@@ -67,13 +67,15 @@ def format_event_log_entry(t, ev, lines):
         text_en = f"PERFECT CLEAR ({label_en}) +{lines}"
         label_ja = "PERFECT CLEAR"
     else:
-        extra = []
+        extra, extra_en = [], []
         if ev["btb"]:
             extra.append("BtB")
+            extra_en.append("BtB")
         if ev["ren_count"] and ev["ren_count"] >= 1:  # game numbering: 2nd consecutive clear = "1REN"
             extra.append(f"{ev['ren_count']}REN")
+            extra_en.append(f"{ev['ren_count']} Combo")   # as the English game shows it
         text = f"{label_ja} " + " ".join(parts + extra)
-        text_en = f"{label_en} " + " ".join(parts_en + extra)
+        text_en = f"{label_en} " + " ".join(parts_en + extra_en)
     return {
         "t": round(t, 2),
         "label": label_ja,
@@ -133,8 +135,9 @@ def format_tspin_no_line_entry(t):
     }
 
 
-def format_opener_entry(t, name):
-    """Event log entry for a recognized opener (same shape as the others)."""
+def format_opener_entry(t, name, name_en=None):
+    """Event log entry for a recognized opener (same shape as the others).
+    name_en: its English name (see opener_detect.load_english)."""
     return {
         "t": round(t, 2),
         "label": "開幕",
@@ -143,8 +146,9 @@ def format_opener_entry(t, name):
         "ren_count": 0,
         "ren_source": "opener",
         "opener": name,
+        "opener_en": name_en or name,
         "text": f"開幕：{name}",
-        "text_en": f"Opener: {name}",
+        "text_en": f"Opener: {name_en or name}",
     }
 
 
@@ -420,7 +424,7 @@ class PlayerPipeline:
         opener = self.opener_detector.on_frame(frame, t - start, len(placements))
         if opener:
             self.opener_t = t
-            self.event_log.insert(0, format_opener_entry(t, opener))
+            self.event_log.insert(0, format_opener_entry(t, opener, self.opener_detector.name_en))
             del self.event_log[EVENT_LOG_MAX:]
             log.info("[%s] t=%.2f opener: %s", self.side, t, opener)
         for placed_t in placements:
@@ -557,6 +561,7 @@ class PlayerPipeline:
             "confirmed_flash_clear_count": self.confirmed_flash_clear_count,
             "perfect_clear_count": self.perfect_clear_count,
             "opener": self.opener_detector.name,   # 開幕テンプレ, once recognized
+            "opener_en": self.opener_detector.name_en,   # its English name (Japanese where it has none)
             # seconds since it was recognized: the overlays show it briefly
             "opener_age_s": round(now - self.opener_t, 2) if self.opener_t is not None else None,
             # totals for the end-of-match summary
@@ -928,7 +933,13 @@ class MatchPipeline:
                 # Right after GO! both boards are still empty for a moment;
                 # that's the new match starting, not one ending.
                 just_started = self._play_started_t is not None and t - self._play_started_t < START_GRACE_S
-                if both_empty and not just_started:
+                # Not with a Puyo side (user report: pausing against Puyo ended
+                # the match): its board area mostly reads empty, so "both
+                # boards empty" came down to the Tetris board alone, which
+                # blanks for a moment as the pause screen comes up. The match
+                # end is still seen from the victory banner.
+                puyo_side = any(self.puyo.values())
+                if both_empty and not just_started and not puyo_side:
                     self._empty_confirm_streak += 1
                     self._nonempty_confirm_streak = 0
                     if self._empty_confirm_streak >= EMPTY_CONFIRM_COUNT:

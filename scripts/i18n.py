@@ -15,7 +15,7 @@ CLEAR_TYPE_LABEL_EN = {
     "tspin_mini": "T-SPIN Mini Single",
 }
 
-REN_BREAK_EN = "REN ended (no clear)"
+REN_BREAK_EN = "Combo ended (no clear)"   # the English game says "Combo" for REN
 
 # Capture problems: the Japanese messages start with these (some carry
 # details after them, which are dropped in English).

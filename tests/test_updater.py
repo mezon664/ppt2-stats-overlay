@@ -34,6 +34,9 @@ def test_release_info_only_takes_the_app_zip_from_github():
     assert updater.release_info(release(url="https://evil.example.com/ppt2-stats-overlay.zip")) is None
     assert updater.release_info(release(url="http://github.com/x/y/a.zip")) is None   # not https
     assert updater.release_info(release(name="something-else.zip")) is None
+    new = updater.release_info(release(name="PPTetrics-v9.9.9.zip",
+                                       url="https://github.com/x/y/releases/download/v9.9.9/PPTetrics-v9.9.9.zip"))
+    assert new["url"].endswith("PPTetrics-v9.9.9.zip")   # the app's name since v0.2.0 (the old one still works)
     assert updater.release_info(release(prerelease=True)) is None
     assert updater.release_info(release(tag="nightly")) is None
 
@@ -115,5 +118,44 @@ def test_release_zip_has_the_app_and_nothing_personal():
     import make_release
     names = {f.relative_to(ROOT).as_posix() for f in make_release.files()}
     assert "launch.py" in names and "scripts/updater.py" in names and "hud/overlay.py" in names
-    assert not any(n.startswith(("tests/", "tools/", "docs/", "config/", "debug_frames/", "logs/"))
-                   or "user_fonts" in n for n in names)
+    assert "config/attack_table.json" in names                     # the game's attack table, needed to start
+    assert not any(n.startswith(("tests/", "tools/", "docs/", "debug_frames/", "logs/"))
+                   or "user_fonts" in n or "overlay_settings" in n for n in names)
+
+
+def test_the_release_zip_runs(tmp_path):
+    """Everything the app reads at start-up is in the zip: unpack it and
+    build the recognition from that copy alone (v0.1.0's zip lacked
+    config/attack_table.json and couldn't start)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import make_release
+    out = make_release.main()
+    with zipfile.ZipFile(out) as z:
+        z.extractall(tmp_path)
+    app = next(tmp_path.glob("*/launch.py")).parent
+    code = ("import sys; sys.path[:0] = ['scripts', 'hud']; import live_pipeline, opener_detect, updater; "
+            "live_pipeline.MatchPipeline(); opener_detect.openers(); print('ok')")
+    r = subprocess.run([sys.executable, "-c", code], cwd=app, capture_output=True, text=True, timeout=120)
+    assert r.stdout.strip().endswith("ok"), r.stderr[-2000:]
+
+
+def test_an_update_needing_new_libraries_is_refused(tmp_path, monkeypatch):
+    """The full package's bundled libraries are older than the update needs:
+    say so instead of half-updating."""
+    new = tmp_path / "new"
+    (new / "scripts").mkdir(parents=True)
+    (new / "scripts" / "version.py").write_text('VERSION = "9.0.0"\nRUNTIME = 5\n', encoding="utf-8")
+    assert updater.runtime_needed(new) == 5
+    rt = tmp_path / "app" / "runtime"
+    rt.mkdir(parents=True)
+    (rt / "RUNTIME_VERSION").write_text("1")
+    monkeypatch.setattr(updater, "ROOT", tmp_path / "app")
+    assert updater.installed_runtime() == 1
+    monkeypatch.setattr(updater, "ROOT", tmp_path / "nothing")
+    assert updater.installed_runtime() is None          # own Python: not checked
+
+
+def test_the_full_package_is_never_taken_for_an_update():
+    full = updater.release_info(release(name="PPTetrics-full-v9.9.9.zip",
+                                        url="https://github.com/x/y/releases/download/v9.9.9/PPTetrics-full-v9.9.9.zip"))
+    assert full is None

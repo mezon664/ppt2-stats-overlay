@@ -30,12 +30,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # where releases come from: github.com/<owner>/<repo>
 UPDATE_REPO = "mezon664/ppt2-stats-overlay"
 LATEST_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
-ASSET_PREFIX = "ppt2-stats-overlay"   # the release zip: ppt2-stats-overlay-v1.2.3.zip
+# the release zip: PPTetrics-v1.2.3.zip (the app was "ppt2-stats-overlay" up to
+# v0.1.0; releases carry a copy under that name too, for copies that old)
+ASSET_PREFIXES = ("PPTetrics", "ppt2-stats-overlay")
 # a release zip is only downloaded from GitHub itself (redirects included)
 ALLOWED_HOSTS = {"github.com", "api.github.com", "objects.githubusercontent.com",
                  "release-assets.githubusercontent.com", "codeload.github.com"}
 # never replaced by an update, even if a zip had them
-PRESERVE = ("config/overlay_settings.json", "assets/user_fonts", "debug_frames", "logs", ".venv", "samples", ".git")
+PRESERVE = ("config/overlay_settings.json", "assets/user_fonts", "debug_frames", "logs", ".venv", "samples", ".git",
+            "runtime")   # the full package's bundled Python (tools/build_full.py)
 TIMEOUT_S = 10
 
 
@@ -58,7 +61,7 @@ def _allowed(url):
 def _open(url, accept="application/octet-stream"):
     if not _allowed(url):
         raise ValueError(f"not a GitHub address: {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": f"ppt2-stats-overlay/{VERSION}", "Accept": accept})
+    req = urllib.request.Request(url, headers={"User-Agent": f"PPTetrics/{VERSION}", "Accept": accept})
     resp = urllib.request.urlopen(req, timeout=TIMEOUT_S)
     if not _allowed(resp.geturl()):   # where the redirects ended up
         resp.close()
@@ -74,7 +77,7 @@ def release_info(data):
         return None
     for asset in data.get("assets") or []:
         name, url = asset.get("name", ""), asset.get("browser_download_url", "")
-        if name.startswith(ASSET_PREFIX) and name.endswith(".zip") and _allowed(url):
+        if name.startswith(ASSET_PREFIXES) and name.endswith(".zip") and "-full-" not in name and _allowed(url):
             return {"version": version.lstrip("v"), "url": url, "notes": data.get("body") or "",
                     "page": data.get("html_url") or ""}
     return None
@@ -127,6 +130,24 @@ def extract(zip_path, dest_dir):
     return app
 
 
+# shown when an update needs newer libraries than the bundled ones
+NEEDS_FULL = ("この更新には新しい部品が必要です。GitHub のリリースページから完全版（PPTetrics-full）を"
+              "ダウンロードして入れ直してください（設定はそのフォルダの config を移せば引き継げます）。")
+
+
+def runtime_needed(app):
+    """RUNTIME of a (new) copy of the app: its scripts/version.py."""
+    m = re.search(r"^RUNTIME\s*=\s*(\d+)", (Path(app) / "scripts" / "version.py").read_text(encoding="utf-8"), re.M)
+    return int(m.group(1)) if m else 0
+
+
+def installed_runtime():
+    """The bundled runtime's version, or None when running on an own Python
+    (a .venv: libraries are the user's business there)."""
+    f = ROOT / "runtime" / "RUNTIME_VERSION"
+    return int(f.read_text().strip()) if f.exists() else None
+
+
 def restart_command():
     """How this app is started again after the update."""
     exe = Path(sys.executable)
@@ -159,6 +180,9 @@ def prepare_update(info, progress=None):
     work = Path(tempfile.mkdtemp(prefix="ppt2-overlay-update-"))
     zip_path = download(info["url"], work / "update.zip", progress)
     new_app = extract(zip_path, work / "new")
+    needed, have = runtime_needed(new_app), installed_runtime()
+    if have is not None and needed > have:
+        raise RuntimeError(NEEDS_FULL)
     logs = ROOT / "logs"
     logs.mkdir(exist_ok=True)
     script = work / "finish_update.ps1"

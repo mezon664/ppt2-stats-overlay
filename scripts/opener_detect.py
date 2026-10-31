@@ -59,34 +59,161 @@ def _shape_rows(fumen):
     return tuple(tuple(bool(c) for c in rows[i]) for i in range(height))
 
 
+def _cleared(rows):
+    """The shape as the game shows it: a full row is cleared at once, so it
+    drops out and everything above moves down (1269 of the wiki's 4411 tags
+    hold full rows — openers that clear lines in their first bag)."""
+    rows = tuple(r for r in rows if not all(r))
+    height = max((i + 1 for i, r in enumerate(rows) if any(r)), default=0)
+    return rows[:height]
+
+
+# After its cleared lines drop out a shape can be tiny (321 tags leave 8
+# cells, 14 leave 4) — a board that size turns up early in any opening: in
+# the recordings, 5 sparse boards of 6-10 cells were named that way (the CPU
+# after an early clear). A leftover under this many cells isn't used; such an
+# opener is recognized just before its T-spin instead (_before_the_t_spin).
+MIN_LEFTOVER_CELLS = 14
+# A leftover shape only counts once the opener's own number of pieces could
+# be down; the placement count can lag a piece or two behind.
+PLACEMENT_SLACK = 2
+# The T piece in its 4 turns: (cells as (column, row) offsets with rows
+# counted upward, its center cell).
+T_CELLS = ((((0, 0), (1, 0), (2, 0), (1, 1)), (1, 0)), (((1, 0), (0, 1), (1, 1), (2, 1)), (1, 1)),
+           (((0, 0), (0, 1), (0, 2), (1, 1)), (0, 1)), (((1, 0), (1, 1), (1, 2), (0, 1)), (1, 1)))
+
+
+def _before_the_t_spin(raw):
+    """A tag with full rows shows the first bag as if nothing cleared; in the
+    game those rows clear as the T goes in, so the opener is on screen just
+    BEFORE that: the tag without the T. Every way a T fits there as a
+    T-spin (inside the shape, touching each full row, leaving none full, and
+    3 of the 4 corners around its center blocked — the game's T-spin rule,
+    and open above in at least one of its columns, so it can come down)
+    gives one such board."""
+    full = [i for i, r in enumerate(raw) if all(r)]
+    if not full:
+        return []
+    cells = {(c, r) for r, row in enumerate(raw) for c, v in enumerate(row) if v}
+    out = []
+    for turn, (mc, mr) in T_CELLS:
+        for r0 in range(len(raw)):
+            for c0 in range(COLS):
+                t = {(c0 + dc, r0 + dr) for dc, dr in turn}
+                if not t <= cells or any(not any((c, r) in t for c in range(COLS)) for r in full):
+                    continue
+                cx, cy = c0 + mc, r0 + mr
+                blocked = sum(1 for dx in (-1, 1) for dy in (-1, 1)
+                              if not (0 <= cx + dx < COLS) or cy + dy < 0
+                              or ((cx + dx, cy + dy) in cells and (cx + dx, cy + dy) not in t))
+                if blocked < 3:
+                    continue
+                rest = cells - t   # the T has to come down from the top: some column of it is open above
+                if not any(all((c, rr) not in rest for rr in range(r + 1, len(raw) + 2)) for c, r in t):
+                    continue
+                rows = tuple(tuple((c, r) in cells and (c, r) not in t for c in range(COLS)) for r in range(len(raw)))
+                if any(all(r) for r in rows):
+                    continue
+                height = max((i + 1 for i, r in enumerate(rows) if any(r)), default=0)
+                if rows[:height] not in out:
+                    out.append(rows[:height])
+    return out
+# A board shared by several openers shows this many names, then "ほか".
+MAX_NAMES = 2
+
+
 def screen_name(name):
     """The name as shown: without its （…）/(…) variant part — パフェ積み(中あけ)
     and りねパフェ(左凸) show as パフェ積み / りねパフェ (user's request)."""
     return re.sub(r"\s*[（(][^）)]*[）)]", "", name).strip() or name
 
 
+class Shape(tuple):
+    """(name, rows as the game shows them, pieces the opener has placed)."""
+    __slots__ = ()
+
+    def __new__(cls, name, rows, pieces=0):
+        return super().__new__(cls, (name, rows, pieces))
+
+
 def load_openers(path=OPENERS_PATH):
-    """[(name, shape_rows)], several shapes per opener."""
+    """[Shape(name, rows, pieces)], several shapes per opener; rows with the
+    shape's full lines cleared (see _cleared)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     out = []
     for op in data["openers"]:
         name = screen_name(op.get("display") or op["name"])     # shorter on-screen name if given
         for f in op["shapes"]:
-            out.append((name, _shape_rows(f)))
+            raw = _shape_rows(f)
+            rows = _cleared(raw)
+            if rows == raw:
+                out.append(Shape(name, rows))
+                continue
+            # lines clear in this first bag: the board just before the T-spin,
+            # and (if it's big enough to tell apart) the one left after it
+            for before in _before_the_t_spin(raw):
+                out.append(Shape(name, before))
+            if sum(map(sum, rows)) >= MIN_LEFTOVER_CELLS:
+                out.append(Shape(name, rows, sum(map(sum, raw)) // 4))
     return out
 
 
-def match_openers(occupancy, openers):
+class OpenerIndex:
+    """The shapes looked up by their rows (4000+ shapes are compared every
+    frame of the opening for both players: a scan of all of them was too slow)."""
+
+    def __init__(self, openers, english=None):
+        self.english = english or {}   # see load_english
+        self.openers = list(openers)
+        self.by_rows = {}
+        for shape in self.openers:
+            name, rows = shape[0], shape[1]
+            self.by_rows.setdefault(rows, []).append(shape)
+        self.heights = sorted({len(r) for r in self.by_rows})
+
+    def match(self, occupancy, placements=None):
+        names = []
+        for h in self.heights:
+            if any(any(occupancy[r]) for r in range(h, min(ROWS, h + CLEAR_ROWS_ABOVE))):
+                continue
+            for shape in self.by_rows.get(tuple(tuple(occupancy[r]) for r in range(h)), ()):
+                name, pieces = shape[0], shape[2] if len(shape) > 2 else 0
+                if placements is not None and pieces and placements < pieces - PLACEMENT_SLACK:
+                    continue   # a small leftover shape this early is something else
+                if name not in names:
+                    names.append(name)
+        return names
+
+
+def shown_name(names, language="ja"):
+    """What the overlays show for these names: up to MAX_NAMES of them."""
+    if len(names) <= MAX_NAMES:
+        return " / ".join(names)
+    return " / ".join(names[:MAX_NAMES]) + (" ほか" if language == "ja" else " etc.")
+
+
+def load_english(path=OPENERS_PATH):
+    """{shown Japanese name: English name} for the openers that have one
+    ("name_en": Hard Drop's name, else the wiki's — see
+    tools/opener_import/build_openers.py). The rest show in Japanese in
+    English too (user's request)."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    out = {}
+    for op in data["openers"]:
+        if op.get("name_en"):
+            # without its (…) part, like the Japanese names (user: in English too)
+            out.setdefault(screen_name(op.get("display") or op["name"]), screen_name(op["name_en"].strip()))
+    return out
+
+
+def match_openers(occupancy, openers, placements=None):
     """Names of the openers whose shape the board shows exactly.
-    occupancy: ROWS rows of COLS bools, bottom row first."""
-    names = []
-    for name, shape in openers:
-        h = len(shape)
-        if all(tuple(occupancy[r]) == shape[r] for r in range(h)) and \
-                not any(any(occupancy[r]) for r in range(h, min(ROWS, h + CLEAR_ROWS_ABOVE))):
-            if name not in names:
-                names.append(name)
-    return names
+    occupancy: ROWS rows of COLS bools, bottom row first. openers: an
+    OpenerIndex (or a list of shapes). placements: pieces placed so far
+    (None: don't check, see PLACEMENT_SLACK)."""
+    if not isinstance(openers, OpenerIndex):
+        openers = OpenerIndex(openers)
+    return openers.match(occupancy, placements)
 
 
 def read_occupancy(frame, box):
@@ -131,9 +258,10 @@ _OPENERS = None
 
 
 def openers():
+    """Every opener shape, indexed (loaded once)."""
     global _OPENERS
     if _OPENERS is None:
-        _OPENERS = load_openers()
+        _OPENERS = OpenerIndex(load_openers(), load_english())
     return _OPENERS
 
 
@@ -146,6 +274,7 @@ class OpenerDetector:
         self.box = scale_box(LEFT_BOX if side == "left" else RIGHT_BOX, self.profile)
         self.placements = 0
         self.name = None
+        self.name_en = None   # the same in English (Japanese where there's no English name)
 
     def on_frame(self, frame, t_in_match, placements=0):
         """Call on every frame with the time since the match started and the
@@ -170,10 +299,13 @@ class OpenerDetector:
         lifted = garbage_rows(frame, self.box)
         if lifted:   # the shape sits on top of the garbage it was pushed up by
             occupancy = occupancy[lifted:] + [[False] * COLS for _ in range(lifted)]
-        names = match_openers(occupancy, openers())
+        names = match_openers(occupancy, openers(), self.placements)
         if not names:
             return None
-        name = " / ".join(names)      # shapes shared by two openers: show both
+        name = shown_name(names)      # shapes shared by several openers: up to MAX_NAMES of them
+        index = openers()
+        # dict.fromkeys: two Japanese names can share one English name once its (…) is gone
+        self.name_en = shown_name(list(dict.fromkeys(index.english.get(n, n) for n in names)), "en")
         if name != self.name:
             self.name = name
             return name

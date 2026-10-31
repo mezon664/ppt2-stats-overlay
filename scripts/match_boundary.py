@@ -64,6 +64,9 @@ YATTA_WINDOW_LEFT = tuple(
     v - RIGHT_X_OFFSET if i in (0, 2) else v for i, v in enumerate(YATTA_WINDOW_RIGHT)
 )
 YATTA_FILE = SCRIPTS_DIR / ".." / "assets" / "templates" / "t_yatta_live.png"
+# The English game says "Yeah!" in the same place (burst_english: 0.88-1.00
+# while it's up, <= 0.45 on everything else in the Japanese and English bursts)
+YEAH_FILE = SCRIPTS_DIR / ".." / "assets" / "templates" / "t_yeah_live.png"
 YATTA_ENTER, YATTA_EXIT = 0.70, 0.50
 
 
@@ -91,6 +94,8 @@ class MatchBoundaryDetector:
         # (confirmed: this made self.yatta_tmpl end up holding the GO! image).
         self._yatta_tmpl_raw = cv2.imread(str(YATTA_FILE))
         self.yatta_tmpl = scale_template(self._yatta_tmpl_raw, self.profile)
+        self._yeah_tmpl_raw = cv2.imread(str(YEAH_FILE))
+        self.yeah_tmpl = scale_template(self._yeah_tmpl_raw, self.profile)
         self.go_region = scale_box(GO_REGION, self.profile)
         self.yatta_window_left = scale_box(YATTA_WINDOW_LEFT, self.profile)
         self.yatta_window_right = scale_box(YATTA_WINDOW_RIGHT, self.profile)
@@ -104,8 +109,9 @@ class MatchBoundaryDetector:
     def update(self, frame, t):
         go_conf = _orange_ratio(frame, self.go_region)
         yatta_conf = max(
-            _match(frame, self.yatta_tmpl, self.yatta_window_left),
-            _match(frame, self.yatta_tmpl, self.yatta_window_right),
+            _match(frame, tmpl, window)
+            for tmpl in (self.yatta_tmpl, self.yeah_tmpl)       # Japanese / English game
+            for window in (self.yatta_window_left, self.yatta_window_right)
         )
         self.last_go_conf = go_conf
         self.last_yatta_conf = yatta_conf

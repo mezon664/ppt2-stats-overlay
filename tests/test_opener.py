@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import cv2
 import pytest
 from capture_profile import compute_profile
-from opener_detect import OpenerDetector, load_openers, match_openers, screen_name
+from opener_detect import OpenerDetector, OpenerIndex, load_openers, match_openers, screen_name
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 OPENERS = load_openers()
@@ -25,28 +25,56 @@ def test_shown_names_drop_the_variant_in_parentheses():
     assert screen_name("パフェ積み(中あけ)") == "パフェ積み"
     assert screen_name("りねパフェ（左凸）") == "りねパフェ"
     assert screen_name("T土台りねパフェ") == "T土台りねパフェ"
-    assert not any("(" in n or "（" in n for n, _ in OPENERS)
+    assert not any("(" in n or "（" in n for n, *_ in OPENERS)
 
 
-def test_every_shape_matches_only_its_own_opener():
-    for name, shape in OPENERS:
-        assert match_openers(board(shape), OPENERS) == [name]
+def test_every_shape_matches_its_own_opener():
+    """Every wiki shape (as the game shows it, cleared lines dropped) is found.
+    A few boards belong to several openers (the same first bag): then all of
+    them are named."""
+    index = OpenerIndex(OPENERS)
+    for name, shape, _ in OPENERS:
+        assert name in match_openers(board(shape), index)
+
+
+def test_all_the_wiki_openers_are_in():
+    names = {name for name, *_ in OPENERS}
+    assert len(names) > 1000 and len(OPENERS) > 4000
+    for known in ("迷走砲", "合掌TSD", "パフェ積み", "りねパフェ", "TKI積み", "開幕DT砲"):
+        assert known in names, known
 
 
 def test_one_cell_off_is_not_called_anything():
-    for name, shape in OPENERS:
+    index = OpenerIndex(OPENERS)
+    for name, shape, _ in OPENERS[::25]:   # a sample: every cell of every shape takes minutes
         for r in range(len(shape)):
             for c in range(10):
-                names = match_openers(board(shape, [(r, c)]), OPENERS)
+                names = match_openers(board(shape, [(r, c)]), index)
                 assert name not in names
 
 
 def test_blocks_right_above_the_shape_spoil_it_but_higher_ones_do_not():
     from opener_detect import CLEAR_ROWS_ABOVE
-    name, shape = OPENERS[0]
+    name, shape, _ = next(s for s in OPENERS if s[0] == "迷走砲")
     h = len(shape)
-    assert match_openers(board(shape, [(h, 4)]), OPENERS) == []                      # touching the shape
-    assert match_openers(board(shape, [(h + CLEAR_ROWS_ABOVE, 4), (18, 4)]), OPENERS) == [name]  # falling piece / sparkles
+    assert name not in match_openers(board(shape, [(h, 4)]), OPENERS)                 # touching the shape
+    assert name in match_openers(board(shape, [(h + CLEAR_ROWS_ABOVE, 4), (18, 4)]), OPENERS)  # falling piece / sparkles
+
+
+def test_a_small_leftover_shape_waits_for_enough_pieces():
+    """An opener that clears lines in its first bag can leave only a few
+    cells; that board only counts once about that many pieces are down."""
+    from opener_detect import PLACEMENT_SLACK
+    name, shape, pieces = min((s for s in OPENERS if s[2]), key=lambda s: sum(map(sum, s[1])))
+    index = OpenerIndex(OPENERS)
+    assert name not in match_openers(board(shape), index, placements=2)
+    assert name in match_openers(board(shape), index, placements=pieces - PLACEMENT_SLACK)
+
+
+def test_shown_name_keeps_it_short():
+    from opener_detect import shown_name
+    assert shown_name(["A"]) == "A" and shown_name(["A", "B"]) == "A / B"
+    assert shown_name(["A", "B", "C", "D"]) == "A / B ほか"
 
 
 def detect(fixture, side="left"):
@@ -66,7 +94,9 @@ def test_real_frames(fixture, name):
 
 
 @pytest.mark.parametrize("fixture,side", [
-    ("tsd_left.jpg", "left"), ("play_ice_stage.jpg", "left"), ("play_ice_stage.jpg", "right"),
+    # (play_ice_stage.jpg's right side was here: it is in fact a first-bag
+    # T-SPIN Double setup, now named from the board just before the T-spin)
+    ("tsd_left.jpg", "left"), ("play_ice_stage.jpg", "left"),
     ("opener_pco_left.jpg", "right"), ("setend_menu.jpg", "left"),
 ])
 def test_no_opener_on_other_boards(fixture, side):
@@ -121,3 +151,49 @@ def test_coloured_rows_are_not_garbage():
     garbage, so nothing is set aside for it."""
     frame = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))
     assert detect_frame(with_garbage(frame, 2, color=(40, 160, 230))) is None
+
+
+def test_t_spin_openers_are_found_just_before_the_t_spin():
+    """A tag whose first bag clears lines with a T-spin is never on screen as
+    drawn (the rows clear at once); it's recognized from the board just
+    before the T goes in."""
+    from opener_detect import _before_the_t_spin, _shape_rows, T_CELLS
+    import json
+    from pathlib import Path
+    data = json.loads((Path(__file__).resolve().parent.parent / "assets" / "openers.json").read_text(encoding="utf-8"))
+    op, raw = next((o, r) for o in data["openers"] for r in map(_shape_rows, o["shapes"])
+                   if any(all(row) for row in r) and _before_the_t_spin(r))
+    name = op.get("display") or op["name"]
+    befores = _before_the_t_spin(raw)
+    assert befores
+    index = OpenerIndex(OPENERS)
+    for rows in befores:
+        assert sum(map(sum, rows)) == sum(map(sum, raw)) - 4      # the same board, minus the T
+        assert not any(all(r) for r in rows)
+        assert screen_name(name) in match_openers(board(rows), index)
+
+
+def test_english_names():
+    """English (overlay language): Hard Drop's name, else the wiki's English
+    name, else the Japanese one (user's rule)."""
+    from opener_detect import load_english, shown_name
+    en = load_english()
+    assert en.get("迷走砲") == "Stray Cannon"
+    assert en.get("無名砲") in ("Pelican", "Pelican Opener")
+    assert len(en) > 300
+    assert "合掌TSD" not in en or en["合掌TSD"].isascii()
+    assert shown_name(["A", "B", "C"], "en") == "A / B etc."
+
+
+def test_detector_gives_both_languages():
+    frame = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))
+    det = OpenerDetector("left", compute_profile(frame.shape[1], frame.shape[0]))
+    assert det.on_placements(frame, 1) == "迷走砲"
+    assert det.name_en == "Stray Cannon"
+
+
+def test_english_names_drop_their_bracket_part_too():
+    """User: no (…) part in English either, same as the Japanese names."""
+    from opener_detect import load_english
+    names = load_english().values()
+    assert names and not any("(" in n or "（" in n for n in names)

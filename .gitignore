@@ -19,3 +19,13 @@ assets/user_fonts/
 
 # Release zips (tools/make_release.py)
 dist/
+
+# tools/build_full.py work folder
+build/
+
+# Opener import inputs (tools/opener_import/build_openers.py): collected from
+# the wikis, kept local — wiki_heads.json holds page text. The result,
+# assets/openers.json, is what the app uses.
+tools/opener_import/wiki_tags.json
+tools/opener_import/wiki_heads.json
+tools/opener_import/harddrop.json

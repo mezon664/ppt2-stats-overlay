@@ -32,14 +32,16 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
-from config_store import DISPLAY_DEFAULTS, load_settings, display_settings, part_value
+from config_store import DISPLAY_DEFAULTS, DISPLAY_RANGES, load_settings, display_settings, part_value, opener_language
 
 log_hud = logging.getLogger("hud")
 
 from collections import deque
 
+import numpy as np
+
 import websockets
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtNetwork, QtWidgets
 
 try:
     import win32gui
@@ -59,9 +61,15 @@ REFERENCE_W, REFERENCE_H = 1232, 692  # client size all positions below refer to
 #   "left":  right edge just left of each board's frame
 #   "right": left edge just right of each board's frame
 STAT_ANCHOR_X = {
-    "left": {"left": 186, "right": 790},
+    "left": {"left": 184, "right": 789.2},   # 1.3 px short of each board frame's white line (measured: 185.3 / 790.5)
     "right": {"left": 448, "right": 1052},
 }
+# Against a Puyo player the Tetris board's frame is wider on the outer side:
+# its white edge line sits at x 173 (1P) / 778 (2P) instead of 186 / 791
+# (measured on burst_vs_puyo, burst_self_puyo, burst_english2). The stats
+# move in by this much then, so they still run along the line (user: they
+# looked shifted right). The far edge (right-hand mode) doesn't move.
+VS_PUYO_SHIFT_X = {"left": -12, "right": 0}   # by display.stats_position
 STAT_BOTTOM_Y = 562       # the height the user picked by hand (was 600, beside the score)
 EVENT_GAP = 2             # between the event lines and the stat block
 VERSUS_GAP = 4            # between the versus block and the clock below it
@@ -69,11 +77,21 @@ VERSUS_GAP = 4            # between the versus block and the clock below it
 OFFSET_KEYS = {"stats": ("offset_x", "offset_y"),
                "clock": ("clock_offset_x", "clock_offset_y"),
                "event": ("event_offset_x", "event_offset_y"),
-               "summary": ("summary_offset_x", "summary_offset_y")}
+               "summary": ("summary_offset_x", "summary_offset_y"),
+               "stats_left": ("stats_left_offset_x", "stats_left_offset_y"),        # each player's
+               "stats_right": ("stats_right_offset_x", "stats_right_offset_y"),     # numbers on their own
+               "opener": ("opener_offset_x", "opener_offset_y"),                    # opener names, both
+               "opener_left": ("opener_left_offset_x", "opener_left_offset_y"),     # and each player's
+               "opener_right": ("opener_right_offset_x", "opener_right_offset_y")}
+# the part (display.parts, its size) each drag target belongs to
+TARGET_PART = {"stats": "stats", "stats_left": "stats", "stats_right": "stats", "clock": "clock",
+               "event": "events", "summary": "summary", "opener": "opener", "opener_left": "opener",
+               "opener_right": "opener"}
+WHEEL_SCALE_STEP = 0.05   # one wheel notch over a part while positioning: its size by this
 # End-of-match summary: centered between the boards, top edge at this y.
 SUMMARY_TOP_Y = 120
 # Match time: centered above the マッチポイント banner (x 542-693, y 579-604).
-CLOCK_CENTER_X, CLOCK_BOTTOM_Y = 617, 576
+CLOCK_CENTER_X, CLOCK_BOTTOM_Y = 615.6, 576   # midway between the boards (white lines at 185.9 / 439.9 and 791.3 / 1045.4; was 617)
 
 
 
@@ -89,14 +107,16 @@ UI_TEXT = {
            "s_lines": "送った段数", "s_pieces": "置いたミノ", "s_max_ren": "最大REN",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "パーフェクト",
            "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
-           "edit_hint": "位置調整中：黄色い枠をドラッグして動かせます（設定画面の「完了」で終了）"},
+           "edit_hint": "位置調整中：黄色い枠をドラッグで移動、マウスホイールで大きさ変更（設定画面の「完了」で終了）",
+           "opener_sample": "開幕テンプレ名"},
     "en": {"frozen": "Match over", "paused": "Paused", "waiting": "Waiting for start",
            "capture_down": "Can't read the game",
            "summary": "Match summary", "s_opener": "Opener", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
-           "s_lines": "Lines sent", "s_pieces": "Pieces", "s_max_ren": "Max REN",
+           "s_lines": "Lines sent", "s_pieces": "Pieces", "s_max_ren": "Max combo",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "Perfect clear",
            "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
-           "edit_hint": "Adjusting: drag the yellow boxes to move them (press Done in the settings to finish)"},
+           "edit_hint": "Adjusting: drag a yellow box to move it, use the mouse wheel to resize it (press Done in the settings to finish)",
+           "opener_sample": "Opener name"},
 }
 
 
@@ -179,6 +199,11 @@ class Band(QtWidgets.QWidget):
             p.setBrush(solid)
             p.setPen(QtCore.Qt.PenStyle.NoPen)
             p.drawRoundedRect(QtCore.QRectF(r), 4, 4)
+
+    def wheelEvent(self, event):   # positioning: the wheel resizes this part
+        if self.editing and self.draggable:
+            self.window().wheel_resize(self.drag_target, event.angleDelta().y())
+            event.accept()
 
     # Dragging is handled by the HUD window, which moves both sides together.
     def mousePressEvent(self, event):
@@ -458,12 +483,17 @@ VALUE_TEMPLATES = {"apm": "{0}{0}{0}.{0}", "pps": "{0}.{0}{0}", "app": "{0}.{0}{
 # The stats' labels; display.labels can reword any of them (set_labels).
 DEFAULT_LABELS = {"apm": "APM", "pps": "PPS", "app": "APP", "attack": "ATK",
                   "pieces": "PIECES", "ren": "REN", "b2b": "B2B"}
+DEFAULT_LABELS_EN = {**DEFAULT_LABELS, "ren": "COMBO"}   # the English game says "Combo" for REN
 LABELS = dict(DEFAULT_LABELS)
 
 
-def set_labels(own):
+def default_labels(language):
+    return DEFAULT_LABELS_EN if language == "en" else DEFAULT_LABELS
+
+
+def set_labels(own, language="ja"):
     global LABELS
-    LABELS = {**DEFAULT_LABELS, **(own or {})}
+    LABELS = {**default_labels(language), **(own or {})}
 
 
 def label_for(key):
@@ -559,7 +589,7 @@ HOLD_RIGHT_X = {"left": 191, "right": 797}       # "hold": right edge of each HO
 OPENER_HOLD_TOP_Y = 172                           # ...just below it
 NAMEBAR_RIGHT_X, NAMEBAR_LEFT_X = 466, 762        # "namebar": end of the bar away from the avatar
 NAMEBAR_TOP_Y = 608                                # in the gap between the score digits and the name bar
-OPENER_TOP_CENTER_X, OPENER_TOP_Y = 617, 14       # "top": both players, top center
+OPENER_TOP_CENTER_X, OPENER_TOP_Y = 615.6, 14       # "top": both players, top center
 
 
 def elide(text, px, weight, width):
@@ -1018,6 +1048,7 @@ class EventBlock(Band):
         self.u = 1.0
         self.texts = []
         self.language = "ja"
+        self.opener_language = "ja"   # display.opener_language, resolved
 
     def configure(self, style, mode, count, u):
         self.style, self.mode, self.count, self.u = style, mode, count, u
@@ -1025,11 +1056,17 @@ class EventBlock(Band):
         self.square = style == "simple"
         self._resize()
 
+    def _text(self, e, key):
+        if e.get("ren_source") == "opener" and e.get("opener"):   # the name in display.opener_language
+            name = (self.opener_language == "en" and e.get("opener_en")) or e["opener"]
+            return ("Opener: " if self.language == "en" else "開幕：") + name
+        return e.get(key) or e.get("text", "")
+
     def update_side(self, side):
         """Shows up to `count` events, oldest on top; True if there are any."""
         log = (side or {}).get("event_log") or []   # newest first
         key = "text_en" if self.language == "en" else "text"
-        texts = [e.get(key) or e.get("text", "") for e in log[:self.count]][::-1]
+        texts = [self._text(e, key) for e in log[:self.count]][::-1]
         if texts != self.texts:
             self.texts = texts
             self._resize()
@@ -1216,6 +1253,7 @@ def summary_side(side):
     out = side_values(side)
     out.update({k: stats.get(k) for k, _, fmt in SUMMARY_ROWS if fmt is not None and k not in out})
     out["opener"] = side.get("opener")
+    out["opener_en"] = side.get("opener_en") or side.get("opener")
     out["puyo"] = is_puyo(side)
     return out
 
@@ -1238,6 +1276,7 @@ class SummaryBlock(Band):
         self.style = "band"
         self.u = 1.0
         self.language = "ja"
+        self.opener_language = "ja"
         self.duration = 0.0
         self.sides = {"left": summary_side(None), "right": summary_side(None)}
         self.rows = list(SUMMARY_ROWS)
@@ -1305,6 +1344,8 @@ class SummaryBlock(Band):
                     continue
                 v = self.sides[side].get(key)
                 if fmt is None:     # text row (opener): a little smaller, cut to its column
+                    if self.opener_language == "en":   # the English name (Japanese where there's none)
+                        v = self.sides[side].get(key + "_en") or v
                     text = "--" if not v else elide(v, self.TEXT_PX * u, BOLD, 2 * W * self.COL_X - 12 * u)
                     draw_text(p, x, base, text, self.TEXT_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)
                     continue
@@ -1327,8 +1368,9 @@ class OpenerBadge(Band):
     NAMEBAR_PX = 12
 
     def __init__(self, parent, side):
-        super().__init__(parent, fade=None)
+        super().__init__(parent, fade=None, draggable=True)
         self.side = side
+        self.drag_target = "opener"   # set_drag_targets: or just this player's
         self.mode = "board"
         self.style = "band"
         self.u = 1.0
@@ -1448,18 +1490,282 @@ class OpenerBadge(Band):
                 draw_text(p, lx, 14 * u, self._label(), self.LABEL_PX[m] * u, BOLD, label_color, "left", outline, a)
                 draw_text(p, lx, 33 * u, name, self.NAME_PX[m] * u, BOLD, WHITE, "left", outline, a,
                           OPENER_NAME_THICKEN)
+        if self.editing:   # position-adjust mode: outlined like the other parts
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.setPen(QtGui.QPen(QtGui.QColor("#fde047"), 2, QtCore.Qt.PenStyle.DashLine))
+            p.drawRect(r.adjusted(1, 1, -1, -1))
+
+
+# --- the 「猫」 opener display (user's request: a cat comes in from outside
+# the screen, gets in the way of the board and holds up the opener's name on
+# a sheet of paper). Frames: assets/cat/ (tools/cat/make_cat.py). 1P's cat is
+# mirrored, so it comes in from the left edge; 2P's from the right.
+CAT_DIR = ROOT_DIR / "assets" / "cat"
+CAT_BOTTOM_Y = 632        # the clip's bottom edge, reference px (the cat stands about on the score)
+CAT_SCALE = 1.0
+CAT_MIN_STILL_S = 0.5
+CAT_PAPER_MIN_PX = 40     # smallest name text on the paper (200x140 box); longer names run off its sides     # the standing-still part is never squeezed below this           # clip pixels per reference px
+
+
+def load_cat():
+    """The cat clip (cat.json + frame images), or None if it isn't there."""
+    try:
+        data = json.loads((CAT_DIR / "cat.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for f in data["frames"]:
+        f["img"] = QtGui.QImage(str(CAT_DIR / f["file"])) if f.get("file") else None
+    return data
+
+
+def cat_pos(cat, age, seconds):
+    """Where in the clip `age` seconds after the opener was recognized falls:
+    (frame, next frame, how far toward the next 0-1), or None once the cat has
+    walked off. Between two frames they're blended (user: smoother than the
+    clip's own 24 frames a second). The paper stays up for about `seconds`
+    (display.opener_seconds; 0: until the match ends).
+
+    Only the part where the cat stands still (still_start-still_end) is fitted
+    to that time: played faster when it's shorter, back and forth (an odd
+    number of times, so it ends where the walk off starts) when it's longer.
+    The walk in and the walk off always play as filmed: before, the paper
+    time ended wherever it was and cut into the walk off (user: it skipped a
+    few frames as it left)."""
+    n = len(cat["frames"])
+    hs, he = cat["hold_start"], cat["hold_end"]
+    s0, s1 = cat.get("still_start", hs), cat.get("still_end", he)
+    span = max(1, s1 - s0)
+    t = age * cat["fps"]
+    if t < s0:
+        pos = t
+    else:
+        u = t - s0
+        if seconds <= 0:      # until the match ends: back and forth at normal speed
+            k = u % (2 * span)
+            pos = s0 + (k if k <= span else 2 * span - k)
+        else:
+            fit = max(CAT_MIN_STILL_S * cat["fps"], seconds * cat["fps"] - (s0 - hs) - (he - s1))
+            if u < fit:
+                passes = 2 * round((fit / span - 1) / 2) + 1    # nearest odd number, at least 1
+                k = (u * passes * span / fit) % (2 * span)
+                pos = s0 + (k if k <= span else 2 * span - k)
+            else:
+                pos = s1 + (u - fit)
+                if pos > n - 1:
+                    return None
+    i = int(pos)
+    return i, min(i + 1, n - 1), pos - i
+
+
+def cat_frame(cat, age, seconds):
+    """The frame of cat_pos (None once the cat has walked off)."""
+    p = cat_pos(cat, age, seconds)
+    return None if p is None else p[0]
+
+
+PAPER_W, PAPER_H = 184, 130   # room for the name on the paper (its 200x140 box less a margin)
+PAPER_MAX_PX = 54
+PAPER_TWO_LINE_MIN_PX = 26    # two lines as small as this still beat running off the paper
+
+
+def paper_layout(name, measure):
+    """How to write `name` on the cat's paper: (lines, text px in the 200x140
+    box). measure(text): its width at 100 px. One line when that's big enough
+    (CAT_PAPER_MIN_PX); else two lines when they fit (user: fit it on the paper
+    where it can — broken at a space if there is one, else between any two
+    characters, keeping the lines even); else one line at CAT_PAPER_MIN_PX that
+    runs off the paper's sides."""
+    one = min(PAPER_MAX_PX, PAPER_W * 100 / max(1.0, measure(name)))
+    if one >= CAT_PAPER_MIN_PX:
+        return [name], one
+    spaces = [i for i, c in enumerate(name) if c == " "]
+    best = None
+    for i in spaces or range(1, len(name)):
+        a, b = name[:i].rstrip(), name[i:].lstrip()
+        if not a or not b:
+            continue
+        size = min(PAPER_MAX_PX, PAPER_H / 2.3, PAPER_W * 100 / max(1.0, measure(a), measure(b)))
+        if best is None or size > best[1]:
+            best = ([a, b], size)
+    if best and best[1] >= PAPER_TWO_LINE_MIN_PX:
+        return best
+    return [name], CAT_PAPER_MIN_PX
+
+
+def opener_offset(d, side):
+    """Where a player's opener name is moved to: both players' offset plus
+    that player's own ("both": the top-center box, the shared one only)."""
+    x, y = d["opener_offset_x"], d["opener_offset_y"]
+    if side in ("left", "right"):
+        x, y = x + d[f"opener_{side}_offset_x"], y + d[f"opener_{side}_offset_y"]
+    return x, y
+
+
+class CatPopup(QtWidgets.QWidget):
+    """One player's cat (see load_cat). Click-through like the rest of the HUD.
+    Frames are scaled (and mirrored for 1P) once per size and kept, so each
+    repaint only blends two ready images."""
+
+    def __init__(self, parent, side):
+        super().__init__(parent)
+        self.side = side
+        self.cat = None
+        self.pos = None
+        self.name = ""
+        self.u = 1.0
+        self._ready = {}          # frame index -> (QImage at self.u, its top-left)
+        self._ready_u = None
+        self.editing = False      # position-adjust mode: outlined, and dragged like the other parts
+        self._paper, self._paper_for = None, None   # paper_layout of the name, kept
+        self.drag_target = "opener"   # set_drag_targets: or just this player's
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def show_frame(self, cat, pos, name, u):
+        self.cat, self.pos, self.name = cat, pos, name
+        if u != self.u or self._ready_u != u:
+            self.u, self._ready, self._ready_u = u, {}, u
+        w, h = cat["size"]
+        size = QtCore.QSize(int(w * u), int(h * u))
+        if self.size() != size:
+            self.setFixedSize(size)
+        self.update()
+
+    def prepare(self, cat, u):
+        """Scale every frame now (about a third of a second), so none is
+        scaled while the cat is walking — that made it hitch."""
+        self.cat = cat
+        if self._ready_u != u:
+            self.u, self._ready, self._ready_u = u, {}, u
+        for index in range(len(cat["frames"])):
+            self._frame(index)
+
+    def _frame(self, index):
+        """Frame `index` scaled to self.u (mirrored for 1P), and where it goes."""
+        if index not in self._ready:
+            f = self.cat["frames"][index]
+            if f.get("img") is None:
+                self._ready[index] = None
+            else:
+                img = f["img"].scaled(max(1, round(f["img"].width() * self.u)),
+                                      max(1, round(f["img"].height() * self.u)),
+                                      QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
+                                      QtCore.Qt.TransformationMode.SmoothTransformation)
+                img = img.convertToFormat(QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+                x = f["x"] * self.u
+                if self.side == "left":   # 1P: comes in from the left
+                    img = img.mirrored(True, False)
+                    x = self.cat["size"][0] * self.u - x - img.width()
+                ptr = img.constBits()
+                ptr.setsize(img.sizeInBytes())
+                arr = np.frombuffer(ptr, np.uint8).reshape(img.height(), img.bytesPerLine() // 4, 4)[:, :img.width()]
+                self._ready[index] = (arr.astype(np.uint16), int(round(x)), int(round(f["y"] * self.u)))
+        return self._ready[index]
+
+    def _quad(self, index):
+        f = self.cat["frames"][index]
+        if not f.get("paper"):
+            return None
+        quad = [QtCore.QPointF(*pt) for pt in f["paper"]]
+        if self.side == "left":
+            w = self.cat["size"][0]
+            quad = [QtCore.QPointF(w - q.x(), q.y()) for q in quad]
+            quad = [quad[1], quad[0], quad[3], quad[2]]
+        return quad
+
+    def set_editing(self, on):
+        self.editing = on
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, not on)
+        self.setCursor(QtCore.Qt.CursorShape.SizeAllCursor if on else QtCore.Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if self.editing and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.window().drag_start(event.globalPosition(), self.drag_target)
+
+    def mouseMoveEvent(self, event):
+        if self.editing:
+            self.window().drag_move(event.globalPosition())
+
+    def mouseReleaseEvent(self, event):
+        if self.editing:
+            self.window().drag_end()
+
+    def wheelEvent(self, event):   # positioning: the wheel resizes the opener names
+        if self.editing:
+            self.window().wheel_resize(self.drag_target, event.angleDelta().y())
+            event.accept()
+
+    def paintEvent(self, event):
+        if self.editing:   # something to grab everywhere (clear pixels let clicks through), and the outline
+            p = QtGui.QPainter(self)
+            p.fillRect(self.rect(), QtGui.QColor(*BAND_RGB, 60))
+            p.setPen(QtGui.QPen(QtGui.QColor("#fde047"), 2, QtCore.Qt.PenStyle.DashLine))
+            p.drawRect(self.rect().adjusted(1, 1, -1, -1))
+            p.end()
+        if not self.cat or self.pos is None:
+            return
+        i, j, frac = self.pos
+        a, b = self._frame(i), self._frame(j)
+        if a is None and b is None:
+            return
+        # the two frames blended: their (premultiplied) pixels added up with
+        # weights (1 - frac, frac), so where both are solid it stays solid. (Qt's
+        # additive mode ignores the opacity and drew one over the other: the
+        # cat went pale and see-through halfway between frames.)
+        wb = int(round(frac * 256))
+        parts = [(f, wt) for f, wt in ((a, 256 - wb), (b, wb)) if f is not None and wt]
+        # only the area the two frames cover (the cat is a small part of the clip)
+        X1 = min(x for (arr, x, y), _ in parts)
+        Y1 = min(y for (arr, x, y), _ in parts)
+        X2 = max(x + arr.shape[1] for (arr, x, y), _ in parts)
+        Y2 = max(y + arr.shape[0] for (arr, x, y), _ in parts)
+        layer = np.zeros((Y2 - Y1, X2 - X1, 4), np.uint16)
+        for (arr, x, y), weight in parts:
+            layer[y - Y1:y - Y1 + arr.shape[0], x - X1:x - X1 + arr.shape[1]] += arr * weight
+        out = np.ascontiguousarray((layer >> 8).astype(np.uint8))
+        p = QtGui.QPainter(self)
+        p.drawImage(X1, Y1, QtGui.QImage(out.data, X2 - X1, Y2 - Y1, (X2 - X1) * 4,
+                                         QtGui.QImage.Format.Format_ARGB32_Premultiplied))
+        qa, qb = self._quad(i), self._quad(j)
+        quad = qa if qb is None else qb if qa is None else \
+            [QtCore.QPointF(pa.x() + (pb.x() - pa.x()) * frac, pa.y() + (pb.y() - pa.y()) * frac) for pa, pb in zip(qa, qb)]
+        if quad and self.name:
+            # the name on the paper, following its corners (unmirrored text)
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+            r = QtCore.QRectF(0, 0, 200, 140)
+            t = QtGui.QTransform()
+            QtGui.QTransform.quadToQuad(QtGui.QPolygonF([r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]),
+                                        QtGui.QPolygonF(quad), t)
+            p.setTransform(t * QtGui.QTransform.fromScale(self.u, self.u))
+            # one line, two lines, or running off the paper (paper_layout)
+            font100 = _font(100, BOLD)
+            key = (self.name, font100.family())   # again when the font setting changes
+            if self._paper_for != key:
+                fm = QtGui.QFontMetricsF(font100)
+                self._paper, self._paper_for = paper_layout(self.name, fm.horizontalAdvance), key
+            lines, size = self._paper
+            p.setFont(_font(int(size), BOLD))
+            p.setPen(QtGui.QColor(25, 25, 30))
+            step = size * 1.1
+            for k, line in enumerate(lines):
+                cy = r.height() / 2 + (k - (len(lines) - 1) / 2) * step
+                p.drawText(QtCore.QRectF(-2000, cy - size, 4200, 2 * size), QtCore.Qt.AlignmentFlag.AlignCenter, line)
 
 
 class HudWindow(QtWidgets.QWidget):
     # New offset_x, offset_y (reference px) while the user drags the stats;
     # finished=True on release (the settings window saves then).
     offset_dragged = QtCore.pyqtSignal(str, int, int, bool)
+    part_resized = QtCore.pyqtSignal(str, float)   # the wheel resized a part while positioning (part, size)
+    match_screen_changed = QtCore.pyqtSignal(bool)  # the game went to / left the match screen
     language_changed = QtCore.pyqtSignal(str)
 
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
         self.edit_mode = False
+        self._last_match_screen = None   # see match_screen_changed
         self._drag = None
         # Never takes the keyboard focus, not even when shown: the game pauses
         # itself when it loses focus (user report: a window flashed, the game
@@ -1478,6 +1784,15 @@ class HudWindow(QtWidgets.QWidget):
         self.versus = VersusBlock(self)
         self.summary = SummaryBlock(self)
         self.badges = {sd: OpenerBadge(self, sd) for sd in ("left", "right", "both")}
+        self.cats = {sd: CatPopup(self, sd) for sd in ("left", "right")}
+        for c in self.cats.values():
+            c.setVisible(False)
+        self._cat = None   # the clip, loaded the first time it's shown
+        # each cat runs on this PC's clock from when it started: the age the
+        # server sends 10 times a second jitters by a few hundredths of a
+        # second, and following it made the cat stutter (user: not smooth)
+        self._cat_start = {"left": None, "right": None}
+        self._cat_name = {"left": None, "right": None}
         self.events = {"left": EventBlock(self, "left"), "right": EventBlock(self, "right")}
         self.clock = ClockBlock(self)
         self.edit_hint = QtWidgets.QLabel(
@@ -1493,6 +1808,7 @@ class HudWindow(QtWidgets.QWidget):
         self._state_t = time.monotonic()   # when _last_state arrived (opener fade timing)
         self._fade = QtCore.QTimer(self)   # repaints the opener names while they're up
         self._fade.setInterval(16)
+        self._fade.setTimerType(QtCore.Qt.TimerType.PreciseTimer)   # an even 60 a second (the cat's walk)
         self._fade.timeout.connect(self._place_openers)
         self._last_server_display = None
         self._local_until = 0.0
@@ -1539,7 +1855,8 @@ class HudWindow(QtWidgets.QWidget):
         set_text_style(d["text_weight"], d["text_outline"])
         set_colors(d["bg_color"], d["text_color"], d["line_color"])
         set_font(d["font_family"], d["font_file"])
-        set_labels(d["labels"])
+        set_labels(d["labels"], d["language"])
+        self.set_drag_targets()
         set_player_colors(d["player_color_left"], d["player_color_right"])
 
         def pu(part):   # this part's size (its own, or the overall one)
@@ -1560,6 +1877,7 @@ class HudWindow(QtWidgets.QWidget):
             if shown and d["style"] != "versus":
                 stat.configure(d["style"], mode, shown, pu("stats"))
             ev.language = d["language"]
+            ev.opener_language = opener_language(d)
             ev.configure(d["style"], mode, d["event_log_count"], pu("events"))
         look(self.versus, "stats")
         if shown and d["style"] == "versus":
@@ -1567,18 +1885,38 @@ class HudWindow(QtWidgets.QWidget):
         look(self.clock, "clock")
         self.clock.configure(d["style"], pu("clock"))
         look(self.summary, "summary")
+        self.summary.opener_language = opener_language(d)
         self.summary.configure(d["style"], d["language"], pu("summary"), d["summary_items"])
         for badge in self.badges.values():
             look(badge, "opener")
-            badge.configure(d["opener_display"], d["style"], d["language"], pu("opener"))
+            # (with the cat the boxes aren't used: kept set up as the big one)
+            badge.configure("board" if d["opener_display"] == "cat" else d["opener_display"], d["style"],
+                            d["language"], pu("opener"))
+        if d["opener_display"] == "cat" and d["show_opener"]:
+            # ready the cat's frames at this size now, not while it's walking
+            QtCore.QTimer.singleShot(0, self._prepare_cats)
         self._place()
+
+    def _prepare_cats(self):
+        if self._cat is None:
+            self._cat = load_cat() or False
+        if self._cat:
+            u = self._scale * CAT_SCALE * part_value(self.display, "opener", "scale")
+            for c in self.cats.values():
+                c.prepare(self._cat, u)
 
     def _away_from_match(self):
         """Nothing is shown off the match screen (home, menus, character
         select) unless display.always_show — or while positioning parts.
         With no word from the server yet, it shows as before."""
-        return (not self.display["always_show"] and not self.edit_mode
+        if not self.display["enabled"]:   # switched off (settings window / tray)
+            return True
+        return (not self.display["always_show"] and not self.display["force_show"] and not self.edit_mode
                 and self._last_state.get("match_screen") is False)
+
+    def off_match_screen(self):
+        """The server says the match screen isn't showing (home, menus)."""
+        return self._last_state.get("match_screen") is False
 
     def _place(self):
         """Positions everything whose size depends on content: the stat blocks
@@ -1587,7 +1925,7 @@ class HudWindow(QtWidgets.QWidget):
         s, d = self._scale, self.display
         away = self._away_from_match()
         for w in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
-                  *self.badges.values()):
+                  *self.badges.values(), *self.cats.values()):
             if away:
                 w.setVisible(False)
         if away:
@@ -1600,10 +1938,12 @@ class HudWindow(QtWidgets.QWidget):
         shown = any_stat and not versus
         for side in ("left", "right"):
             stat, ev = self.stats[side], self.events[side]
-            anchor_x = (STAT_ANCHOR_X[mode][side] + d["offset_x"]) * s
+            other = self._last_state.get("right" if side == "left" else "left") or {}
+            vs_puyo = VS_PUYO_SHIFT_X[mode] if other.get("puyo") else 0   # (really Puyo, not just hidden)
+            anchor_x = (STAT_ANCHOR_X[mode][side] + vs_puyo + d["offset_x"] + d[f"stats_{side}_offset_x"]) * s
             if d["style"] in NEW_STYLES:   # a little room from the board (see NEW_STYLE_GAP)
                 anchor_x += NEW_STYLE_GAP * u * (-1 if mode == "left" else 1)
-            bottom = (STAT_BOTTOM_Y + d["offset_y"]) * s
+            bottom = (STAT_BOTTOM_Y + d["offset_y"] + d[f"stats_{side}_offset_y"]) * s
             # a side playing Puyo shows nothing (still shown while positioning)
             puyo = is_puyo(self._last_state.get(side)) and not self.edit_mode
             stat.setVisible(shown and not puyo)
@@ -1684,6 +2024,10 @@ class HudWindow(QtWidgets.QWidget):
                 self.apply_display(display_settings({"display": server_display}))
         # 1P / 2P only (display.players): the other side shows nothing
         self._last_state = state = mark_hidden_sides(state, self.display["players"])
+        screen = state.get("match_screen")
+        if screen != self._last_match_screen:
+            self._last_match_screen = screen
+            self.match_screen_changed.emit(screen is not False)
         ui = UI_TEXT[self.display["language"]]
         if state.get("frozen"):
             text = ui["frozen"]
@@ -1719,10 +2063,23 @@ class HudWindow(QtWidgets.QWidget):
         s, d, st = self._scale, self.display, self._last_state
         since = time.monotonic() - self._state_t
         omode = d["opener_display"]
-        names = {sd: None if is_puyo(st.get(sd)) else (st.get(sd) or {}).get("opener") for sd in ("left", "right")}
+        key = "opener_en" if opener_language(d) == "en" else "opener"   # display.opener_language
+        names = {sd: None if is_puyo(st.get(sd)) else ((st.get(sd) or {}).get(key) or (st.get(sd) or {}).get("opener"))
+                 for sd in ("left", "right")}
         alphas = {sd: popup_alpha(st.get(sd), st.get("frozen"), since, d["opener_seconds"]) if names[sd] else 0.0
                   for sd in ("left", "right")}
+        if self.edit_mode and d["show_opener"]:   # positioning: a sample name on both sides, to drag
+            sample = UI_TEXT[d["language"]]["opener_sample"]
+            names = {sd: names[sd] or sample for sd in names}
+            alphas = {sd: 1.0 for sd in alphas}
         shown = {}
+        if d["show_opener"] and omode == "cat":
+            self._place_cats(names, st, since)
+            for badge in self.badges.values():
+                badge.setVisible(False)
+            return
+        for c in self.cats.values():
+            c.setVisible(False)
         if d["show_opener"] and omode == "top":
             # one box for both: up while either name is still within its few seconds
             if max(alphas.values()) > 0:
@@ -1744,10 +2101,49 @@ class HudWindow(QtWidgets.QWidget):
             else:                     # namebar: at the end of the bar away from the avatar
                 x = (NAMEBAR_RIGHT_X * s - badge.width()) if key == "left" else NAMEBAR_LEFT_X * s
                 y = NAMEBAR_TOP_Y * s
-            badge.move(int(x), int(y))
+            dx, dy = opener_offset(d, key)
+            badge.move(int(x + dx * s), int(y + dy * s))
         if shown and not self._fade.isActive():
             self._fade.start()
         elif not shown:
+            self._fade.stop()
+
+    def _place_cats(self, names, st, since):
+        """display.opener_display = "cat": each player's cat, at its frame."""
+        if self._cat is None:
+            self._cat = load_cat() or False
+        any_up = False
+        now = time.monotonic()
+        for sd, cat_w in self.cats.items():
+            age = (st.get(sd) or {}).get("opener_age_s")
+            pos = None
+            if self._cat and self.edit_mode:   # positioning: the cat holding the paper up, to drag
+                mid = (self._cat.get("still_start", self._cat["hold_start"]) + self._cat.get("still_end", self._cat["hold_end"])) // 2
+                pos = (mid, mid, 0.0)
+            elif self._cat and names[sd] and age is not None and not st.get("frozen"):
+                server_age = age + since
+                start = self._cat_start[sd]
+                # a new opener, or this PC's clock and the server's drifted apart: start over from the server's age
+                if start is None or self._cat_name[sd] != names[sd] or abs((now - start) - server_age) > 0.35:
+                    self._cat_start[sd], self._cat_name[sd] = now - server_age, names[sd]
+                pos = cat_pos(self._cat, now - self._cat_start[sd], self.display["opener_seconds"])
+            if pos is None:
+                cat_w.setVisible(False)
+                self._cat_start[sd] = None
+                continue
+            u = self._scale * CAT_SCALE * part_value(self.display, "opener", "scale")
+            cat_w.show_frame(self._cat, pos, names[sd], u)
+            w, h = self._cat["size"][0] * u, self._cat["size"][1] * u
+            x = 0 if sd == "left" else REFERENCE_W * self._scale - w   # in from the screen's own edge
+            dx, dy = opener_offset(self.display, sd)
+            s = self._scale
+            cat_w.move(int(x + dx * s), int(CAT_BOTTOM_Y * s - h + dy * s))
+            cat_w.setVisible(True)
+            cat_w.raise_()
+            any_up = True
+        if any_up and not self._fade.isActive():
+            self._fade.start()
+        elif not any_up:
             self._fade.stop()
 
     def _summary_ready(self):
@@ -1765,7 +2161,10 @@ class HudWindow(QtWidgets.QWidget):
             return
         self.edit_mode = on
         self._drag = None
-        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary):
+        for c in self.cats.values():
+            c.set_editing(on)
+        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
+                     *self.badges.values()):
             band.editing = on
             band.setCursor(QtCore.Qt.CursorShape.SizeAllCursor if on else QtCore.Qt.CursorShape.ArrowCursor)
             band.update()
@@ -1798,6 +2197,29 @@ class HudWindow(QtWidgets.QWidget):
         self.apply_display(display, local=True)
         self.offset_dragged.emit(target, display[kx], display[ky], False)
 
+    def wheel_resize(self, target, delta):
+        """The wheel over a part while positioning: that part's size, a step a
+        notch (user: change the size easily on the game screen too)."""
+        if not delta:
+            return
+        part = TARGET_PART[target]
+        lo, hi = DISPLAY_RANGES["scale"]
+        size = part_value(self.display, part, "scale") + WHEEL_SCALE_STEP * (1 if delta > 0 else -1)
+        size = round(min(max(size, lo), hi), 2)
+        parts = {p: dict(v) for p, v in self.display["parts"].items()}
+        parts.setdefault(part, {})["scale"] = size
+        self.apply_display(display_settings({"display": {**self.display, "parts": parts}}), local=True)
+        self.part_resized.emit(part, size)
+
+    def set_drag_targets(self):
+        """display.drag_each_side: dragging moves just that player's numbers /
+        opener name, else both players' together."""
+        each = self.display["drag_each_side"]
+        for side, stat in self.stats.items():
+            stat.drag_target = f"stats_{side}" if each else "stats"
+        for side, w in (*self.badges.items(), *self.cats.items()):
+            w.drag_target = f"opener_{side}" if each and side in ("left", "right") else "opener"
+
     def drag_end(self):
         if self._drag is not None:
             target = self._drag[1]
@@ -1822,20 +2244,75 @@ class HudWindow(QtWidgets.QWidget):
         ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), WDA_EXCLUDEFROMCAPTURE)
 
 
-def make_tray_icon():
-    """A small generic icon drawn in code (no image file to ship)."""
-    pm = QtGui.QPixmap(32, 32)
-    pm.fill(QtCore.Qt.GlobalColor.transparent)
-    p = QtGui.QPainter(pm)
+# The app's icon (user's pick from the drafts): a T piece at the lower left
+# and a bar chart (1P blue / white / 2P red) at the upper right, on a dark
+# rounded tile. Sizes are shares of the icon's side. Also written to
+# assets/app.ico by tools/make_icon.py (the desktop shortcut's icon).
+ICON_TILE = "#151a2e"
+ICON_BARS = (("#ffffff", 0.324), ("#3b8eea", 0.567), ("#e5484d", 0.4455))   # color, height (white, blue, red: user's pick)
+ICON_BAR_W, ICON_BAR_GAP, ICON_BAR_RIGHT, ICON_BAR_BOTTOM = 0.162, 0.04725, 0.92, 0.647
+ICON_T = "#a855f7"
+ICON_T_CELL, ICON_T_GAP, ICON_T_X, ICON_T_Y = 0.18, 0.015, 0.08, 0.545
+ICON_OFF = {"#3b8eea": "#52525b", "#ffffff": "#71717a", "#e5484d": "#52525b", "#a855f7": "#71717a"}   # switched off
+
+
+def draw_app_icon(p, size, enabled=True):
+    """Paints the icon into a size x size square (greyed out while off)."""
+    col = (lambda c: QtGui.QColor(c)) if enabled else (lambda c: QtGui.QColor(ICON_OFF.get(c, c)))
+    s = float(size)
     p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-    p.setBrush(QtGui.QColor(*BAND_RGB))
     p.setPen(QtCore.Qt.PenStyle.NoPen)
-    p.drawRoundedRect(0, 0, 32, 32, 6, 6)
-    for i, (x, hgt, color) in enumerate(((5, 12, "#60a5fa"), (14, 20, "#ffffff"), (23, 16, "#f87171"))):
-        p.setBrush(QtGui.QColor(color))
-        p.drawRect(x, 27 - hgt, 5, hgt)
+    p.setBrush(QtGui.QColor(ICON_TILE))
+    p.drawRoundedRect(QtCore.QRectF(0, 0, s, s), s * 0.22, s * 0.22)
+    x = ICON_BAR_RIGHT - 3 * ICON_BAR_W - 2 * ICON_BAR_GAP
+    for color, h in ICON_BARS:
+        p.setBrush(col(color))
+        p.drawRoundedRect(QtCore.QRectF(s * x, s * (ICON_BAR_BOTTOM - h), s * ICON_BAR_W, s * h), s * 0.035, s * 0.035)
+        x += ICON_BAR_W + ICON_BAR_GAP
+    u, g = ICON_T_CELL, ICON_T_GAP
+    cells = [(0, 0), (1, 0), (2, 0), (1, 1)]
+    for rim, grow, r in ((True, 0.02, 0.25), (False, 0.0, 0.18)):   # a dark rim, then the cells
+        p.setBrush(QtGui.QColor(ICON_TILE) if rim else col(ICON_T))
+        for cx, cy in cells:
+            rect = QtCore.QRectF(s * (ICON_T_X + cx * (u + g) - grow), s * (ICON_T_Y + cy * (u + g) - grow),
+                                 s * (u + 2 * grow), s * (u + 2 * grow))
+            p.drawRoundedRect(rect, s * u * r, s * u * r)
+
+
+def icon_image(size, enabled=True):
+    img = QtGui.QImage(size, size, QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    p = QtGui.QPainter(img)
+    draw_app_icon(p, size, enabled)
     p.end()
-    return QtGui.QIcon(pm)
+    return img
+
+
+def make_tray_icon(enabled=True):
+    """The app icon at the sizes Windows asks for (tray, title bars, taskbar),
+    each drawn at its own size so the small ones stay sharp."""
+    icon = QtGui.QIcon()
+    for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+        icon.addPixmap(QtGui.QPixmap.fromImage(icon_image(size, enabled)))
+    return icon
+
+
+# One copy at a time: starting it again (the desktop shortcut while it's
+# already running) just opens the running copy's settings window, instead of
+# a second HUD on top of the first.
+INSTANCE_KEY = "PPTetrics-hud"
+
+
+def already_running():
+    """True if another copy is running (and has been asked to show its settings)."""
+    sock = QtNetwork.QLocalSocket()
+    sock.connectToServer(INSTANCE_KEY)
+    if sock.waitForConnected(300):
+        sock.write(b"show")
+        sock.waitForBytesWritten(300)
+        sock.disconnectFromServer()
+        return True
+    return False
 
 
 def main():
@@ -1843,6 +2320,12 @@ def main():
 
     settings = load_settings()
     app = QtWidgets.QApplication(sys.argv)
+    app.setWindowIcon(make_tray_icon())   # the settings window's title bar and taskbar button
+    if already_running():
+        sys.exit(0)
+    QtNetwork.QLocalServer.removeServer(INSTANCE_KEY)   # left over from a copy that didn't close cleanly
+    instance = QtNetwork.QLocalServer(app)
+    instance.listen(INSTANCE_KEY)
     app.setQuitOnLastWindowClosed(False)  # closing the settings window keeps the HUD
     win = HudWindow(settings)
     if settings["hud"]["visible"]:
@@ -1857,16 +2340,36 @@ def main():
     settings_win.display_changed.connect(lambda d: win.apply_display(d, local=True))
     settings_win.edit_mode_changed.connect(win.set_edit_mode)
     win.offset_dragged.connect(settings_win.set_offset_from_hud)
+    win.part_resized.connect(settings_win.set_part_scale_from_hud)
+    win.match_screen_changed.connect(settings_win.set_match_screen)
 
     tray = QtWidgets.QSystemTrayIcon(make_tray_icon(), app)
-    tray.setToolTip("PPT2 Stats Overlay")
+    tray.setToolTip("PPTetrics")
     menu = QtWidgets.QMenu()
+    # the on/off switch, first in the menu (also at the top of the settings window)
+    act_enabled = menu.addAction("")
+    act_enabled.setCheckable(True)
+    act_enabled.setChecked(win.display["enabled"])
+    act_enabled.toggled.connect(settings_win.set_enabled)
+    menu.addSeparator()
     act_settings = menu.addAction("", settings_win.open)
     menu.addSeparator()
     act_quit = menu.addAction("", app.quit)
     tray.setContextMenu(menu)
 
+    def show_enabled(d):
+        on = d["enabled"]
+        if act_enabled.isChecked() != on:
+            act_enabled.blockSignals(True)
+            act_enabled.setChecked(on)
+            act_enabled.blockSignals(False)
+        tray.setIcon(make_tray_icon(on))
+        tray.setToolTip("PPTetrics" + ("" if on else ("（オフ）" if d["language"] != "en" else " (off)")))
+    settings_win.display_changed.connect(show_enabled)
+    show_enabled(win.display)
+
     def tray_language(lang):
+        act_enabled.setText("Show the overlay" if lang == "en" else "表示する（オン／オフ）")
         act_settings.setText("Display settings…" if lang == "en" else "表示設定…")
         act_quit.setText("Quit" if lang == "en" else "終了")
     tray_language(win.display["language"])
@@ -1878,11 +2381,13 @@ def main():
     # doesn't take the focus; clicking it opens the settings on the update tab.
     def update_found(info):
         ja = win.display["language"] != "en"
-        tray.showMessage("PPT2 Stats Overlay",
+        tray.showMessage("PPTetrics",
                          f"新しい版 v{info['version']} があります。ここをクリックして更新できます。" if ja else
                          f"Version v{info['version']} is available. Click here to update.",
                          QtWidgets.QSystemTrayIcon.MessageIcon.Information, 10000)
     settings_win.update_available.connect(update_found)
+    # started again while running: open the settings (the person clicked the shortcut)
+    instance.newConnection.connect(lambda: (instance.nextPendingConnection(), settings_win.open()))
     tray.messageClicked.connect(lambda: settings_win.show_update_tab() if settings_win._update_info else None)
     if settings.get("update", {}).get("check_on_start", True):
         settings_win.check_for_update(silent=True)
@@ -1895,7 +2400,7 @@ def main():
     game_running = HAS_WIN32 and find_game_hwnd() is not None
     if game_running:
         ja = win.display["language"] != "en"
-        tray.showMessage("PPT2 Stats Overlay",
+        tray.showMessage("PPTetrics",
                          "起動しました。設定はタスクバー右下のアイコンから開けます。" if ja else
                          "Running. Open the settings from the tray icon (bottom right of the taskbar).",
                          QtWidgets.QSystemTrayIcon.MessageIcon.Information, 5000)

@@ -56,13 +56,13 @@ def test_english_text_is_built_alongside_japanese():
     ev = {"clear_type": "tspin_double", "btb": True, "ren_count": 2, "ren_source": "estimated"}
     e = format_event_log_entry(10.0, ev, 6)
     assert e["text"] == "T-SPIN Double +6段 BtB 2REN"
-    assert e["text_en"] == "T-SPIN Double +6 BtB 2REN"
+    assert e["text_en"] == "T-SPIN Double +6 BtB 2 Combo"   # the English game says "Combo"
     e = format_event_log_entry(10.0, {"clear_type": "clear_2", "btb": False, "ren_count": 0,
                                       "ren_source": "flash_confirmed"}, 1)
     assert e["text_en"] == "Double +1"
     pc = format_event_log_entry(10.0, {**ev, "clear_type": "clear_4", "perfect_clear": True}, 10)
     assert pc["text_en"] == "PERFECT CLEAR (TETRIS) +10"
-    assert format_ren_break_entry(5.0)["text_en"] == "REN ended (no clear)"
+    assert format_ren_break_entry(5.0)["text_en"] == "Combo ended (no clear)"
 
 
 def test_capture_messages_have_english():
