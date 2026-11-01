@@ -15,6 +15,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from image_io import read_image, write_image
 
 from attack_calc import load_table, AttackStreakTracker, is_b2b_eligible
 from capture_profile import CaptureProfile, compute_profile, scale_box, scale_template, REFERENCE_PROFILE
@@ -210,12 +211,12 @@ def load_templates():
     out = {}
     for label, cfg in TEMPLATES.items():
         path = SCRIPTS_DIR / cfg["file"]
-        img = cv2.imread(str(path))
+        img = read_image(path)
         if img is None:
             raise FileNotFoundError(f"template image for '{label}' not found or unreadable: {path}")
         if "file_right" in cfg:
             path_right = SCRIPTS_DIR / cfg["file_right"]
-            img_right = cv2.imread(str(path_right))
+            img_right = read_image(path_right)
             if img_right is None:
                 raise FileNotFoundError(f"template image for '{label}' (right) not found or unreadable: {path_right}")
         else:
@@ -342,7 +343,7 @@ class BannerTracker:
                 import os
                 os.makedirs(self.debug_dump_dir, exist_ok=True)
                 fname = f"{self.side}_t{t:.2f}_" + "_".join(f"{l}{s:.2f}" for l, s in hits.items()) + ".png"
-                cv2.imwrite(os.path.join(self.debug_dump_dir, fname), frame)
+                write_image(os.path.join(self.debug_dump_dir, fname), frame)
                 self._last_dump_hits = hits
             self._debug_dump_cooldown_until = t + 1.0  # avoid dumping every frame of the same event
 
@@ -505,7 +506,7 @@ def run_on_frames(frame_glob, fps, side):
     files = sorted(glob.glob(frame_glob))
     tracker = BannerTracker(side, templates)
     for i, f in enumerate(files):
-        img = cv2.imread(f)
+        img = read_image(f)
         tracker.update(img, i / fps)
     tracker.finalize(len(files) / fps)
     return tracker

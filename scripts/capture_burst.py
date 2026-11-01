@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from live_capture import GameWindowCapture
+from image_io import write_image
 
 FRAMES_DIR = Path(__file__).resolve().parent.parent / "debug_frames"
 
@@ -24,7 +25,7 @@ def main():
         frame, ok, reason, profile = cap.grab()
         if ok:
             t = time.monotonic() - start
-            cv2.imwrite(str(OUT_DIR / f"f_{i:04d}_t{t:.2f}.png"), frame)
+            write_image(OUT_DIR / f"f_{i:04d}_t{t:.2f}.png", frame)
             i += 1
         time.sleep(0.1)  # ~10fps
     print(f"saved {i} frames to {OUT_DIR}")

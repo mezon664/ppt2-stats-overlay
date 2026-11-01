@@ -23,6 +23,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from image_io import read_image
 
 from capture_profile import scale_box, scale_template, REFERENCE_PROFILE
 
@@ -92,9 +93,9 @@ class MatchBoundaryDetector:
         # passed inline can be garbage-collected and have its id() reused by the
         # NEXT cv2.imread() call, silently handing back the WRONG cached resize
         # (confirmed: this made self.yatta_tmpl end up holding the GO! image).
-        self._yatta_tmpl_raw = cv2.imread(str(YATTA_FILE))
+        self._yatta_tmpl_raw = read_image(YATTA_FILE)
         self.yatta_tmpl = scale_template(self._yatta_tmpl_raw, self.profile)
-        self._yeah_tmpl_raw = cv2.imread(str(YEAH_FILE))
+        self._yeah_tmpl_raw = read_image(YEAH_FILE)
         self.yeah_tmpl = scale_template(self._yeah_tmpl_raw, self.profile)
         self.go_region = scale_box(GO_REGION, self.profile)
         self.yatta_window_left = scale_box(YATTA_WINDOW_LEFT, self.profile)

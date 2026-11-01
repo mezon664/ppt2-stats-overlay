@@ -1,6 +1,7 @@
 import sys
 import glob
 import cv2
+from image_io import read_image
 from board_read import read_board, LEFT_BOX, RIGHT_BOX
 from board_tracker import BoardTracker
 
@@ -12,7 +13,7 @@ def main():
     tracker = BoardTracker(side)
 
     for i, f in enumerate(files):
-        img = cv2.imread(f)
+        img = read_image(f)
         t = i / fps
         raw = read_board(img, box)
         tracker.update(raw, t)

@@ -10,6 +10,9 @@ import argparse
 import asyncio
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+import os
+import socketserver
 import threading
 import time
 from pathlib import Path
@@ -26,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_pipeline import MatchPipeline, VideoReplaySource  # noqa: E402
 from config_store import load_settings, display_settings, CONFIG_PATH
 from i18n import capture_message_en
+from server_control import handle_control_message
 
 # Changes when the OBS page's files change (an update, a new cat clip): the
 # page reloads itself when it sees a different value (obs/overlay.html).
@@ -33,7 +37,12 @@ _PAGE_FILES = ("obs/overlay.html", "assets/cat/cat.js")
 _ROOT = Path(__file__).resolve().parent.parent
 PAGE_REV = "-".join(str(int((_ROOT / f).stat().st_mtime)) if (_ROOT / f).exists() else "0" for f in _PAGE_FILES)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+_server_log_handler = RotatingFileHandler(
+    _LOG_DIR / "server.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                    handlers=[_server_log_handler])
 log = logging.getLogger("data_server")
 
 CLIENTS = set()
@@ -81,32 +90,77 @@ def capture_loop_video(path, speed, realtime):
         CAPTURE_STATUS = {"ok": False, "message": f"error: {e}"}
 
 
-def capture_loop_live(fps_target=15):
+def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     """Live game-window capture. See live_capture.py for the window-finding /
     minimized-window handling; kept separate so this module stays testable without
     a running game."""
     global CAPTURE_STATUS
     from live_capture import GameWindowCapture
-    cap = GameWindowCapture()
+    make_capture = capture_factory or GameWindowCapture
+    cap = None
     period = 1.0 / fps_target
     t0 = time.monotonic()
-    while True:
+    consecutive_errors = 0
+    last_error = None
+    last_error_log_t = 0.0
+    while stop_event is None or not stop_event.is_set():
         loop_start = time.monotonic()
-        frame, ok, reason, profile = cap.grab()
-        if ok:
-            PIPELINE.rebuild_for_profile(profile)
+        try:
+            if cap is None:
+                cap = make_capture()
+            frame, ok, reason, profile = cap.grab()
+            if ok:
+                PIPELINE.rebuild_for_profile(profile)
+                PIPELINE.process_frame(frame, time.monotonic() - t0)
+                CAPTURE_STATUS = {
+                    "ok": True, "message": "capturing",
+                    "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),
+                }
+                consecutive_errors = 0
+                last_error = None
+            elif reason is None:
+                pass  # window size still settling; keep the last useful status
+            else:
+                CAPTURE_STATUS = {"ok": False, "message": reason, "message_en": capture_message_en(reason)}
+                if reason.startswith("キャプチャに失敗しました"):
+                    close = getattr(cap, "close", None)
+                    if close:
+                        close()
+                    cap = None  # recreate the capture backend before retrying
+        except Exception as e:
+            consecutive_errors += 1
             CAPTURE_STATUS = {
-                "ok": True, "message": "capturing",
-                "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),
+                "ok": False,
+                "message": f"認識処理でエラーが発生しました: {type(e).__name__}",
+                "message_en": f"Capture/recognition error ({type(e).__name__}); retrying",
             }
-            PIPELINE.process_frame(frame, time.monotonic() - t0)
-        elif reason is None:
-            pass  # window size still settling (live_capture.SizeSettler): keep the last status
-        else:
-            CAPTURE_STATUS = {"ok": False, "message": reason, "message_en": capture_message_en(reason)}
+            error_key = (type(e).__name__, str(e))
+            now = time.monotonic()
+            if error_key != last_error or now - last_error_log_t >= 30:
+                log.exception("live capture/recognition iteration failed; retrying")
+                last_error, last_error_log_t = error_key, now
+            close = getattr(cap, "close", None) if cap is not None else None
+            if close:
+                try:
+                    close()
+                except Exception:
+                    log.debug("failed to close capture backend after error", exc_info=True)
+            cap = None
+            retry_delay = min(period * (2 ** min(consecutive_errors - 1, 6)), 5.0)
+            if stop_event is not None and stop_event.wait(retry_delay):
+                break
+            if stop_event is None:
+                time.sleep(retry_delay)
+            continue
         elapsed = time.monotonic() - loop_start
         if elapsed < period:
-            time.sleep(period - elapsed)
+            if stop_event is not None:
+                stop_event.wait(period - elapsed)
+            else:
+                time.sleep(period - elapsed)
+    close = getattr(cap, "close", None) if cap is not None else None
+    if close:
+        close()
 
 
 def _debug_tspin_peak(side_pipeline, window_s=3.0):
@@ -183,10 +237,69 @@ async def handler(websocket):
         log.info("client disconnected (%d total)", len(CLIENTS))
 
 
-async def main_async(host, port):
+class _ControlServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = False
+    daemon_threads = True
+
+
+def _start_control_server(host, port, instance_id, control_token, loop, stop_event):
+    class ControlHandler(socketserver.StreamRequestHandler):
+        def setup(self):
+            self.request.settimeout(2.0)
+            super().setup()
+
+        def handle(self):
+            try:
+                raw = self.rfile.readline(16385)
+                if len(raw) > 16384:
+                    return
+                request = json.loads(raw.decode("utf-8"))
+                response, stop_after_response = handle_control_message(
+                    request, instance_id, control_token, os.getpid())
+                if stop_after_response:
+                    log.info("shutdown request accepted instance_id=%s", instance_id)
+                elif request.get("command") == "shutdown":
+                    log.warning("shutdown request rejected instance_id=%s", instance_id)
+                self.wfile.write((json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8"))
+                self.wfile.flush()
+                if stop_after_response:
+                    loop.call_soon_threadsafe(stop_event.set)
+            except Exception:
+                log.exception("control request failed instance_id=%s", instance_id)
+
+    server = _ControlServer((host, port), ControlHandler)
+    thread = threading.Thread(target=server.serve_forever, name="pptetrics-control", daemon=True)
+    thread.start()
+    return server
+
+
+async def main_async(host, port, control_host=None, control_port=None, instance_id=None, control_token=None):
     async with websockets.serve(handler, host, port):
         log.info("serving ws://%s:%d", host, port)
-        await broadcaster()
+        if instance_id:
+            loop = asyncio.get_running_loop()
+            stop_event = asyncio.Event()
+            control_server = _start_control_server(
+                control_host or "127.0.0.1", control_port, instance_id, control_token, loop, stop_event)
+            task = asyncio.create_task(broadcaster())
+            log.info("server ready instance_id=%s pid=%d control_port=%d", instance_id, os.getpid(), control_port)
+            try:
+                stop_task = asyncio.create_task(stop_event.wait())
+                done, pending = await asyncio.wait(
+                    (task, stop_task), return_when=asyncio.FIRST_COMPLETED)
+                if task in done:
+                    task.result()  # propagate broadcaster failures as before
+            finally:
+                for pending_task in (task, locals().get("stop_task")):
+                    if pending_task is not None and not pending_task.done():
+                        pending_task.cancel()
+                await asyncio.gather(task, locals().get("stop_task"), return_exceptions=True)
+                control_server.shutdown()
+                control_server.server_close()
+                log.info("server stopped instance_id=%s", instance_id)
+        else:
+            # Backward-compatible standalone invocation without launcher control.
+            await broadcaster()
 
 
 def main():
@@ -197,6 +310,10 @@ def main():
     parser.add_argument("--realtime", type=lambda s: s != "false", default=True)
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--control-host", default=None)
+    parser.add_argument("--control-port", type=int, default=None)
+    parser.add_argument("--instance-id", default=None)
+    parser.add_argument("--control-token", default=None)
     args = parser.parse_args()
 
     settings = load_settings()
@@ -211,7 +328,14 @@ def main():
         t = threading.Thread(target=capture_loop_live, daemon=True)
     t.start()
 
-    asyncio.run(main_async(host, port))
+    if bool(args.instance_id) != bool(args.control_token) or (args.instance_id and not args.control_port):
+        parser.error("--instance-id, --control-token and --control-port must be supplied together")
+    try:
+        asyncio.run(main_async(host, port, args.control_host, args.control_port,
+                               args.instance_id, args.control_token))
+    except OSError:
+        log.exception("server failed to bind ws://%s:%d", host, port)
+        raise
 
 
 if __name__ == "__main__":

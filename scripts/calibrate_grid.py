@@ -7,6 +7,7 @@ cell boundaries in the saved output image.
 """
 import sys
 import cv2
+from image_io import read_image, write_image
 
 COLS, ROWS = 10, 20
 
@@ -34,10 +35,10 @@ def draw_grid(img, box, color):
 
 def main():
     src, dst = sys.argv[1], sys.argv[2]
-    img = cv2.imread(src)
+    img = read_image(src)
     draw_grid(img, LEFT_BOX, (0, 255, 0))
     draw_grid(img, RIGHT_BOX, (0, 255, 255))
-    cv2.imwrite(dst, img)
+    write_image(dst, img)
     print(f"wrote {dst}")
 
 

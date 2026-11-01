@@ -107,6 +107,10 @@ class GameWindowCapture:
         self.hwnd = None
         self._sizes = SizeSettler()
 
+    def close(self):
+        """Release the screen-capture handle before rebuilding after an error."""
+        self.sct.close()
+
     def grab(self):
         """Returns (frame_bgr_or_None, ok, reason, profile_or_None).
 

@@ -186,6 +186,8 @@ PART_KEYS = {"scale": "scale", "background_opacity": "background_opacity",
              "bg_color": "bg_color", "text_color": "text_color", "line_color": "line_color"}   # what a part may override
 
 DEFAULTS = {
+    # Settings-window behavior (kept separate from display values).
+    "ui": {"settings_on_top": False},
     "server": {"host": "127.0.0.1", "port": 8765, "broadcast_hz": 10},
     # APM display: total lines sent / elapsed match minutes, a single number (user's
     # explicit decision — see apm_tracker.overall_apm). windows_s is kept only for

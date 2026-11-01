@@ -4,6 +4,7 @@ Calibrated against samples/overview/frame_010.png (1920x1080, see calibrate_grid
 """
 import cv2
 import numpy as np
+from image_io import read_image
 
 COLS, ROWS = 10, 20
 # Calibrated for samples/PuyoPuyoTetris2 2026-06-07 00-26-52.mp4 (1232x692).
@@ -120,7 +121,7 @@ def board_is_clear(img, box, tolerance=3):
 
 if __name__ == "__main__":
     import sys
-    img = cv2.imread(sys.argv[1])
+    img = read_image(sys.argv[1])
     print("LEFT:")
     print(board_to_str(read_board(img, LEFT_BOX)))
     print("\nRIGHT:")

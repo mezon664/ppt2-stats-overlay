@@ -218,9 +218,10 @@
   /* 1P | label | 2P, each centered in its column; the player columns are
      centered at 20% / 80% of the box like hud/overlay.py SummaryBlock.COL_X
      (60.8 = 2 x (0.2 x 212 - 12 padding)) */
-  .summary .srow { display: grid; grid-template-columns: calc(60.8 * var(--u)) 1fr calc(60.8 * var(--u));
+  .summary .srow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
     align-items: baseline; height: calc(20 * var(--u)); }
-  .summary .slab { font-size: calc(12 * var(--u)); font-weight: var(--fw-semi); color: rgb(var(--soft-rgb)); text-align: center; }
+  .summary .slab { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: rgb(var(--soft-rgb));
+    text-align: center; white-space: nowrap; }
   .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums;
     text-align: center; min-width: 0; }
   .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); }

@@ -73,7 +73,6 @@ USER_FONTS = ROOT / "assets" / "user_fonts"
 OBS_PAGE = ROOT / "obs" / "overlay.html"   # what an OBS browser source loads
 OPENER_DISPLAY_ORDER = ("board", "hold", "namebar", "top", "cat")
 PLAYER_ORDER = ("both", "left", "right")
-OPENER_SECONDS_ORDER = (2, 3, 4, 6, 8, 10, 0)   # 0 = until the match ends
 # "Look" target: everything at once ("all"), or one part (display.parts)
 LOOK_TARGETS = ("all",) + PARTS
 LOOK_KEYS = ("scale", "background_opacity", "bg_color", "text_color", "line_color")
@@ -279,6 +278,12 @@ TEXT = {
              "en": "Changes show on the HUD and in OBS right away and are saved automatically."},
     "reset_all": {"ja": "初期設定に戻す", "en": "Reset to defaults"},
     "close": {"ja": "閉じる", "en": "Close"},
+    "settings_on_top": {"ja": "設定画面を常に最前面に表示", "en": "Keep the settings window on top"},
+    "confirm_title": {"ja": "確認", "en": "Confirm"},
+    "reset_confirm": {"ja": "表示設定を初期設定に戻します。よろしいですか？",
+                       "en": "Reset the display settings to their defaults?"},
+    "delete_confirm": {"ja": "プリセット「{}」を削除します。よろしいですか？",
+                       "en": "Delete the preset “{}”?"},
 }
 
 
@@ -376,7 +381,10 @@ class SettingsWindow(QtWidgets.QWidget):
                                "player_color_right": DISPLAY_DEFAULTS["player_color_right"]}
         self._font_file = ""
         self._font_loaded_family = None
-        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint)
+        self._ui_preferences = load_settings().get("ui", {})
+        self._settings_on_top = bool(self._ui_preferences.get("settings_on_top", False))
+        if self._settings_on_top:
+            self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         # True while controls are being filled in (building, loading a file or
         # preset): their change signals then mustn't count as user edits — that
         # would save the defaults over the user's file before it's even read.
@@ -395,6 +403,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.enabled_button = QtWidgets.QPushButton()
         self.enabled_button.setMinimumHeight(40)
         self.enabled_button.clicked.connect(self._enabled_clicked)
+        self.on_top_check = QtWidgets.QCheckBox()
+        self.on_top_check.setChecked(self._settings_on_top)
+        self.on_top_check.toggled.connect(self._set_settings_on_top)
         self.tabs = QtWidgets.QTabWidget()
         # the look first: it's what people come to change, and the window opens on it
         self.tabs.addTab(self._scrolling(self._build_look_tab()), "")
@@ -423,6 +434,7 @@ class SettingsWindow(QtWidgets.QWidget):
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(self.enabled_button)
+        lay.addWidget(self.on_top_check)
         lay.addWidget(self.tabs)
         lay.addWidget(self.note)
         lay.addLayout(buttons)
@@ -556,10 +568,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self._row(pf, "summary_items", self.summary_items)
         pf.addRow("", self.show_opener)
         self._row(pf, "opener_display", self.opener_display)
-        self.opener_seconds = QtWidgets.QComboBox()
-        for sec in OPENER_SECONDS_ORDER:
-            self.opener_seconds.addItem("", sec)
-        self.opener_seconds.currentIndexChanged.connect(self._changed)
+        self.opener_seconds = QtWidgets.QSpinBox()
+        self.opener_seconds.setRange(0, 30)
+        self.opener_seconds.valueChanged.connect(self._changed)
         self._row(pf, "opener_seconds", self.opener_seconds)
         self.opener_language = QtWidgets.QComboBox()
         for key in OPENER_LANGUAGES:
@@ -967,8 +978,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_clock.setText(t("show_clock"))
         for i, key in enumerate(PLAYER_ORDER):
             self.players.setItemText(i, t("pl." + key))
-        for i, sec in enumerate(OPENER_SECONDS_ORDER):
-            self.opener_seconds.setItemText(i, t("os.forever") if sec == 0 else t("os.seconds").format(sec))
+        self.opener_seconds.setSuffix(" 秒" if self.lang == "ja" else " s")
+        self.opener_seconds.setSpecialValueText(t("os.forever"))
         for i, key in enumerate(OPENER_LANGUAGES):
             self.opener_language.setItemText(i, t("ol." + key))
         self.always_show.setText(t("always_show"))
@@ -1020,6 +1031,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.note.setText(t("note"))
         self.reset_button.setText(t("reset_all"))
         self.close_button.setText(t("close"))
+        self.on_top_check.setText(t("settings_on_top"))
         self._update_offset_label()
         self._show_look()
         self.adjustSize()
@@ -1189,6 +1201,12 @@ class SettingsWindow(QtWidgets.QWidget):
     def _delete_preset(self):
         name = self.preset_box.currentData()
         if not name:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self, self.tr_("confirm_title"), self.tr_("delete_confirm").format(name),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         presets = self._presets()
         presets.pop(name, None)
@@ -1408,11 +1426,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self._paint_enabled()
         self.players.setCurrentIndex(max(0, self.players.findData(d["players"])))
         self.opener_language.setCurrentIndex(max(0, self.opener_language.findData(d["opener_language"])))
-        i = self.opener_seconds.findData(d["opener_seconds"])
-        if i < 0:   # a hand-edited value not in the list: add it so it shows and stays
-            self.opener_seconds.addItem(self.tr_("os.seconds").format(d["opener_seconds"]), d["opener_seconds"])
-            i = self.opener_seconds.count() - 1
-        self.opener_seconds.setCurrentIndex(i)
+        self.opener_seconds.setValue(d["opener_seconds"])
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
         for i in range(self.summary_items.count()):
@@ -1449,7 +1463,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "enabled": self._enabled,
             "force_show": self._enabled and self._force,
             "players": self.players.currentData(),
-            "opener_seconds": self.opener_seconds.currentData(),
+            "opener_seconds": self.opener_seconds.value(),
             "opener_language": self.opener_language.currentData(),
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
@@ -1514,9 +1528,28 @@ class SettingsWindow(QtWidgets.QWidget):
         self._preview_timer.start()
 
     def _reset(self):
+        answer = QtWidgets.QMessageBox.question(
+            self, self.tr_("confirm_title"), self.tr_("reset_confirm"),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
         # keep the chosen language: resetting the display shouldn't switch it
         self._show_values(display_settings({"display": {**DISPLAY_DEFAULTS, "language": self.lang}}))
         self._changed()
+
+    def _set_settings_on_top(self, enabled):
+        self._settings_on_top = bool(enabled)
+        was_visible = self.isVisible()
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, self._settings_on_top)
+        if was_visible:
+            self.show()
+            self.raise_()
+        settings = load_settings()
+        preferences = settings.get("ui", {})
+        preferences["settings_on_top"] = self._settings_on_top
+        settings["ui"] = preferences
+        save_settings(settings)
 
     def _save(self):
         settings = load_settings()  # keep everything else in the file (presets included) as it is

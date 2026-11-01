@@ -12,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 import cv2
+from image_io import write_image
 
 from banner_detect import BannerTracker, load_templates
 from attack_calc import load_table, compute_attack, is_b2b_eligible
@@ -727,6 +728,7 @@ class MatchPipeline:
         # the server on the set-end menu ran the clock with nothing happening.
         self._startup_wait = wait_for_start
         self._play_started_t = None  # when GO! (or the queue fallback) started the current match
+        self._blackout_handled = False
         if wait_for_start:
             self._frozen = True
         self.match_reset_count = 0
@@ -827,6 +829,7 @@ class MatchPipeline:
         self._go_trace.clear()
         self.start_t = clock_start_t
         self._play_started_t = clock_start_t  # None for a reset with no known start
+        self._blackout_handled = False
         self.frame_count = 0
         self.match_reset_count += 1
 
@@ -871,7 +874,7 @@ class MatchPipeline:
         rows = [cv2.hconcat(tiles[i:i + cols]) for i in range(0, len(tiles), cols)]
         os.makedirs(self.debug_dump_dir, exist_ok=True)
         path = os.path.join(self.debug_dump_dir, f"go_miss_t{raw_t:.2f}.png")
-        cv2.imwrite(path, cv2.vconcat(rows))
+        write_image(path, cv2.vconcat(rows))
         log.info("GO! miss frames saved to %s", path)
 
     def _count_queue_advances(self, frame, t):
@@ -1003,23 +1006,27 @@ class MatchPipeline:
         return self._frozen
 
     def _blackout_reset(self):
-        """The screen went black (see BLACK_MEAN): clear every number, the
-        clock and so the summary. Between matches the match-start detection
-        carries on as it was (frozen, waiting for GO!); after leaving a match
-        midway (e.g. quitting from the pause menu) it waits like at startup."""
-        log.info("screen went black — clearing the numbers and the summary")
-        if not self._frozen:
+        """Reset live tracking on black, but preserve a concluded match summary."""
+        was_frozen = self._frozen
+        log.info("screen went black — %s", "preserving the concluded match" if was_frozen
+                 else "clearing in-progress numbers")
+        if not was_frozen:
             self._frozen = True
             self._startup_wait = True
             self._fallback_saw_empty_since_freeze = False
-        self._recreate_pipelines()
-        self.start_t = None
+            self._recreate_pipelines()
+        # A victory banner freezes a valid result. The brief black transition
+        # before the set-end screen must not rebuild its trackers and erase it;
+        # the next confirmed match calls reset_match() and creates fresh ones.
+        self._blackout_handled = True
+        if not was_frozen:
+            self.start_t = None
         self._play_started_t = None
         self.frame_count = 0
         self.match_reset_count += 1
 
     def process_frame(self, frame, t):
-        if self.start_t is not None and \
+        if self.start_t is not None and not self._blackout_handled and \
                 float(cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA).mean()) < BLACK_MEAN:
             self._blackout_reset()
             return
@@ -1061,7 +1068,7 @@ class MatchPipeline:
                 if self.debug_dump_dir and not self._frozen:
                     import os
                     os.makedirs(self.debug_dump_dir, exist_ok=True)
-                    cv2.imwrite(os.path.join(self.debug_dump_dir, f"gate_closed_t{t:.2f}.png"), frame)
+                    write_image(os.path.join(self.debug_dump_dir, f"gate_closed_t{t:.2f}.png"), frame)
             return
         if self._paused:
             self._paused = False

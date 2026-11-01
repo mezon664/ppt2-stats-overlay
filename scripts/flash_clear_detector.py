@@ -46,6 +46,7 @@ into neighboring rows as it blooms, confirmed up to 6 "lit" rows for an
 actual 4-line clear a few frames after the edge).
 """
 import cv2
+from image_io import write_image
 import numpy as np
 
 from capture_profile import scale_box, REFERENCE_PROFILE
@@ -121,7 +122,7 @@ class FlashClearDetector:
             import cv2 as _cv2
             os.makedirs(self.debug_dump_dir, exist_ok=True)
             fname = f"flash_{self.side}_t{t:.2f}_ratio{ratio:.3f}_rows{self.last_edge_row_count}.png"
-            _cv2.imwrite(os.path.join(self.debug_dump_dir, fname), frame)
+            write_image(os.path.join(self.debug_dump_dir, fname), frame)
         return edge
 
     @property

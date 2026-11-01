@@ -6,6 +6,7 @@ Usage: python detect_events.py <frames_glob_dir> <fps> <side: left|right|both>
 import sys
 import glob
 import cv2
+from image_io import read_image
 from board_read import read_board, LEFT_BOX, RIGHT_BOX, EMPTY, GARBAGE, COLS, ROWS
 
 STABLE_FRAMES = 3  # a cell reading must repeat this many consecutive samples to be "confirmed"
@@ -38,7 +39,7 @@ def main():
     events = []
 
     for i, f in enumerate(files):
-        img = cv2.imread(f)
+        img = read_image(f)
         t = i / fps
         raw = read_board(img, box)
         history.append(raw)

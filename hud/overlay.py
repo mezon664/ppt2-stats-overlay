@@ -126,21 +126,44 @@ class WsClient(QtCore.QObject):
     def __init__(self, uri):
         super().__init__()
         self.uri = uri
+        self._stop_event = threading.Event()
+        self._async_loop = None
+        self._ws = None
+        self._thread = None
 
     def start(self):
-        threading.Thread(target=self._run, daemon=True).start()
+        self._thread = threading.Thread(target=self._run, name="pptetrics-hud-ws", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._async_loop is not None and self._ws is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(self._ws.close(), self._async_loop).result(timeout=1)
+            except Exception:
+                pass
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=1)
 
     def _run(self):
         asyncio.run(self._loop())
 
     async def _loop(self):
-        while True:
+        self._async_loop = asyncio.get_running_loop()
+        while not self._stop_event.is_set():
             try:
-                async with websockets.connect(self.uri) as ws:
+                async with websockets.connect(self.uri, open_timeout=1) as ws:
+                    self._ws = ws
                     async for message in ws:
+                        if self._stop_event.is_set():
+                            return
                         self.state_received.emit(json.loads(message))
             except Exception:
-                await asyncio.sleep(2)  # retry — server may not be up yet / restarted
+                if not self._stop_event.is_set():
+                    await asyncio.sleep(2)  # retry — server may not be up yet / restarted
+            finally:
+                self._ws = None
+        self._async_loop = None
 
 
 def fmt_clock(seconds):
@@ -2361,6 +2384,7 @@ def main():
     instance.listen(INSTANCE_KEY)
     app.setQuitOnLastWindowClosed(False)  # closing the settings window keeps the HUD
     win = HudWindow(settings)
+    app.aboutToQuit.connect(win.ws_client.stop)
     if settings["hud"]["visible"]:
         win.show()
         # These need the native window handle, which exists only after show().

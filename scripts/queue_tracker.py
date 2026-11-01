@@ -34,6 +34,7 @@ import logging
 
 import cv2
 import numpy as np
+from image_io import read_image
 
 from board_read import HUE_BUCKETS
 from capture_profile import scale_box, scale_template, REFERENCE_PROFILE
@@ -68,7 +69,7 @@ class NextQueueTracker:
     def __init__(self, side, profile=None, discard_first_shift=False):
         self.side = side
         self.profile = profile or REFERENCE_PROFILE
-        self.template = scale_template(cv2.imread(str(NEXT_TEMPLATE_PATH)), self.profile)
+        self.template = scale_template(read_image(NEXT_TEMPLATE_PATH), self.profile)
         self.window = scale_box(NEXT_WINDOWS[side], self.profile)
         self.slots = [tuple(int(round(v * self.profile.scale_x)) for v in s) for s in QUEUE_SLOTS]
         self.stable = None

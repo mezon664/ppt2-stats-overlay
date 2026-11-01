@@ -29,6 +29,7 @@ background changes every match):
 from pathlib import Path
 
 import cv2
+from image_io import read_image
 
 from capture_profile import scale_box, scale_template, REFERENCE_PROFILE
 
@@ -59,13 +60,13 @@ PAUSE_THRESHOLD = 0.75
 class GameplayGate:
     def __init__(self, profile=None):
         self.profile = profile or REFERENCE_PROFILE
-        tmpl = cv2.imread(str(NEXT_TEMPLATE_PATH))
+        tmpl = read_image(NEXT_TEMPLATE_PATH)
         if tmpl is None:
             raise FileNotFoundError(f"NEXT label template not found: {NEXT_TEMPLATE_PATH}")
         self.template = scale_template(tmpl, self.profile)
         self.windows = {side: scale_box(box, self.profile) for side, box in NEXT_WINDOWS.items()}
         self.slots = [tuple(int(round(v * self.profile.scale_x)) for v in s) for s in QUEUE_SLOTS]
-        self._pause_raw = [cv2.imread(str(p)) for p in PAUSE_TEMPLATE_PATHS]   # kept: see scale_template
+        self._pause_raw = [read_image(p) for p in PAUSE_TEMPLATE_PATHS]   # kept: see scale_template
         self.pause_templates = [scale_template(t, self.profile) for t in self._pause_raw if t is not None]
         self.pause_window = scale_box(PAUSE_WINDOW, self.profile)
         self.last_scores = {}
