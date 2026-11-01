@@ -13,6 +13,7 @@ in a release zip at all (tools/make_release.py), and the copy skips them
 anyway (PRESERVE).
 """
 import json
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
+from xml.etree import ElementTree
 
 from version import VERSION
 
@@ -30,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # where releases come from: github.com/<owner>/<repo>
 UPDATE_REPO = "mezon664/ppt2-stats-overlay"
 LATEST_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+RELEASES_ATOM_URL = f"https://github.com/{UPDATE_REPO}/releases.atom"
 # the release zip: PPTetrics-v1.2.3.zip (the app was "ppt2-stats-overlay" up to
 # v0.1.0; releases carry a copy under that name too, for copies that old)
 ASSET_PREFIXES = ("PPTetrics", "ppt2-stats-overlay")
@@ -40,6 +43,7 @@ ALLOWED_HOSTS = {"github.com", "api.github.com", "objects.githubusercontent.com"
 PRESERVE = ("config/overlay_settings.json", "assets/user_fonts", "debug_frames", "logs", ".venv", "samples", ".git",
             "runtime")   # the full package's bundled Python (tools/build_full.py)
 TIMEOUT_S = 10
+log = logging.getLogger("pptetrics.updater")
 
 
 def parse_version(text):
@@ -83,12 +87,57 @@ def release_info(data):
     return None
 
 
+def release_info_from_atom(payload):
+    """Fallback for GitHub API outages/rate limits using the public releases feed.
+
+    The feed contains release tags but not asset metadata. Release zips use a
+    stable code-only name, so construct that URL and let the existing download
+    host/redirect checks validate it before any file is saved.
+    """
+    root = ElementTree.fromstring(payload)
+    ns = "{http://www.w3.org/2005/Atom}"
+    for entry in root.findall(f"{ns}entry"):
+        tag = (entry.findtext(f"{ns}title") or "").strip()
+        version_parts = parse_version(tag)
+        if version_parts is None:
+            continue  # skip prerelease or non-version tags
+        version = ".".join(str(part) for part in version_parts)
+        tag = f"v{version}"
+        return {
+            "version": version,
+            "url": f"https://github.com/{UPDATE_REPO}/releases/download/{tag}/PPTetrics-{tag}.zip",
+            "notes": "",
+            "page": f"https://github.com/{UPDATE_REPO}/releases/tag/{tag}",
+        }
+    return None
+
+
 def check_latest():
-    """The newest release ({"version", ...}) if it's newer than this copy,
-    else None. Raises on network trouble (the caller says so in the UI)."""
-    with _open(LATEST_URL, accept="application/vnd.github+json") as resp:
-        info = release_info(json.loads(resp.read().decode("utf-8")))
-    return info if info and is_newer(info["version"]) else None
+    """The newest release if newer than this copy; falls back to GitHub's feed."""
+    api_error = None
+    try:
+        with _open(LATEST_URL, accept="application/vnd.github+json") as resp:
+            info = release_info(json.loads(resp.read().decode("utf-8")))
+        if info is not None:
+            return info if is_newer(info["version"]) else None
+    except Exception as exc:
+        api_error = exc
+
+    try:
+        with _open(RELEASES_ATOM_URL, accept="application/atom+xml") as resp:
+            info = release_info_from_atom(resp.read())
+        if info is None:
+            raise ValueError("GitHub releases feed contains no stable version tag")
+        if api_error is not None:
+            log.warning("GitHub API update check failed; release feed fallback succeeded: %s", api_error)
+        return info if is_newer(info["version"]) else None
+    except Exception as feed_error:
+        if api_error is not None:
+            message = (f"GitHub API check failed ({api_error}); "
+                       f"release feed fallback failed ({feed_error})")
+            log.error("Update check failed: %s", message)
+            raise RuntimeError(message) from feed_error
+        raise
 
 
 def download(url, dest, progress=None):

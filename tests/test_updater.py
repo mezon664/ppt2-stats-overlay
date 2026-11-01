@@ -78,6 +78,78 @@ def test_check_latest_says_nothing_when_not_newer(monkeypatch):
     assert updater.check_latest()["version"] == "9.9.9"
 
 
+def test_release_info_from_atom_skips_non_version_tags_and_builds_code_zip_url():
+    feed = b"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+    <feed xmlns=\"http://www.w3.org/2005/Atom\">
+      <entry><title>nightly</title></entry>
+      <entry><title>v0.2.4</title></entry>
+    </feed>"""
+    info = updater.release_info_from_atom(feed)
+    assert info["version"] == "0.2.4"
+    assert info["url"].endswith("/releases/download/v0.2.4/PPTetrics-v0.2.4.zip")
+    assert updater._allowed(info["url"])
+
+
+def test_check_latest_falls_back_when_github_api_is_rate_limited(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    feed = b"""<feed xmlns=\"http://www.w3.org/2005/Atom\">
+      <entry><title>nightly</title></entry>
+      <entry><title>v9.9.9</title></entry>
+    </feed>"""
+
+    def fake_open(url, accept="application/octet-stream"):
+        if url == updater.LATEST_URL:
+            raise HTTPError(url, 403, "rate limit exceeded", None, None)
+        assert url == updater.RELEASES_ATOM_URL
+        return Resp(feed)
+
+    monkeypatch.setattr(updater, "_open", fake_open)
+    info = updater.check_latest()
+    assert info["version"] == "9.9.9"
+    assert info["page"].endswith("/releases/tag/v9.9.9")
+
+
+def test_check_latest_falls_back_when_api_has_no_usable_asset(monkeypatch):
+    import io
+    import json
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_open(url, accept="application/octet-stream"):
+        if url == updater.LATEST_URL:
+            return Resp(json.dumps(release(name="source.zip")).encode())
+        assert url == updater.RELEASES_ATOM_URL
+        return Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>v9.9.9</title></entry></feed>')
+
+    monkeypatch.setattr(updater, "_open", fake_open)
+    assert updater.check_latest()["version"] == "9.9.9"
+
+
+def test_check_latest_reports_both_failures(monkeypatch):
+    from urllib.error import URLError
+
+    def fake_open(url, accept="application/octet-stream"):
+        raise URLError("offline")
+
+    monkeypatch.setattr(updater, "_open", fake_open)
+    with pytest.raises(RuntimeError, match="API check failed.*release feed fallback failed"):
+        updater.check_latest()
+
+
 def test_no_downloads_from_elsewhere():
     with pytest.raises(ValueError):
         updater._open("https://example.com/ppt2-stats-overlay.zip")
