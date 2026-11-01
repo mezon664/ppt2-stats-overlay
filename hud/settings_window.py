@@ -381,7 +381,7 @@ class SettingsWindow(QtWidgets.QWidget):
                                "player_color_right": DISPLAY_DEFAULTS["player_color_right"]}
         self._font_file = ""
         self._font_loaded_family = None
-        self._ui_preferences = load_settings().get("ui", {})
+        self._ui_preferences = load_settings(persist_defaults=False).get("ui", {})
         self._settings_on_top = bool(self._ui_preferences.get("settings_on_top", False))
         if self._settings_on_top:
             self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)

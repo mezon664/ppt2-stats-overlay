@@ -213,12 +213,13 @@ DEFAULTS = {
 }
 
 
-def load_settings():
+def load_settings(persist_defaults=True):
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             saved = json.load(f)
         return _merge(DEFAULTS, saved)
-    save_settings(DEFAULTS)
+    if persist_defaults:
+        save_settings(DEFAULTS)
     return json.loads(json.dumps(DEFAULTS))
 
 
