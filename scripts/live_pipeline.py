@@ -601,10 +601,8 @@ EMPTY_CHECK_INTERVAL_S = 0.0
 # until GO! goes away. If GO! is never seen (a stage where the banner color
 # check fails), start anyway after this long rather than lose the match.
 GO_WAIT_TIMEOUT_S = 8.0
-# ...and even then only once the NEXT queues have actually moved this many
-# times: the set-end menu (ゲームをつづける / ルールセレクト ...) keeps both
-# NEXT queues on screen, full and static, so "8s passed" alone started a
-# phantom match there (live bug, 2026-10-29).
+# When the app starts mid-match, require two queue advances before assuming
+# play is active. A confirmed next-match transition uses one advance instead.
 GO_TIMEOUT_MIN_QUEUE_ADVANCES = 2
 # GO! miss diagnostics (user report: a match start was only picked up by the 8s
 # timeout, live, with no frames kept to say why). While frozen between matches
@@ -1086,17 +1084,31 @@ class MatchPipeline:
                 self._probe_queues = (NextQueueTracker("left", self.profile),
                                       NextQueueTracker("right", self.profile))
             self._probe_advances += self._count_queue_advances(frame, t)
-            # At startup there is no countdown to wait out: a match already in
-            # progress shows itself by its queues moving.
-            waited = self._startup_wait or t - self._awaiting_go_since >= GO_WAIT_TIMEOUT_S
-            if waited and self._probe_advances >= GO_TIMEOUT_MIN_QUEUE_ADVANCES:
-                if not self._startup_wait:
+            # At startup, no countdown means the app may have attached mid-match;
+            # require two queue advances to avoid starting on a stray change. Once
+            # the boards already confirmed a possible next match, a single stable
+            # queue advance is enough evidence: waiting for a second placement made
+            # the clock start several seconds late when the brief GO! banner was
+            # missed.
+            startup_mid_match = self._startup_wait and self._awaiting_go_since is None
+            go_wait_elapsed = (self._awaiting_go_since is not None
+                               and t - self._awaiting_go_since >= GO_WAIT_TIMEOUT_S)
+            waited = self._startup_wait or go_wait_elapsed
+            required_advances = GO_TIMEOUT_MIN_QUEUE_ADVANCES if startup_mid_match else 1
+            if waited and self._probe_advances >= required_advances:
+                if not startup_mid_match:
                     self._report_go_miss(raw_t)   # a real between-matches GO! was missed
                 self._frozen = False
                 self._fallback_saw_empty_since_freeze = False
-                self.reset_match(reason="next match confirmed by NEXT-queue movement")
-                self._start_play(t, f"GO! not seen within {GO_WAIT_TIMEOUT_S:.0f}s, "
-                                    "but the NEXT queues are moving")
+                if startup_mid_match:
+                    reason = "match already in progress at startup (NEXT queues moved)"
+                elif go_wait_elapsed:
+                    reason = (f"GO! not seen within {GO_WAIT_TIMEOUT_S:.0f}s, "
+                              "but the NEXT queues are moving")
+                else:
+                    reason = "next match confirmed by NEXT-queue movement after GO! was missed"
+                self.reset_match(reason=reason)
+                self._start_play(t, reason)
                 frozen = False
         if frozen:
             # Hold every derived number at its value from the instant the match

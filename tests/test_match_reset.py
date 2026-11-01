@@ -292,6 +292,34 @@ def test_match_starts_without_go_once_queues_move_after_the_timeout():
     assert snap["match_elapsed_s"] > 0
 
 
+def test_confirmed_next_match_starts_on_first_queue_advance_after_missed_go():
+    mp = MatchPipeline(gate=AlwaysOnScreen(), wait_for_start=True)
+    mp._awaiting_go_since = 10.0  # boards already showed a new-match countdown
+    mp._probe_queues = (object(), object())
+    mp._count_queue_advances = lambda frame, t: 1
+
+    mp.process_frame(frame_with_pieces(), 10.1)
+
+    assert mp._frozen is False
+    assert mp._startup_wait is False
+    assert mp.match_reset_count == 1
+    assert mp.start_t == 10.1
+
+
+def test_startup_mid_match_still_requires_two_queue_advances():
+    mp = MatchPipeline(gate=AlwaysOnScreen(), wait_for_start=True)
+    mp._probe_queues = (object(), object())
+    mp._count_queue_advances = lambda frame, t: 1
+    frame = frame_with_pieces()
+
+    mp.process_frame(frame, 1.0)
+    assert mp._frozen is True
+
+    mp.process_frame(frame, 1.1)
+    assert mp._frozen is False
+    assert mp.match_reset_count == 1
+
+
 def test_no_match_starts_on_a_static_screen_even_after_the_timeout():
     """The set-end menu keeps full, static NEXT queues on screen: waiting
     must not turn into a phantom match there."""
