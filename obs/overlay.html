@@ -641,7 +641,8 @@ function eventsPaint(ctx, e) {
 // --- ClockBlock ---
 const clock = newPart({ style: "band", clockText: "0:00", stateText: "", statusText: "" });
 function clockLines(c) {
-  const lines = [[c.clockText, 18, BOLD, WHITE, 20]];
+  // no time against a Puyo player (hud/overlay.py puyo_in_match): it tells how far into margin time it is
+  const lines = c.hideTime ? [] : [[c.clockText, 18, BOLD, WHITE, 20]];
   if (c.stateText) lines.push([c.stateText, 10, SEMI, STATE_RGB, 13]);
   if (c.statusText) lines.push([c.statusText, 10, SEMI, STATUS_RGB, 13]);
   return lines;
@@ -649,7 +650,7 @@ function clockLines(c) {
 const clockPad = (c) => ({ pop: [13, 4], text: [4, 1], versus: [8, 2], minimal: [4, 1], frame: [14, 3], slash: [20, 2] })[c.style] || [14, 2];
 function clockResize(c) {
   const u = c.u, lines = clockLines(c);
-  const widest = Math.max(...lines.map(([t, px, w]) => textWidth(px * u, w, t)));
+  const widest = Math.max(0, ...lines.map(([t, px, w]) => textWidth(px * u, w, t)));
   const [pxPad, pyPad] = clockPad(c);
   const h = lines.reduce((sum, l) => sum + l[4], 0) + pyPad * 2 + (c.style === "gauge" ? 3 : 0);
   c.w = int(widest + pxPad * 2 * u) + 2; c.h = int(h * u);
@@ -910,7 +911,9 @@ function place() {
       ev.y = int(bottom + d.event_offset_y * s - ev.h);
     }
   }
-  clock.visible = !!d.show_clock;
+  const hideTime = ["left", "right"].some((sd) => (st[sd] || {}).puyo);
+  if (hideTime !== !!clock.hideTime) { clock.hideTime = hideTime; clockResize(clock); }
+  clock.visible = !!d.show_clock && clockLines(clock).length > 0;
   const clockTop = CLOCK_BOTTOM_Y * s - clock.h;
   clock.x = int((CLOCK_CENTER_X + d.clock_offset_x) * s - clock.w / 2);
   clock.y = int(clockTop + d.clock_offset_y * s);

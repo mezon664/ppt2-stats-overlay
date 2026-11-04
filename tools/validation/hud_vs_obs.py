@@ -40,6 +40,10 @@ RIGHT = {"opener": "合掌TSD", "opener_en": "Gassho TSD", "opener_age_s": 0.5,
 
 
 def state_for(display, frozen=False):
+    if display.get("_vs_puyo"):   # 2P plays Puyo Puyo
+        st = state_for({k: v for k, v in display.items() if k != "_vs_puyo"}, frozen)
+        st["right"] = {"puyo": True}
+        return st
     return {"match_elapsed_s": 86.6, "frozen": frozen, "display": display, "match_screen": True,
             "left": json.loads(json.dumps(LEFT)), "right": json.loads(json.dumps(RIGHT)),
             "capture": {"ok": True}}
@@ -52,7 +56,7 @@ def hud_image(app, display, frozen):
     win = overlay.HudWindow(settings)
     win._size = (W, H)
     win._scale = 1.0
-    win.apply_display(overlay.display_settings({"display": display}))
+    win.apply_display(overlay.display_settings({"display": {k: v for k, v in display.items() if k != "_vs_puyo"}}))
     win._layout()
     win.on_state(state_for(display, frozen))
     win._place_openers()
@@ -139,6 +143,7 @@ def main():
     for st in styles:
         cases.append((f"{st}", dict(DISPLAY_DEFAULTS, style=st, show_event_log=True), False))
         cases.append((f"{st}_summary", dict(DISPLAY_DEFAULTS, style=st), True))
+    cases.append(("vs_puyo", dict(DISPLAY_DEFAULTS, _vs_puyo=True), False))
     for om in ("hold", "namebar", "top"):
         cases.append((f"opener_{om}", dict(DISPLAY_DEFAULTS, opener_display=om), False))
     for name, display, frozen in cases:

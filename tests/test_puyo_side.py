@@ -151,3 +151,26 @@ def test_the_result_is_kept_while_the_set_end_screen_covers_a_next_label():
     for i in range(30):
         mp._update_puyo(100.0 + i * 0.1)
     assert mp.puyo["left"] is False and mp.left is left_before
+
+
+def test_no_match_time_against_a_puyo_player():
+    """Against a Puyo player the match time isn't shown (user: it tells how
+    far into margin time the match is, which favors one side)."""
+    import overlay
+    settings = overlay.load_settings()
+    settings["hud"]["follow_game"] = False
+    overlay.WsClient.start = lambda self: None
+    win = overlay.HudWindow(settings)
+    win.apply_display(overlay.display_settings({"display": {"show_clock": True}}), local=True)
+    base = {"match_elapsed_s": 75.0, "frozen": False, "display": win.display, "match_screen": True,
+            "capture": {"ok": True}}
+    win.on_state({**base, "left": {"apm": {"apm": 50.0}}, "right": {"apm": {"apm": 40.0}}})
+    assert not win.clock.hide_time and not win.clock.isHidden()
+    win.on_state({**base, "left": {"apm": {"apm": 50.0}}, "right": {"puyo": True}})
+    assert win.clock.hide_time and win.clock.isHidden()        # nothing else to say: no box at all
+    win.on_state({**base, "left": {"puyo": True}, "right": {}, "paused": True})
+    assert win.clock.hide_time and not win.clock.isHidden()    # 試合中断中 still shows, without the time
+    assert all(t != overlay.fmt_clock(75.0) for t, *_ in win.clock._lines())
+    win.set_edit_mode(True)                                     # positioning: shown to be dragged
+    assert not win.clock.hide_time
+    win.set_edit_mode(False)

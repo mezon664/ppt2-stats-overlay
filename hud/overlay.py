@@ -559,6 +559,12 @@ def is_puyo(side):
     return bool(side.get("puyo") or side.get("hidden"))
 
 
+def puyo_in_match(state):
+    """Someone in this match plays Puyo Puyo (really Puyo, not just a side
+    hidden by display.players)."""
+    return any((state.get(sd) or {}).get("puyo") for sd in ("left", "right"))
+
+
 def mark_hidden_sides(state, players):
     """display.players = "left" / "right": the other side counts as hidden
     (no stats, events, opener; empty summary column), like a Puyo side."""
@@ -1174,6 +1180,7 @@ class ClockBlock(Band):
         self.style = "band"
         self.u = 1.0
         self.clock_text, self.state_text, self.status_text = "0:00", "", ""
+        self.hide_time = False   # a Puyo player in the match: no time (see puyo_in_match)
 
     def configure(self, style, u):
         self.style, self.u = style, u
@@ -1185,8 +1192,14 @@ class ClockBlock(Band):
             self._resize()
             self.update()
 
+    def set_hide_time(self, hide):
+        if hide != self.hide_time:
+            self.hide_time = hide
+            self._resize()
+            self.update()
+
     def _lines(self):
-        lines = [(self.clock_text, 18, BOLD, WHITE, 20)]
+        lines = [] if self.hide_time else [(self.clock_text, 18, BOLD, WHITE, 20)]
         if self.state_text:
             lines.append((self.state_text, 10, SEMI, STATE_RGB, 13))
         if self.status_text:
@@ -1201,7 +1214,7 @@ class ClockBlock(Band):
     def _resize(self):
         u = self.u
         lines = self._lines()
-        widest = max(text_width(px * u, w, t) for t, px, w, _, _ in lines)
+        widest = max((text_width(px * u, w, t) for t, px, w, _, _ in lines), default=0)
         px_pad, py_pad = self._pad()
         h = sum(lh for *_, lh in lines) + py_pad * 2 + (3 if self.style == "gauge" else 0)
         self.setFixedSize(int(widest + px_pad * 2 * u) + 2, int(h * u))
@@ -2084,7 +2097,11 @@ class HudWindow(QtWidgets.QWidget):
                 ex = anchor_x + d["event_offset_x"] * s
                 x = ex - ev.width() if mode == "left" else ex
                 ev.move(int(x), int(bottom + d["event_offset_y"] * s - ev.height()))
-        self.clock.setVisible(d["show_clock"])
+        # Against a Puyo player the match time is never shown: it tells how
+        # far into margin time the match is, which helps one side (user's
+        # request, for fairness). The state / capture lines still show.
+        self.clock.set_hide_time(puyo_in_match(self._last_state) and not self.edit_mode)
+        self.clock.setVisible(d["show_clock"] and bool(self.clock._lines()))
         self.clock.adjustSize()
         clock_top = CLOCK_BOTTOM_Y * s - self.clock.height()   # default spot (the versus block uses it)
         self.clock.move(int((CLOCK_CENTER_X + d["clock_offset_x"]) * s - self.clock.width() / 2),
