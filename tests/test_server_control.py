@@ -61,3 +61,31 @@ class ServerControlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_venv_started_server_counts_as_ours():
+    """From .venv the started process is a launcher whose child is the real
+    server: its pid is the child's (the start was refused before)."""
+    import subprocess
+    import sys
+    import time
+    from server_control import server_pid_is_ours
+    outer = subprocess.Popen([sys.executable, "-c",
+                              "import subprocess, sys; subprocess.run([sys.executable, '-c', 'import time; time.sleep(5)'])"])
+    try:
+        import psutil
+        inner = None
+        for _ in range(50):
+            kids = psutil.Process(outer.pid).children(recursive=True)
+            if kids:
+                inner = kids[-1].pid
+                break
+            time.sleep(0.1)
+        assert inner is not None
+        assert server_pid_is_ours(inner, outer.pid)
+        assert server_pid_is_ours(outer.pid, outer.pid)
+        assert not server_pid_is_ours(4, outer.pid)
+    finally:
+        for p in psutil.Process(outer.pid).children(recursive=True):
+            p.kill()
+        outer.kill()

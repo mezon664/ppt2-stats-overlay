@@ -136,3 +136,18 @@ def test_against_puyo_an_empty_tetris_board_does_not_end_the_match(monkeypatch):
     mp.puyo["right"] = False                                         # Tetris vs Tetris: as before
     mp.process_frame(frame, 10.5)
     assert mp._frozen
+
+
+def test_the_result_is_kept_while_the_set_end_screen_covers_a_next_label():
+    """User report: at the end of a set, as the winner's line came up, 1P's
+    numbers were reset — the winner art hid 1P's NEXT label, which read as
+    "1P is Puyo" and rebuilt that side. While a finished match's result is
+    held, the sides aren't re-read."""
+    from live_pipeline import MatchPipeline
+    mp = MatchPipeline()
+    left_before = mp.left
+    mp._result_held = True
+    mp.gameplay_gate.last_scores = {"left": 0.1, "right": 0.9}   # 1P label covered
+    for i in range(30):
+        mp._update_puyo(100.0 + i * 0.1)
+    assert mp.puyo["left"] is False and mp.left is left_before

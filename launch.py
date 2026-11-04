@@ -43,7 +43,7 @@ sys.path.insert(0, str(ROOT / "hud"))
 
 from config_store import load_settings  # noqa: E402
 import psutil  # noqa: E402
-from server_control import identify, identify_legacy, request_shutdown  # noqa: E402
+from server_control import identify, identify_legacy, request_shutdown, server_pid_is_ours  # noqa: E402
 
 
 def server_already_running(host, port):
@@ -155,7 +155,8 @@ def start_server():
     instance_id, token = uuid.uuid4().hex, uuid.uuid4().hex + uuid.uuid4().hex
     cmd = [sys.executable, str(ROOT / "scripts" / "data_server.py"), "--source", "live",
            "--control-host", control_host, "--control-port", str(control_port),
-           "--instance-id", instance_id, "--control-token", token]
+           "--instance-id", instance_id, "--control-token", token,
+           "--parent-pid", str(os.getpid())]   # the server ends itself if this launcher goes away
     try:
         proc = subprocess.Popen(cmd, cwd=str(ROOT / "scripts"), stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, creationflags=flags, env=env, close_fds=True)
@@ -174,12 +175,13 @@ def start_server():
             try:
                 identity = identify(control_host, control_port, timeout=0.3)
                 valid, reason = _owned_child(handle)
-                if identity.get("instance_id") == instance_id and identity.get("pid") == proc.pid and valid:
+                ours = server_pid_is_ours(identity.get("pid"), proc.pid)
+                if identity.get("instance_id") == instance_id and ours and valid:
                     print(f"Server ready instance_id={instance_id} pid={proc.pid}")
                     handle["atexit_callback"] = lambda: stop_server(handle)
                     atexit.register(handle["atexit_callback"])
                     return handle
-                if identity.get("instance_id") != instance_id or identity.get("pid") != proc.pid:
+                if identity.get("instance_id") != instance_id or not ours:
                     raise RuntimeError("control port answered for a different server; refusing to attach")
                 if not valid:
                     raise RuntimeError(f"server process identity check failed: {reason}")

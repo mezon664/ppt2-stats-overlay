@@ -26,7 +26,26 @@ import win32gui
 import win32process
 import psutil
 
-from capture_profile import compute_profile
+import cv2
+
+from capture_profile import compute_profile, REFERENCE_W
+
+# A bigger game window is shrunk to the reference width before recognition:
+# every template and box was made at that size, and recognition time grows
+# with the pixels (user report from a 2155-wide window: T-SPINs and clear
+# flashes missed, REN counts off — too few frames a second got read). All 13
+# recordings give the same events shrunk, at about half the time per frame.
+WORK_W = REFERENCE_W
+
+
+def shrink_for_recognition(frame):
+    """frame at most WORK_W wide (same aspect), and its profile."""
+    h, w = frame.shape[:2]
+    if w > WORK_W:
+        h = round(h * WORK_W / w)
+        frame = cv2.resize(frame, (WORK_W, h), interpolation=cv2.INTER_AREA)
+        w = WORK_W
+    return frame, compute_profile(w, h)
 
 PROCESS_NAME = "PuyoPuyoTetris2.exe"
 
@@ -106,6 +125,7 @@ class GameWindowCapture:
         self.sct = mss.mss()
         self.hwnd = None
         self._sizes = SizeSettler()
+        self.last_client_size = None   # the game window's size before shrinking (diagnostic.py)
 
     def close(self):
         """Release the screen-capture handle before rebuilding after an error."""
@@ -161,4 +181,6 @@ class GameWindowCapture:
             return None, False, f"キャプチャに失敗しました: {e}", profile
 
         frame = np.array(shot)[:, :, :3]  # BGRA -> BGR
-        return frame, True, None, profile
+        self.last_client_size = (client_w, client_h)
+        frame, work_profile = shrink_for_recognition(frame)
+        return frame, True, None, work_profile if work_profile.ok else profile

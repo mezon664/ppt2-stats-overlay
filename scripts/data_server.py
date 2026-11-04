@@ -96,7 +96,9 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     a running game."""
     global CAPTURE_STATUS
     from live_capture import GameWindowCapture
+    from diagnostic import Diagnostic
     make_capture = capture_factory or GameWindowCapture
+    diag = Diagnostic()
     cap = None
     period = 1.0 / fps_target
     t0 = time.monotonic()
@@ -127,6 +129,8 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                     if close:
                         close()
                     cap = None  # recreate the capture backend before retrying
+            if diag.due():   # logs/last_seen.jpg + last_status.txt, for "the numbers don't move" reports
+                diag.write(frame if ok else None, diag.lines(CAPTURE_STATUS, PIPELINE, cap))
         except Exception as e:
             consecutive_errors += 1
             CAPTURE_STATUS = {
@@ -302,6 +306,36 @@ async def main_async(host, port, control_host=None, control_port=None, instance_
             await broadcaster()
 
 
+def watch_parent(pid, interval=2.0):
+    """Ends this server when the launcher that started it is gone. A normal
+    quit stops the server through the control channel, but if the app was
+    killed or crashed the server stayed behind (users: pythonw.exe kept
+    running after closing the app; the next start then attached to that old
+    server and showed nothing until it was killed in Task Manager)."""
+    import psutil
+
+    try:
+        parent = psutil.Process(pid)
+        started = parent.create_time()
+    except psutil.Error:
+        log.warning("launcher pid %d not found at start; exiting", pid)
+        os._exit(0)
+
+    def run():
+        while True:
+            time.sleep(interval)
+            try:
+                alive = parent.is_running() and parent.create_time() == started                     and parent.status() != psutil.STATUS_ZOMBIE
+            except psutil.Error:
+                alive = False
+            if not alive:
+                log.info("the launcher (pid %d) is gone; stopping the server", pid)
+                logging.shutdown()
+                os._exit(0)
+
+    threading.Thread(target=run, name="pptetrics-parent-watch", daemon=True).start()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", choices=["video", "live"], required=True)
@@ -314,6 +348,7 @@ def main():
     parser.add_argument("--control-port", type=int, default=None)
     parser.add_argument("--instance-id", default=None)
     parser.add_argument("--control-token", default=None)
+    parser.add_argument("--parent-pid", type=int, default=None)
     args = parser.parse_args()
 
     settings = load_settings()
@@ -328,6 +363,8 @@ def main():
         t = threading.Thread(target=capture_loop_live, daemon=True)
     t.start()
 
+    if args.parent_pid:
+        watch_parent(args.parent_pid)
     if bool(args.instance_id) != bool(args.control_token) or (args.instance_id and not args.control_port):
         parser.error("--instance-id, --control-token and --control-port must be supplied together")
     try:

@@ -2410,6 +2410,10 @@ def main():
     act_enabled.toggled.connect(settings_win.set_enabled)
     menu.addSeparator()
     act_settings = menu.addAction("", settings_win.open)
+    # for "the numbers don't move" reports: logs/ has what the recognition saw
+    # (last_seen.jpg, last_status.txt) and server.log (scripts/diagnostic.py)
+    act_logs = menu.addAction("", lambda: QtGui.QDesktopServices.openUrl(
+        QtCore.QUrl.fromLocalFile(str(ROOT_DIR / "logs"))))
     menu.addSeparator()
     act_quit = menu.addAction("", app.quit)
     tray.setContextMenu(menu)
@@ -2428,6 +2432,7 @@ def main():
     def tray_language(lang):
         act_enabled.setText("Show the overlay" if lang == "en" else "表示する（オン／オフ）")
         act_settings.setText("Display settings…" if lang == "en" else "表示設定…")
+        act_logs.setText("Open the troubleshooting files…" if lang == "en" else "うまく認識しないとき：診断ファイルを開く…")
         act_quit.setText("Quit" if lang == "en" else "終了")
     tray_language(win.display["language"])
     win.language_changed.connect(tray_language)

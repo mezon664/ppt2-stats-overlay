@@ -52,3 +52,15 @@ class LiveCaptureRecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_big_game_window_is_shrunk_to_the_reference_width():
+    """User report (a 2155-wide window): too few frames a second got read,
+    T-SPINs were missed. Bigger frames are read at the reference size."""
+    import numpy as np
+    from live_capture import shrink_for_recognition
+    from capture_profile import REFERENCE_W
+    frame, profile = shrink_for_recognition(np.zeros((1211, 2155, 3), np.uint8))
+    assert frame.shape[1] == REFERENCE_W and profile.ok and abs(profile.scale_x - 1.0) < 0.01
+    small, p2 = shrink_for_recognition(np.zeros((692, 1232, 3), np.uint8))
+    assert small.shape[:2] == (692, 1232) and p2.ok

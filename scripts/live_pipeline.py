@@ -727,6 +727,12 @@ class MatchPipeline:
         self._startup_wait = wait_for_start
         self._play_started_t = None  # when GO! (or the queue fallback) started the current match
         self._blackout_handled = False
+        # A finished match's result is on screen (victory banner seen, the next
+        # match not begun): which side plays Puyo isn't re-read meanwhile. The
+        # set-end screen's winner line covers a NEXT label, which read as
+        # "that side is Puyo" and rebuilt the side, wiping its numbers
+        # (user report: 1P's numbers reset at the end of a set).
+        self._result_held = False
         if wait_for_start:
             self._frozen = True
         self.match_reset_count = 0
@@ -757,6 +763,9 @@ class MatchPipeline:
         the NEXT label scores the gate just read on a match-screen frame. A side
         that changes starts over: whatever was counted while it was Puyo (its
         chains flash and drop pieces too) or while it wasn't followed is dropped."""
+        if self._result_held:
+            self._puyo_pending = {"left": None, "right": None}
+            return
         scores = getattr(self.gameplay_gate, "last_scores", None) or {}
         for side in ("left", "right"):
             if side not in scores:
@@ -828,6 +837,7 @@ class MatchPipeline:
         self.start_t = clock_start_t
         self._play_started_t = clock_start_t  # None for a reset with no known start
         self._blackout_handled = False
+        self._result_held = False
         self.frame_count = 0
         self.match_reset_count += 1
 
@@ -934,6 +944,7 @@ class MatchPipeline:
         if victory_edge and not self._frozen:
             self._frozen = True
             self._fallback_saw_empty_since_freeze = False
+            self._result_held = True
             log.info("match concluded (victory banner) — freezing numbers")
         span = self._last_closed_span
         after_countdown = (span is not None and span[1] - span[0] >= GO_CLOSED_MIN_S
@@ -996,6 +1007,7 @@ class MatchPipeline:
                         self._probe_queues = (NextQueueTracker("left", self.profile),
                                               NextQueueTracker("right", self.profile))
                         self._probe_advances = 0
+                        self._result_held = False   # a new match is coming: read the sides again
                         log.info("possible next match at t=%.2f — waiting for GO!", t)
                 # else: still frozen, boards non-empty, but we haven't seen them
                 # go empty yet this freeze — this is the expected "loser's board

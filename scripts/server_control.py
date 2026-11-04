@@ -77,3 +77,19 @@ def handle_control_message(message, instance_id, token, pid):
     elif command != "identify" or not valid_protocol:
         response = {"error": "unsupported request", "protocol": PROTOCOL_VERSION}
     return response, stop_requested
+
+
+def server_pid_is_ours(server_pid, child_pid):
+    """The server reports its own pid. Run from a virtual environment
+    (.venv/Scripts/pythonw.exe, as the desktop shortcut does), the started
+    process is a small launcher that runs the real interpreter as its child,
+    so the server's pid is that child's: compare against both (the check
+    refused every start there: "control port answered for a different server")."""
+    if server_pid == child_pid:
+        return True
+    import psutil
+
+    try:
+        return server_pid in {c.pid for c in psutil.Process(child_pid).children(recursive=True)}
+    except psutil.Error:
+        return False
