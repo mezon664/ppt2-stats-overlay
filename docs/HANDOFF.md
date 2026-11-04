@@ -295,3 +295,4 @@
   - 記録: HUD が凍結した瞬間（`_record_finished_match`）に `opener_stats.match_record` → `config/opener_history.json`（gitignore、直近 200 試合）。勝者のない終わり（途中でやめた・暗転で消えた）は数えない。
   - 集計: `opener_stats.tally(matches, N, 1P/2P/両方, 英語名, 相手 tetris/puyo/all)`。相手で絞ってから直近 N 試合。
   - 設定画面「開幕の統計」タブ: 対象・相手・直近 N（`ui.opener_stats` に保存）、ドーナツ円グラフ（上位 7 色＋その他＋認識なし、ホバーで件数・勝率）、全テンプレの表、記録を消すボタン。HUD の `opener_recorded` で自動更新。
+  - 平均（ユーザー: 直近の平均 APM・PPS も）: 記録に各側の `stats`（apm/pps/app と match_stats、`opener_stats.match_numbers`）、`opener_stats.averages` が同じ試合で平均（数値のない古い記録は除く）。タブ名は「試合の統計」に。

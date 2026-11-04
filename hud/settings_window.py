@@ -89,8 +89,8 @@ TEXT = {
     "tab.place": {"ja": "位置", "en": "Position"},
     "tab.obs": {"ja": "OBSに映す", "en": "Show in OBS"},
     "tab.update": {"ja": "アップデート", "en": "Updates"},
-    "tab.stats": {"ja": "開幕の統計", "en": "Opener stats"},
-    "st.title": {"ja": "開幕テンプレの使用率と勝率", "en": "Opener use and win rate"},
+    "tab.stats": {"ja": "試合の統計", "en": "Match stats"},
+    "st.title": {"ja": "直近の試合の平均と、開幕テンプレの使用率・勝率", "en": "Recent averages, and each opener's use and win rate"},
     "st.side": {"ja": "対象", "en": "Player"},
     "st.side_left": {"ja": "1P", "en": "1P"},
     "st.side_right": {"ja": "2P", "en": "2P"},
@@ -105,6 +105,10 @@ TEXT = {
                    "en": "The last {n} matches  Win rate {rate} ({won}W {lost}L)"},
     "st.empty": {"ja": "まだ記録がありません。勝敗がついた試合から自動で集計されます。",
                  "en": "Nothing yet. Matches are counted automatically once they end with a winner."},
+    "st.avg": {"ja": "平均", "en": "Average"},
+    "st.avg_lines": {"ja": "送った段数", "en": "Lines sent"},
+    "st.avg_pieces": {"ja": "置いたミノ", "en": "Pieces"},
+    "st.avg_max_ren": {"ja": "最大REN", "en": "Max combo"},
     "st.col_name": {"ja": "開幕テンプレ", "en": "Opener"},
     "st.col_used": {"ja": "試合", "en": "Matches"},
     "st.col_share": {"ja": "使用率", "en": "Share"},
@@ -116,7 +120,7 @@ TEXT = {
                 "en": "Matches that end with a winner are recorded automatically as they end (not ones left or "
                       "restarted midway). A Puyo Puyo side isn't counted. The last 200 matches are kept."},
     "st.clear": {"ja": "記録を消す", "en": "Clear the record"},
-    "st.clear_confirm": {"ja": "開幕の統計の記録をすべて消しますか？", "en": "Clear every match from the opener stats?"},
+    "st.clear_confirm": {"ja": "試合の統計の記録をすべて消しますか？", "en": "Clear every match from the match stats?"},
     "st.tip": {"ja": "{name}: {used} 試合（{share}）　勝率 {rate}",
                "en": "{name}: {used} matches ({share})  win rate {rate}"},
     "enabled_on": {"ja": "● 表示オン（クリックでオフ）", "en": "● Overlay ON (click to turn off)"},
@@ -383,6 +387,8 @@ def _form():
 # dataviz reference palette's categorical order, light mode.)
 PIE_COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6")
 PIE_OTHER, PIE_NONE = "#8a8a93", "#d4d4d8"
+# the averages shown above it (opener_stats.AVERAGED), with their decimals
+AVG_TILES = {"apm": 1, "pps": 2, "app": 2, "lines_sent": 1, "pieces": 0, "max_ren": 1}
 
 
 class OpenerPie(QtWidgets.QWidget):
@@ -1107,6 +1113,26 @@ class SettingsWindow(QtWidgets.QWidget):
         self.st_summary.setWordWrap(True)
         self.st_summary.setStyleSheet("font-size:13px;")
         lay.addWidget(self.st_summary)
+        # the averages over the same matches (user: the recent average APM, PPS...)
+        self.st_avg_title = QtWidgets.QLabel()
+        self.st_avg_title.setStyleSheet("font-weight:bold;")
+        lay.addWidget(self.st_avg_title)
+        tiles = QtWidgets.QHBoxLayout()
+        self.st_avg = {}
+        for key in AVG_TILES:
+            box = QtWidgets.QFrame()
+            box.setStyleSheet("QFrame { background:#f4f4f5; border-radius:6px; }")
+            v = QtWidgets.QVBoxLayout(box)
+            v.setContentsMargins(8, 4, 8, 6)
+            v.setSpacing(0)
+            name, value = QtWidgets.QLabel(), QtWidgets.QLabel()
+            name.setStyleSheet("color:#52525b; font-size:11px; background:transparent;")
+            value.setStyleSheet("font-size:20px; font-weight:bold; background:transparent;")
+            v.addWidget(name)
+            v.addWidget(value)
+            tiles.addWidget(box)
+            self.st_avg[key] = (name, value)
+        lay.addLayout(tiles)
         self.st_pie = OpenerPie()
         lay.addWidget(self.st_pie, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         self.st_table = QtWidgets.QTableWidget(0, 4)
@@ -1140,6 +1166,10 @@ class SettingsWindow(QtWidgets.QWidget):
             self.st_side.setItemText(i, t(key))
         self.st_last_label.setText(t("st.last"))
         self.st_vs_label.setText(t("st.vs"))
+        self.st_avg_title.setText(t("st.avg"))
+        for key, (name, _) in self.st_avg.items():
+            name.setText({"lines_sent": t("st.avg_lines"), "pieces": t("st.avg_pieces"),
+                          "max_ren": t("st.avg_max_ren")}.get(key, key.upper()))
         for i, key in enumerate(opener_stats.OPPONENTS):
             self.st_vs.setItemText(i, t("st.vs_" + key))
         self.st_matches_label.setText(t("st.matches"))
@@ -1185,6 +1215,10 @@ class SettingsWindow(QtWidgets.QWidget):
                 n=picked, rate=f"{won / total * 100:.0f}%", won=won, lost=total - won))
         else:
             self.st_summary.setText(t("st.empty"))
+        avg = opener_stats.averages(matches, n, side, self.st_vs.currentData())
+        for key, (_, value) in self.st_avg.items():
+            v = avg.get(key)
+            value.setText("--" if v is None else f"{v:.{AVG_TILES[key]}f}")
         named = [row for row in rows if row[0] is not None]
         colors = {}
         slices = []

@@ -100,3 +100,20 @@ def test_the_settings_tab_shows_them(tmp_path, monkeypatch):
     assert w.st_table.item(0, 3).text().startswith("50%")
     assert w.st_pie.total == 3
     assert not config_store.CONFIG_PATH.exists() or "opener_stats" in config_store.load_settings()["ui"]
+
+
+def test_the_recent_averages():
+    """The average APM, PPS... over the same matches (user's request)."""
+    st = {"frozen": True, "match_elapsed_s": 60.0, "winner": "left",
+          "left": {"opener": "A", "apm": {"apm": 60.0}, "pps": 2.0, "app": 0.5,
+                   "match_stats": {"lines_sent": 60, "pieces": 120, "max_ren": 4}},
+          "right": {"opener": "B", "apm": {"apm": 30.0}, "pps": None, "app": 0.3, "match_stats": {}}}
+    rec = match_record(st, now=1)
+    assert rec["left"]["stats"]["apm"] == 60.0 and rec["left"]["stats"]["max_ren"] == 4
+    assert "pps" not in rec["right"]["stats"]                     # no value, not a 0
+    other = match_record({**st, "left": {**st["left"], "apm": {"apm": 40.0}, "pps": 3.0}}, now=2)
+    old = m("A", "B", "left")                                      # kept before the numbers were
+    avg = opener_stats.averages([old, rec, other], 10, "left")
+    assert avg["apm"] == 50.0 and avg["pps"] == 2.5 and avg["lines_sent"] == 60
+    assert opener_stats.averages([rec, other], 1, "left")["apm"] == 40.0
+    assert opener_stats.averages([rec], 10, "both")["apm"] == 45.0
