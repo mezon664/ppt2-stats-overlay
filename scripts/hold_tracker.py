@@ -14,7 +14,9 @@ same clip at t=20.31. Not a plain clear or banner event either time; nothing
 else explains a queue shift with no corresponding board change.
 """
 import cv2
+import numpy as np
 
+from board_read import HUE_BUCKETS
 from capture_profile import scale_box, REFERENCE_PROFILE
 
 # Reference-resolution (1232x692) boxes over just the HOLD piece icon (below
@@ -37,6 +39,24 @@ class HoldTracker:
         # often already filled, and treating that as a first use discarded a
         # real placement (burst_hold, left side, t=0.53).
         self._seen_empty = False
+
+    def piece(self, frame):
+        """The piece in HOLD now (I O T S Z J L, by its color as in the NEXT
+        queue), or None when it's empty or can't be told (opener_detect: a
+        first-bag piece held while a second-bag one went down in its place)."""
+        x1, y1, x2, y2 = self.box
+        region = frame[y1:y2, x1:x2]
+        if region.size == 0:
+            return None
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV).reshape(-1, 3)
+        colored = (hsv[:, 1] > 100) & (hsv[:, 2] > 100)
+        if colored.mean() <= FILLED_RATIO:
+            return None
+        h = int(np.median(hsv[colored, 0]))
+        for label, lo, hi in HUE_BUCKETS:
+            if lo <= h < hi:
+                return label
+        return None
 
     def update(self, frame, t):
         """Returns the timestamp HOLD was first confirmed used this match —

@@ -197,3 +197,35 @@ def test_english_names_drop_their_bracket_part_too():
     from opener_detect import load_english
     names = load_english().values()
     assert names and not any("(" in n or "（" in n for n in names)
+
+
+def test_a_first_bag_piece_held_and_a_second_bag_piece_down():
+    """User: 山岳積み with its L held and the next bag's Z down first wasn't
+    recognized. Each landed piece is taken out in turn: the rest is the shape
+    without a piece of the kind in HOLD, or (the L put in later) the shape."""
+    import json
+    import opener_detect as od
+    idx = od.openers()
+    data = json.loads(od.OPENERS_PATH.read_text(encoding="utf-8"))
+    op = next(o for o in data["openers"] if o["name"].startswith("山岳"))
+    shape = od._mask(od._shape_rows(op["shapes"][0]))
+    want = od.screen_name(op["name"])
+    l_piece = next(p for p in od.PLACEMENTS["L"] if p & shape == p)
+    z_piece = next(p for p in od.PLACEMENTS["Z"] if not p & shape)
+    board = (shape & ~l_piece) | z_piece
+    assert want in idx.match_with_hold(board, [z_piece], "L")
+    assert want in idx.match_with_hold(board | l_piece, [z_piece], None)
+    assert idx.match_with_hold(board, [z_piece], "T") == []        # not the piece in HOLD: nothing
+    assert idx.match_with_hold(board, [], "L") == []                # no landed piece to take out
+
+
+def test_landed_pieces_are_noted():
+    import opener_detect as od
+    d = od.OpenerDetector("left")
+    i_piece = 0b1111                       # bottom row, columns 0-3
+    o_piece = (0b11 << 4) | (0b11 << 14)   # columns 4-5, rows 0-1
+    for mask in (0, 0, i_piece, i_piece, i_piece | o_piece, i_piece | o_piece):
+        d._note_landing(mask)
+    assert d.landed == [i_piece, o_piece]
+    d._note_landing(i_piece | o_piece | (1 << 60))   # one frame of something else: not settled
+    assert len(d.landed) == 2

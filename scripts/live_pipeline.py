@@ -422,7 +422,8 @@ class PlayerPipeline:
         if self._first_t is None:
             self._first_t = t
         start = self.clock_start_t if self.clock_start_t is not None else self._first_t
-        opener = self.opener_detector.on_frame(frame, t - start, len(placements))
+        opener = self.opener_detector.on_frame(frame, t - start, len(placements),
+                                               hold=self.hold_tracker.piece(frame))
         if opener:
             self.opener_t = t
             self.event_log.insert(0, format_opener_entry(t, opener, self.opener_detector.name_en))

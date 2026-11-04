@@ -13,6 +13,16 @@ exactly and every row above it must be empty, except the top few rows where
 the next piece has already spawned. An exact match only — a board that is
 one cell off is not called anything.
 
+Holding a first-bag piece and putting a second-bag piece down first (user:
+山岳積み with its L held and the next bag's Z down — never recognized): the
+board is then the shape without the held piece and with one more piece, or,
+once the held piece goes in, the whole shape plus one more piece. So each
+piece is noted as it lands (the 4 cells that appear), and when nothing
+matches exactly each landed piece is taken out in turn: what's left must be
+a whole shape, or a shape once a piece of the kind in HOLD (its color) is put
+back somewhere. (Indexing every shape without each of its pieces instead
+took 1.5 million entries and 527 MB.)
+
 Garbage (お邪魔) received during the opening pushes the shape up: whole
 garbage rows at the bottom are set aside first (user's request), and the
 shape must then sit exactly on top of them. Only rows that are plainly
@@ -118,6 +128,56 @@ def _before_the_t_spin(raw):
                 if rows[:height] not in out:
                     out.append(rows[:height])
     return out
+# Boards as bit masks for the hold case: row r, column c is bit r * COLS + c.
+# Only the rows a first bag can reach (the next piece spawns higher up).
+MASK_ROWS = 12
+HOLD_MIN_CELLS = 24   # the hold case: only shapes of 6 pieces or more
+
+
+def _mask(rows):
+    m = 0
+    for r, row in enumerate(rows[:MASK_ROWS]):
+        for c, v in enumerate(row):
+            if v:
+                m |= 1 << (r * COLS + c)
+    return m
+
+
+def _turns():
+    """Each tetromino's turns as cell offsets (column, row), from its lowest-left corner."""
+    base = {"I": [(0, 0), (1, 0), (2, 0), (3, 0)], "O": [(0, 0), (1, 0), (0, 1), (1, 1)],
+            "T": [(0, 0), (1, 0), (2, 0), (1, 1)], "S": [(0, 0), (1, 0), (1, 1), (2, 1)],
+            "Z": [(1, 0), (2, 0), (0, 1), (1, 1)], "J": [(0, 0), (1, 0), (2, 0), (0, 1)],
+            "L": [(0, 0), (1, 0), (2, 0), (2, 1)]}
+    out = {}
+    for letter, cells in base.items():
+        seen, cur = set(), cells
+        for _ in range(4):
+            cur = [(y, -x) for x, y in cur]
+            mx, my = min(x for x, _ in cur), min(y for _, y in cur)
+            seen.add(tuple(sorted((x - mx, y - my) for x, y in cur)))
+        out[letter] = sorted(seen)
+    return out
+
+
+TURNS = _turns()
+ALL_TURNS = sorted({t for ts in TURNS.values() for t in ts})   # the 19 tetromino outlines
+# every placement of each piece kind on the bottom MASK_ROWS rows, as masks
+PLACEMENTS = {letter: [sum(1 << ((r + dy) * COLS + c + dx) for dx, dy in turn)
+                       for turn in turns
+                       for r in range(MASK_ROWS - max(dy for _, dy in turn))
+                       for c in range(COLS - max(dx for dx, _ in turn))]
+              for letter, turns in TURNS.items()}
+
+
+def _is_tetromino(mask):
+    cells = [(i % COLS, i // COLS) for i in range(MASK_ROWS * COLS) if mask >> i & 1]
+    if len(cells) != 4:
+        return False
+    mx, my = min(x for x, _ in cells), min(y for _, y in cells)
+    return tuple(sorted((x - mx, y - my) for x, y in cells)) in ALL_TURNS
+
+
 # A board shared by several openers shows this many names, then "ほか".
 MAX_NAMES = 2
 
@@ -170,6 +230,17 @@ class OpenerIndex:
             name, rows = shape[0], shape[1]
             self.by_rows.setdefault(rows, []).append(shape)
         self.heights = sorted({len(r) for r in self.by_rows})
+        # the hold case: whole shapes (not the leftovers after a clear) as masks
+        self.by_mask = {}
+        for shape in self.openers:
+            if len(shape) > 2 and shape[2]:
+                continue
+            names = self.by_mask.setdefault(_mask(shape[1]), [])
+            if shape[0] not in names:
+                names.append(shape[0])
+        # only shapes of most of a bag: with a small one (3-4 pieces) any early
+        # board less a piece came out as an opener (burst_boundary, the CPU)
+        self.counts = {c for c in (bin(m).count("1") for m in self.by_mask) if c >= HOLD_MIN_CELLS}
 
     def match(self, occupancy, placements=None):
         names = []
@@ -180,6 +251,29 @@ class OpenerIndex:
                 name, pieces = shape[0], shape[2] if len(shape) > 2 else 0
                 if placements is not None and pieces and placements < pieces - PLACEMENT_SLACK:
                     continue   # a small leftover shape this early is something else
+                if name not in names:
+                    names.append(name)
+        return names
+
+    def match_with_hold(self, mask, landed, hold):
+        """No exact shape: one landed piece is a second-bag one (see the
+        module docstring). landed: the pieces that landed, as masks; hold:
+        the piece kind in HOLD, or None."""
+        n = bin(mask).count("1")
+        names = []
+        for piece in landed:
+            if piece & mask != piece:
+                continue
+            rest = mask & ~piece
+            found = []
+            if n - 4 in self.counts:                     # the held piece went in after it: the whole shape
+                found += self.by_mask.get(rest, [])
+            if hold in PLACEMENTS and n in self.counts:  # still held: the shape once it's put back
+                for p in PLACEMENTS[hold]:
+                    if not p & rest:
+                        found += self.by_mask.get(rest | p, [])
+            found = [f for f in found if f]
+            for name in found:
                 if name not in names:
                     names.append(name)
         return names
@@ -275,16 +369,31 @@ class OpenerDetector:
         self.placements = 0
         self.name = None
         self.name_en = None   # the same in English (Japanese where there's no English name)
+        self._board = 0       # the board as last seen settled (a mask, see _mask)
+        self._seen = None     # the board on the previous frame
+        self.landed = []      # each piece that landed, as a mask (the hold case)
 
-    def on_frame(self, frame, t_in_match, placements=0):
-        """Call on every frame with the time since the match started and the
-        placements confirmed on this frame. During the opening the board is
-        compared every frame; returns the opener name when it becomes known
-        or changes, else None."""
+    def on_frame(self, frame, t_in_match, placements=0, hold=None):
+        """Call on every frame with the time since the match started, the
+        placements confirmed on this frame and the piece kind in HOLD (or
+        None). During the opening the board is compared every frame; returns
+        the opener name when it becomes known or changes, else None."""
         self.placements += placements
         if t_in_match > OPENING_S or self.placements > MAX_PLACEMENTS:
             return None
-        return self._check(frame)
+        return self._check(frame, hold)
+
+    def _note_landing(self, mask):
+        """A board the same two frames running that holds everything the
+        last one did plus one tetromino: that piece landed."""
+        settled = mask == self._seen
+        self._seen = mask
+        if not settled or mask == self._board:
+            return
+        new = mask & ~self._board
+        if self._board & ~mask == 0 and _is_tetromino(new):
+            self.landed.append(new)
+        self._board = mask
 
     def on_placements(self, frame, count):
         """Check only when `count` placements were confirmed on this frame
@@ -294,12 +403,16 @@ class OpenerDetector:
         self.placements += count
         return self._check(frame)
 
-    def _check(self, frame):
+    def _check(self, frame, hold=None):
         occupancy = read_occupancy(frame, self.box)
         lifted = garbage_rows(frame, self.box)
         if lifted:   # the shape sits on top of the garbage it was pushed up by
             occupancy = occupancy[lifted:] + [[False] * COLS for _ in range(lifted)]
+        mask = _mask(occupancy)
+        self._note_landing(mask)
         names = match_openers(occupancy, openers(), self.placements)
+        if not names and self.name is None and self.landed:
+            names = openers().match_with_hold(mask, self.landed, hold)
         if not names:
             return None
         name = shown_name(names)      # shapes shared by several openers: up to MAX_NAMES of them
