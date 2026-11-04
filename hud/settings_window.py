@@ -726,7 +726,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.autostart_note = ui.muted()
         self.autostart_card.add(self.autostart_note)
 
-        return self._page("page.home", self.power_card, self.autostart_card, self.design_box, self.presets_box)
+        return self._page("page.home", self.power_card, self.autostart_card)
 
     # --- 表示する項目: what is shown, each part in its own card ---
     def _build_items_page(self):
@@ -921,7 +921,9 @@ class SettingsWindow(QtWidgets.QWidget):
             reset.clicked.connect(lambda _=False, k=key: self._set_player_color(k, DISPLAY_DEFAULTS[k], changed=True))
             self.player_buttons[key], self.player_resets[key] = pick, reset
             self.player_box.add(self._row(key, _hbox(pick, reset)))
-        return self._page("page.look", self.preview_card, self.text_box, self.look_box, self.player_box)
+        # the design and the presets belong with the rest of the look (user's request; they were on ホーム)
+        return self._page("page.look", self.design_box, self.preview_card, self.text_box, self.look_box,
+                          self.player_box, self.presets_box)
 
     # --- 位置: drag on the game screen; placement; fine steps ---
     def _build_place_page(self, drag_available):
