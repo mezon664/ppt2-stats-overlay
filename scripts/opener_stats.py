@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 
 HISTORY_PATH = Path(__file__).resolve().parent.parent / "config" / "opener_history.json"
-KEEP = 200          # matches kept (the most the settings window counts over)
+KEEP = 500          # matches kept (the most the settings window counts over; user: up to 500)
+LAST_N_CHOICES = (10, 20, 50, 100, 200, 500)   # the settings window's "last N" buttons
 SIDES = ("left", "right")
 
 

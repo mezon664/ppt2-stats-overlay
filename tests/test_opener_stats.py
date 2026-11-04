@@ -117,3 +117,19 @@ def test_the_recent_averages():
     assert avg["apm"] == 50.0 and avg["pps"] == 2.5 and avg["lines_sent"] == 60
     assert opener_stats.averages([rec, other], 1, "left")["apm"] == 40.0
     assert opener_stats.averages([rec], 10, "both")["apm"] == 45.0
+
+
+def test_last_n_buttons_up_to_500(tmp_path, monkeypatch):
+    """How many recent matches: buttons 10-500 (user's request), an older
+    saved number goes to the nearest one."""
+    import config_store
+    monkeypatch.setattr(config_store, "CONFIG_PATH", tmp_path / "s.json")
+    monkeypatch.setattr(opener_stats, "HISTORY_PATH", tmp_path / "h.json")
+    config_store.save_settings({**config_store.DEFAULTS, "ui": {"opener_stats": {"last_n": 40}}})
+    import settings_window
+    w = settings_window.SettingsWindow(drag_available=True)
+    assert w.st_last.currentData() == 50
+    assert [w.st_last.itemText(i) for i in range(w.st_last.count())] == ["10", "20", "50", "100", "200", "500"]
+    w.st_last.setCurrentIndex(w.st_last.findData(500))
+    assert config_store.load_settings()["ui"]["opener_stats"]["last_n"] == 500
+    assert opener_stats.KEEP == 500

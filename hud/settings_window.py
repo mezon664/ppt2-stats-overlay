@@ -156,9 +156,9 @@ TEXT = {
     "st.none": {"ja": "認識なし", "en": "Not recognized"},
     "st.other": {"ja": "その他", "en": "Other"},
     "st.note": {"ja": "勝敗がついた試合だけを、終わるたびに自動で記録します（途中でやめた試合・やり直した試合は数えません）。"
-                      "ぷよぷよの側は数えません。記録は直近 200 試合まで残ります。",
+                      "ぷよぷよの側は数えません。記録は直近 500 試合まで残ります。",
                 "en": "Matches that end with a winner are recorded automatically as they end (not ones left or "
-                      "restarted midway). A Puyo Puyo side isn't counted. The last 200 matches are kept."},
+                      "restarted midway). A Puyo Puyo side isn't counted. The last 500 matches are kept."},
     "st.clear": {"ja": "記録を消す", "en": "Clear the record"},
     "st.clear_confirm": {"ja": "試合の統計の記録をすべて消しますか？", "en": "Clear every match from the match stats?"},
     "st.tip": {"ja": "{name}: {used} 試合（{share}）　勝率 {rate}",
@@ -1186,11 +1186,14 @@ class SettingsWindow(QtWidgets.QWidget):
         for key in ("left", "right", "both"):
             self.st_side.addItem("", key)
         self.st_side.setCurrentIndex(max(0, self.st_side.findData(prefs.get("side", "left"))))
-        self.st_last = QtWidgets.QSpinBox()
-        self.st_last.setRange(5, opener_stats.KEEP)
-        self.st_last.setSingleStep(5)
+        # a few fixed choices (user's request: buttons, up to 500)
+        self.st_last = ui.Segmented()
+        for n in opener_stats.LAST_N_CHOICES:
+            self.st_last.addItem(str(n), n)
         last = prefs.get("last_n", 20)
-        self.st_last.setValue(last if isinstance(last, int) else 20)
+        last = last if isinstance(last, int) and not isinstance(last, bool) else 20
+        nearest = min(opener_stats.LAST_N_CHOICES, key=lambda n: abs(n - last))   # an older saved value
+        self.st_last.setCurrentIndex(self.st_last.findData(nearest))
         # against a Tetris player / a Puyo player, apart (user's request)
         self.st_vs = ui.Segmented()
         for key in opener_stats.OPPONENTS:
@@ -1243,7 +1246,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.st_clear.clicked.connect(self._clear_opener_stats)
         lay.addWidget(_hbox(self.st_clear))
         self.st_side.currentIndexChanged.connect(self._opener_stats_options_changed)
-        self.st_last.valueChanged.connect(self._opener_stats_options_changed)
+        self.st_last.currentIndexChanged.connect(self._opener_stats_options_changed)
         self.st_vs.currentIndexChanged.connect(self._opener_stats_options_changed)
         return self._page("page.stats", self.stats_card)
 
@@ -1271,7 +1274,7 @@ class SettingsWindow(QtWidgets.QWidget):
     def _opener_stats_options_changed(self, *_):
         settings = load_settings()
         preferences = settings.get("ui", {})
-        preferences["opener_stats"] = {"side": self.st_side.currentData(), "last_n": self.st_last.value(),
+        preferences["opener_stats"] = {"side": self.st_side.currentData(), "last_n": self.st_last.currentData(),
                                        "opponent": self.st_vs.currentData()}
         settings["ui"] = preferences
         save_settings(settings)
@@ -1295,7 +1298,7 @@ class SettingsWindow(QtWidgets.QWidget):
     def refresh_opener_stats(self):
         """Reads the record again (the HUD adds each match as it ends)."""
         t = self.tr_
-        n, side = self.st_last.value(), self.st_side.currentData()
+        n, side = self.st_last.currentData(), self.st_side.currentData()
         matches = opener_stats.load()
         rows, total, picked = opener_stats.tally(matches, n, side, self._stats_english(), self.st_vs.currentData())
         won = sum(w for _, _, w in rows)

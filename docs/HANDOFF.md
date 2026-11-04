@@ -292,9 +292,9 @@
 - HUD と OBS で別々にオン・オフ（ユーザー）: `display.show_on_hud` / `show_on_obs`（初期値 True）。`enabled` は両方まとめてのスイッチのまま。設定画面の大きなボタンの下にチェック 2 つ（オフ中は灰色）、トレイにも 2 項目（`set_shown_on`、保存済みの値に重ねて 1 項目だけ変える）。HUD は `show_on_hud` オフでも位置調整中は出す。
 - 開幕の統計（ユーザー: 使用率を円グラフで、直近 N 試合の集計で自動更新／テンプレごとの勝率／対テトリス・対ぷよで分けて）:
   - 勝者: 「やった!/Yeah!」が出た側（`MatchBoundaryDetector.winner`、`last_yatta_side_conf`）→ サーバーの状態 `winner`。13 録画で勝った側 0.83 以上・反対側 0.45 以下、左勝ちを画像で確認。
-  - 記録: HUD が凍結した瞬間（`_record_finished_match`）に `opener_stats.match_record` → `config/opener_history.json`（gitignore、直近 200 試合）。勝者のない終わり（途中でやめた・暗転で消えた）は数えない。
+  - 記録: HUD が凍結した瞬間（`_record_finished_match`）に `opener_stats.match_record` → `config/opener_history.json`（gitignore、直近 500 試合）。勝者のない終わり（途中でやめた・暗転で消えた）は数えない。
   - 集計: `opener_stats.tally(matches, N, 1P/2P/両方, 英語名, 相手 tetris/puyo/all)`。相手で絞ってから直近 N 試合。
-  - 設定画面「開幕の統計」タブ: 対象・相手・直近 N（`ui.opener_stats` に保存）、ドーナツ円グラフ（上位 7 色＋その他＋認識なし、ホバーで件数・勝率）、全テンプレの表、記録を消すボタン。HUD の `opener_recorded` で自動更新。
+  - 設定画面「試合の統計」: 対象・相手・直近 N（10/20/50/100/200/500 のボタン、`LAST_N_CHOICES`、`ui.opener_stats` に保存）、ドーナツ円グラフ（上位 7 色＋その他＋認識なし、ホバーで件数・勝率）、全テンプレの表、記録を消すボタン。HUD の `opener_recorded` で自動更新。
   - 平均（ユーザー: 直近の平均 APM・PPS も）: 記録に各側の `stats`（apm/pps/app と match_stats、`opener_stats.match_numbers`）、`opener_stats.averages` が同じ試合で平均（数値のない古い記録は除く）。タブ名は「試合の統計」に。
 - OBS の背景の濃さ（ユーザー: 中間の濃さだけ HUD と違う）: OBS のブラウザソースは `SrgbDecompress` で色をリニアにしてから重ねる（Windows の HUD は sRGB のまま）→ 半透明の黒が OBS では薄い（濃さ 50% で HUD 45 / OBS 64）。ページの `rgba()` が `obsAlpha()` で透明度を補正（中間の灰色の背景で HUD と同じ結果になる値、黒は正確）。比較ツールも OBS の重ね方を再現（`over_bg_obs`）。
 - 文字の縁の太さ: `display.text_outline_width`（文字の大きさの %、2〜30、初期 10）。HUD `set_text_style(..., width_pct)`、OBS も同じ。
