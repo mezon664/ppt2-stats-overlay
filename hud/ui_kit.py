@@ -41,6 +41,8 @@ THEMES = {
              "line": "#d4d4d8", "radius": 6},
 }
 THEME_ORDER = ("navy", "light", "game", "mono")
+# Sliders, switches and check boxes stay blue in every theme (user: as before)
+CONTROL = "#2f6fd6"
 DEFAULT_THEME = "mono"
 T = dict(THEMES[DEFAULT_THEME])   # the theme in use (apply_theme)
 ACCENT = T["accent"]              # (read by the rating chart when it paints)
@@ -90,14 +92,14 @@ QSpinBox::up-button, QSpinBox::down-button {{ border: none; width: 20px; backgro
 QSpinBox::up-arrow {{ image: url({ASSETS}/chevron_up.svg); width: 10px; height: 10px; }}
 QSpinBox::down-arrow {{ image: url({ASSETS}/chevron_down.svg); width: 10px; height: 10px; }}
 QCheckBox::indicator, QListWidget::indicator {{ width: 16px; height: 16px; border: 1.5px solid #9aa3b8; border-radius: 4px; background: #ffffff; }}
-QCheckBox::indicator:checked, QListWidget::indicator:checked {{ background: {c['accent']}; border-color: {c['accent']}; image: url({ASSETS}/check.svg); }}
+QCheckBox::indicator:checked, QListWidget::indicator:checked {{ background: {CONTROL}; border-color: {CONTROL}; image: url({ASSETS}/check.svg); }}
 QCheckBox::indicator:disabled {{ background: #eef0f5; border-color: #d4d8e2; }}
 QListWidget {{ background: #ffffff; border: 1px solid {c['card_border']}; border-radius: {r2}px; padding: 2px; }}
 QListWidget::item {{ padding: 4px 6px; border-radius: {max(3, r2 - 2)}px; }}
 QListWidget::item:selected {{ background: {c['accent_soft']}; color: {c['text']}; }}
 QSlider::groove:horizontal {{ height: 6px; background: #dde1ea; border-radius: 3px; }}
-QSlider::sub-page:horizontal {{ background: {c['accent']}; border-radius: 3px; }}
-QSlider::handle:horizontal {{ background: #ffffff; border: 2px solid {c['accent']}; width: 14px; height: 14px; margin: -6px 0; border-radius: 9px; }}
+QSlider::sub-page:horizontal {{ background: {CONTROL}; border-radius: 3px; }}
+QSlider::handle:horizontal {{ background: #ffffff; border: 2px solid {CONTROL}; width: 14px; height: 14px; margin: -6px 0; border-radius: 9px; }}
 QCheckBox {{ spacing: 8px; background: transparent; }}
 QTableWidget {{ background: #ffffff; border: 1px solid {c['card_border']}; border-radius: {r2}px; gridline-color: #eceef4; }}
 QHeaderView::section {{ background: #f6f7fa; border: none; border-bottom: 1px solid #eceef4; padding: 4px 6px; font-weight: 700; }}
@@ -179,7 +181,7 @@ class Switch(QtWidgets.QCheckBox):
         on = self.isChecked()
         enabled = self.isEnabled()
         y = (self.height() - self.H) / 2
-        track = QtGui.QColor(T["accent"] if on else "#c3c9d6")
+        track = QtGui.QColor(CONTROL if on else "#c3c9d6")
         if not enabled:
             track.setAlphaF(0.45)
         p.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -191,7 +193,7 @@ class Switch(QtWidgets.QCheckBox):
         p.drawEllipse(QtCore.QRectF(x, y + 3, knob, knob))
         if self.hasFocus():
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            p.setPen(QtGui.QPen(QtGui.QColor(T["accent"]), 1.5))
+            p.setPen(QtGui.QPen(QtGui.QColor(CONTROL), 1.5))
             p.drawRoundedRect(QtCore.QRectF(0, y - 1, self.W + 2, self.H + 2), self.H / 2 + 1, self.H / 2 + 1)
         if self.text():
             p.setPen(QtGui.QColor(T["text"] if enabled else "#9aa0b2"))
