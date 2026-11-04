@@ -14,7 +14,12 @@ Each league has its own rating (user: see them per league). The まちうけ
 screen doesn't say which league it is, so a rating counts for the league whose
 menu was last on screen (its title, top left: LEAGUE_TITLES). A league whose
 title template isn't there yet (only パズルリーグ was recorded so far) can't
-be told apart: ratings read while no league is known aren't kept.
+be told apart: on its menu the league becomes unknown, and ratings read while
+no league is known aren't kept (not put down as the league seen before).
+
+A rating is kept when it differs from that league's last kept one: going to
+the まちうけ screen, back and there again keeps it once, and the same number
+in another league is that league's own point (user's request).
 
 Each new value goes to config/rating_history.json (the newest KEEP per
 league), shown by the settings window's レート page.
@@ -106,12 +111,18 @@ class RatingReader:
 
     def own_box(self, frame):
         """The box holding your rating on this frame, or None (another screen)."""
+        found = self.find(frame)
+        return found[1] if found else None
+
+    def find(self, frame):
+        """("wait", box) on the まちうけ screen, ("menu", box) on a league's
+        menu, or None."""
         k = frame.shape[1] / BASE_W
         for side in ("left", "right"):
             if self._found(frame, side, YOU[side], k):
-                return _scale(YOU[side]["box"], k)
+                return "wait", _scale(YOU[side]["box"], k)
         if self._found(frame, "menu", MENU, k):
-            return _scale(MENU["box"], k)
+            return "menu", _scale(MENU["box"], k)
         return None
 
     # --- reading the number ---
@@ -176,13 +187,16 @@ class RatingReader:
         if now - self._last_t < READ_EVERY_S:
             return None
         self._last_t = now
-        league = self.league_on_screen(frame)
-        if league is not None:
-            self.league = league
-        box = self.own_box(frame)
-        if box is None or self.league is None:
+        found = self.find(frame)
+        if found is not None and found[0] == "menu":
+            # a league's menu: this league from now on — None for one whose
+            # title isn't known yet, so its rating isn't put down as the
+            # league seen before (all four menus look alike but for the title)
+            self.league = self.league_on_screen(frame)
+        if found is None or self.league is None:
             self._pending = None
             return None
+        box = found[1]
         x1, y1, x2, y2 = box
         value = self.read_number(frame[y1:y2, x1:x2])
         if value is None:

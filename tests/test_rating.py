@@ -63,3 +63,27 @@ def test_history_per_league(tmp_path):
     assert rating.add("puzzle", 2615, path, now=4)
     assert [p["rating"] for p in rating.load(path, "puzzle")] == [2610, 2615]
     assert [p["rating"] for p in rating.load(path, "tetris")] == [1800]
+
+
+def test_an_unknown_leagues_menu_is_not_put_down_as_the_last_league(monkeypatch):
+    """Into another league whose menu title isn't known yet: its rating isn't
+    kept as the league seen before (Puzzle)."""
+    r = rating.RatingReader()
+    monkeypatch.setattr(r, "read_number", lambda crop: 2615)
+    menu, wait = frame("rating_menu.jpg"), frame("rating_wait_2p.jpg")
+    other_menu = menu.copy()
+    other_menu[40:150, 20:340] = (240, 240, 240)       # another league's title
+    r.update(menu, now=10)
+    assert r.league == "puzzle"
+    r.update(other_menu, now=11)
+    assert r.league is None
+    assert r.update(wait, now=12) is None and r.update(wait, now=13) is None
+
+
+def test_same_number_kept_once_per_league_but_again_for_another(tmp_path):
+    """まちうけ → back → まちうけ: once. The same number in another league: its own."""
+    path = tmp_path / "r.json"
+    assert rating.add("puzzle", 2610, path, now=1)
+    assert not rating.add("puzzle", 2610, path, now=2)
+    assert rating.add("tetris", 2610, path, now=3)
+    assert len(rating.load(path)) == 2
