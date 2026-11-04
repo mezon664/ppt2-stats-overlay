@@ -169,7 +169,11 @@ function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 
   const font = fontOf(px, weight);
   const w = textWidth(px, weight, text);
   if (align === "right") x -= w; else if (align === "center") x -= w / 2;
-  const thicken = THICKEN * thickenShare * px;
+  // The browser draws letters a little heavier than Qt does (user: OBS's text
+  // looked slightly bold and smudged), so it's thickened less here: measured
+  // against the HUD at text weights 15 / 40 / 65 / 100 (the light text's
+  // amount within ±6%, tools/validation/hud_vs_obs.py)
+  const thicken = THICKEN * thickenShare * px * (BOLD >= 700 ? Math.min(1, 0.4 + 4 * THICKEN) : 0.3);
   outline = Math.max(outline, TEXT_OUTLINE * px);
   ctx.font = font; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; ctx.lineJoin = "round";
   if (outline > 0) {
@@ -989,7 +993,8 @@ function paint() {
     // Each part drawn at SUPERSAMPLE x the size on its own small canvas, then
     // shrunk into place: the browser snaps letters to whole pixels (they came
     // out heavier than the HUD's, which Qt draws as smooth outlines), and at
-    // twice the size that snapping mostly averages out.
+    // four times the size that snapping averages out (2x still left them ~15%
+    // heavier; user: slightly bold and smudged).
     const k = dpr * SUPERSAMPLE;
     const off = partCanvas(part, Math.ceil(part.w * k), Math.ceil(part.h * k));
     const octx = off.getContext("2d");
@@ -1003,7 +1008,7 @@ function paint() {
     ctx.drawImage(off, 0, 0, part.w * k, part.h * k, part.x, part.y, part.w, part.h);
   }
 }
-const SUPERSAMPLE = 2;
+const SUPERSAMPLE = 4;
 function partCanvas(part, w, h) {
   const c = part.canvas || (part.canvas = document.createElement("canvas"));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
