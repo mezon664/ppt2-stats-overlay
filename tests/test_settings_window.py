@@ -207,3 +207,21 @@ def test_game_screen_and_obs_switch_on_their_own(tmp_path, monkeypatch):
     assert not w.show_on_hud.isChecked() and w.show_on_obs.isChecked()
     w.set_enabled(False)
     assert not w.show_on_obs.isEnabled()      # greyed while everything is off
+
+
+def test_the_new_layout(tmp_path, monkeypatch):
+    """The menu down the left and its pages (the mockup of 2026-11-04); a
+    part's details only while it's switched on; the outline's thickness."""
+    w = window(tmp_path, monkeypatch)
+    assert w.tabs.count() == 7
+    assert [w.tabs.tabText(i) for i in range(3)] == ["ホーム", "表示する項目", "見た目"]
+    w._show_values(display_settings({"display": {"show_event_log": False, "show_summary": True}}))
+    assert w.events_card.body.isHidden() and not w.summary_card.body.isHidden()
+    w.show_event_log.setChecked(True)
+    assert not w.events_card.body.isHidden()
+    w.outline_width.setValue(18)
+    assert w.values()["text_outline_width"] == 18
+    w.text_outline.setChecked(False)
+    assert not w.outline_width.isEnabled()
+    w.players.setCurrentIndex(w.players.findData("left"))   # a row of buttons answering like a dropdown
+    assert w.values()["players"] == "left"

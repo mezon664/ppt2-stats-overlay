@@ -296,3 +296,7 @@
   - 集計: `opener_stats.tally(matches, N, 1P/2P/両方, 英語名, 相手 tetris/puyo/all)`。相手で絞ってから直近 N 試合。
   - 設定画面「開幕の統計」タブ: 対象・相手・直近 N（`ui.opener_stats` に保存）、ドーナツ円グラフ（上位 7 色＋その他＋認識なし、ホバーで件数・勝率）、全テンプレの表、記録を消すボタン。HUD の `opener_recorded` で自動更新。
   - 平均（ユーザー: 直近の平均 APM・PPS も）: 記録に各側の `stats`（apm/pps/app と match_stats、`opener_stats.match_numbers`）、`opener_stats.averages` が同じ試合で平均（数値のない古い記録は除く）。タブ名は「試合の統計」に。
+- OBS の背景の濃さ（ユーザー: 中間の濃さだけ HUD と違う）: OBS のブラウザソースは `SrgbDecompress` で色をリニアにしてから重ねる（Windows の HUD は sRGB のまま）→ 半透明の黒が OBS では薄い（濃さ 50% で HUD 45 / OBS 64）。ページの `rgba()` が `obsAlpha()` で透明度を補正（中間の灰色の背景で HUD と同じ結果になる値、黒は正確）。比較ツールも OBS の重ね方を再現（`over_bg_obs`）。
+- 文字の縁の太さ: `display.text_outline_width`（文字の大きさの %、2〜30、初期 10）。HUD `set_text_style(..., width_pct)`、OBS も同じ。
+- 設定画面の作り直し（ユーザーがモックアップ https://claude.ai/artifact/3Fzq4GAsrKc258NjxwAuv7 を承認）: `hud/ui_kit.py`（スタイル、`Card`・`Switch`・`Segmented`（QComboBox と同じ呼び方）・`SideNav`（QTabWidget と同じ呼び方）・メニューのアイコン）。ページはホーム／表示する項目／見た目／位置／試合の統計／OBS／その他。値の読み書き（`values` / `_show_values`）は前のまま。
+- ぷよテト2と一緒に起動（ユーザー、設定のホーム）: `scripts/autostart.py` が HKCU の Run に `scripts/game_watch.py` を登録（管理者権限なし）。見張りは 3 秒ごとに `PuyoPuyoTetris2.exe` を探し、ゲームが起動した瞬間に（アプリが動いていなければ）アプリを起動。1 回のゲームにつき 1 回だけ。二重に動かない（ミューテックス）。オフで登録を消して見張りを止める。

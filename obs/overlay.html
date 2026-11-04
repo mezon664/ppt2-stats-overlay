@@ -69,7 +69,7 @@ const SUMMARY_ROWS = [   // [key, label, decimals; null = text] (hud/overlay.py 
   ["tspin", "s_tspin", 0], ["tspin_single", "s_tss", 0], ["tspin_double", "s_tsd", 0], ["tspin_triple", "s_tst", 0],
   ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];
 const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enabled: true, opener_language: "auto",
-  opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, bg_color: "#000000", text_color: "#ffffff",
+  opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, text_outline_width: 10, bg_color: "#000000", text_color: "#ffffff",
   line_color: "#ffffff", font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0,
   offset_x: 0, offset_y: 0, clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
   summary_offset_x: 0, summary_offset_y: 0, stats_left_offset_x: 0, stats_left_offset_y: 0,
@@ -91,7 +91,35 @@ const smooth = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
 const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ""); const v = m ? m[1] : "ffffff";
   return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
 const mix = (a, b, t) => a.map((x, i) => pyRound(x + (b[i] - x) * t));
-const rgba = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+// OBS lays a browser source over the scene in linear light (its "SrgbDecompress"
+// drawing), while Windows lays the HUD over the game on the sRGB values, so a
+// see-through color looked lighter in OBS than on the HUD (user: the
+// background strength differs; the same only when fully solid or clear). A
+// see-through color's alpha is changed so that OBS's blend comes out as the
+// HUD's would, over a mid-gray backdrop (exact for black, the usual band).
+const toLinear = (v) => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+const obsAlphaCache = new Map();
+function obsAlpha(c, a) {
+  if (!(a > 0 && a < 1)) return a;
+  const f = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255, key = f.toFixed(3) + "|" + a.toFixed(4);
+  let out = obsAlphaCache.get(key);
+  if (out === undefined) {
+    const back = 0.5, want = toLinear(f * a + back * (1 - a));
+    // OBS: the page's premultiplied color made linear, plus the backdrop's share
+    const got = (x) => toLinear(f * x) + toLinear(back) * (1 - x);
+    let lo = 0, hi = 1;   // got() runs from the backdrop to the color: one direction
+    const up = got(1) > got(0);
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if ((got(mid) < want) === up) lo = mid; else hi = mid;
+    }
+    out = Math.abs(got(1) - got(0)) < 1e-6 ? a : (lo + hi) / 2;
+    if (obsAlphaCache.size > 2000) obsAlphaCache.clear();
+    obsAlphaCache.set(key, out);
+  }
+  return out;
+}
+const rgba = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${obsAlpha(c, a).toFixed(4)})`;
 const luminance = (c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
 const $ = (id) => document.getElementById(id);
 
@@ -197,7 +225,7 @@ function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 
     eachChar(q, font, text, x, (c, cx) => { q.fillText(c, cx, y); q.strokeText(c, cx, y); });
     const dev = new DOMPoint(left, top).matrixTransform(ctx.getTransform());
     ctx.save();
-    ctx.globalAlpha *= alpha;
+    ctx.globalAlpha *= obsAlpha(color, alpha);   // (see obsAlpha)
     ctx.setTransform(1, 0, 0, 1, 0, 0);   // the layer is already at device pixels
     ctx.drawImage(layerCanvas, dev.x, dev.y);
     ctx.restore();
@@ -854,7 +882,8 @@ function layout() {
   scale = window.innerWidth / REF_W;
   const s = scale, d = display;
   [BOLD, SEMI, THICKEN] = weightStyle(d.text_weight);
-  TEXT_OUTLINE = d.text_outline ? TEXT_OUTLINE_RATIO : 0;
+  // display.text_outline_width: the outline's thickness, % of the text size
+  TEXT_OUTLINE = d.text_outline ? (Number(d.text_outline_width) > 0 ? d.text_outline_width / 100 : TEXT_OUTLINE_RATIO) : 0;
   setColors(d.bg_color, d.text_color, d.line_color);
   setFont(d.font_family, d.font_file);
   setLabels(d.labels, d.language);

@@ -98,7 +98,26 @@ def obs_image(display, frozen, work):
         raise RuntimeError("Edge wrote no screenshot")
     if img.shape[2] == 3:
         img = np.dstack([img, np.full(img.shape[:2], 255, np.uint8)])
-    return over_bg(img[:H, :W])
+    return over_bg_obs(img[:H, :W])
+
+
+def _to_linear(v):
+    return np.where(v <= 0.04045, v / 12.92, ((v + 0.055) / 1.055) ** 2.4)
+
+
+def _to_srgb(v):
+    return np.where(v <= 0.0031308, v * 12.92, 1.055 * np.clip(v, 0, None) ** (1 / 2.4) - 0.055)
+
+
+def over_bg_obs(bgra):
+    """The page on the backdrop the way OBS lays a browser source on the scene:
+    its premultiplied colors made linear, blended in linear light."""
+    a = bgra[:, :, 3:4].astype(np.float32) / 255
+    pre = bgra[:, :, :3].astype(np.float32) / 255 * a
+    bg = np.empty(bgra.shape[:2] + (3,), np.float32)
+    bg[:] = np.array(BG, np.float32) / 255
+    out = _to_srgb(_to_linear(pre) + _to_linear(bg) * (1 - a))
+    return np.clip(out * 255 + 0.5, 0, 255).astype(np.uint8)
 
 
 def over_bg(bgra):

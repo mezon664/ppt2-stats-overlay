@@ -41,6 +41,7 @@ DISPLAY_DEFAULTS = {
     # what used to be "bold", 30 what used to be "normal" (see weight_style)
     "text_weight": 65,
     "text_outline": True,        # black outline around all overlay text
+    "text_outline_width": 10,    # its thickness, % of the text size (user: make it adjustable)
     "language": "ja",           # "ja" / "en": overlay text (states, events) and the settings window
     "stats_position": "left",    # "left": each board's lower-left, "right": lower-right
     "scale": 1.0,                # size of everything shown (0.5 - 2.0)
@@ -148,6 +149,7 @@ DISPLAY_RANGES = {
     "event_log_count": (1, 10),
     "opener_seconds": (0, 30),
     "text_weight": (0, 100),
+    "text_outline_width": (2, 30),
 }
 # text_weight used to be a choice; those values still read as what they looked like
 OLD_TEXT_WEIGHTS = {"normal": 30, "bold": 65}

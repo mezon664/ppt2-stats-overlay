@@ -32,6 +32,8 @@ import opener_stats
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+import ui_kit as ui
+
 
 NUDGE_STEP = 2   # reference px per arrow click (held down: repeats)
 
@@ -85,11 +87,49 @@ DEFAULT_LABELS_EN = {**DEFAULT_LABELS, "ren": "COMBO"}   # English: the game say
 TEXT = {
     "title": {"ja": "PPTetrics - 表示設定", "en": "PPTetrics - Display settings"},
     "tab.show": {"ja": "表示", "en": "Show"},
-    "tab.look": {"ja": "デザイン", "en": "Look"},
+    "tab.look": {"ja": "見た目", "en": "Look"},
     "tab.place": {"ja": "位置", "en": "Position"},
     "tab.obs": {"ja": "OBSに映す", "en": "Show in OBS"},
     "tab.update": {"ja": "アップデート", "en": "Updates"},
     "tab.stats": {"ja": "試合の統計", "en": "Match stats"},
+    "tab.home": {"ja": "ホーム", "en": "Home"},
+    "tab.items": {"ja": "表示する項目", "en": "What's shown"},
+    "tab.other": {"ja": "その他（言語・更新）", "en": "Other (language, updates)"},
+    "page.home": {"ja": "ホーム", "en": "Home"},
+    "page.items": {"ja": "表示する項目", "en": "What's shown"},
+    "page.look": {"ja": "見た目", "en": "Look"},
+    "page.place": {"ja": "位置", "en": "Position"},
+    "page.stats": {"ja": "試合の統計", "en": "Match stats"},
+    "page.obs": {"ja": "OBS に映す", "en": "Show in OBS"},
+    "page.other": {"ja": "その他", "en": "Other"},
+    "card.power": {"ja": "表示", "en": "Display"},
+    "autostart": {"ja": "ぷよテト2と一緒に起動", "en": "Start with Puyo Puyo Tetris 2"},
+    "autostart_desc": {"ja": "ゲームを起動すると、このツールも自動で起動します",
+                       "en": "When the game starts, this tool starts by itself"},
+    "autostart_note": {"ja": "オンの間は、Windows の起動時に小さな見張り役が動き出し、ゲームの起動を待ちます（ほぼ負荷はありません）。"
+                             "プレイ中にツールを閉じた場合は、次にゲームを起動したときにまた起動します。",
+                       "en": "While on, a small watcher starts with Windows and waits for the game (it costs next to nothing). "
+                             "If you close the tool while playing, it comes back the next time the game starts."},
+    "autostart_failed": {"ja": "設定を変えられませんでした: {}", "en": "Couldn't change it: {}"},
+    "design_desc": {"ja": "クリックで切り替え（すぐ反映）", "en": "Click to switch (applies at once)"},
+    "card.players": {"ja": "表示するプレイヤー", "en": "Players shown"},
+    "card.clock": {"ja": "試合時間", "en": "Match time"},
+    "card.clock_desc": {"ja": "盤面のあいだに出す時計。ぷよぷよとの対戦中は自動で隠れます",
+                        "en": "The clock between the boards. Hidden by itself against a Puyo Puyo player"},
+    "card.events": {"ja": "イベント履歴", "en": "Event history"},
+    "card.events_desc": {"ja": "TETRIS・T-SPIN・REN などを数値の上に出す", "en": "TETRIS, T-SPIN, combos... above the numbers"},
+    "card.summary": {"ja": "試合結果", "en": "Match summary"},
+    "card.summary_desc": {"ja": "試合が終わったら、両プレイヤーのまとめを出す（出す項目を選べます）",
+                          "en": "Both players' totals when a match ends (pick the rows)"},
+    "card.opener": {"ja": "開幕テンプレ名", "en": "Opener name"},
+    "card.opener_desc": {"ja": "認識できたときに名前を出す", "en": "Its name, when it's recognized"},
+    "card.preview": {"ja": "見本", "en": "Preview"},
+    "look_desc": {"ja": "「全体」以外を選ぶと、その部分だけを変えられます", "en": "Pick a part to change only that part"},
+    "text_outline_row": {"ja": "縁取り", "en": "Outline"},
+    "text_outline_width": {"ja": "縁の太さ", "en": "Outline width"},
+    "card.drag": {"ja": "ゲーム画面で動かす", "en": "Move on the game screen"},
+    "card.language": {"ja": "言語 / Language", "en": "言語 / Language"},
+    "card.window": {"ja": "設定画面", "en": "This window"},
     "st.title": {"ja": "直近の試合の平均と、開幕テンプレの使用率・勝率", "en": "Recent averages, and each opener's use and win rate"},
     "st.side": {"ja": "対象", "en": "Player"},
     "st.side_left": {"ja": "1P", "en": "1P"},
@@ -149,7 +189,7 @@ TEXT = {
                 "en": "Updating keeps your settings, loaded fonts and presets. Nothing updates without you pressing the button.\n\n"
                       "PPTetrics is an unofficial fan tool, not affiliated with SEGA or The Tetris Company.\n"
                       "Opener data: テトリステンプレ整理Wiki (https://w.atwiki.jp/sasasa123/)"},
-    "obs_title": {"ja": "OBS にこの表示を重ねる手順", "en": "Putting this display on top of the game in OBS"},
+    "obs_title": {"ja": "OBS に重ねる手順", "en": "Putting it on top of the game in OBS"},
     "obs_steps": {
         "ja": "<ol style='margin-left:-20px'>"
               "<li>このアプリは起動したままにします（数字はここから OBS に届きます）。</li>"
@@ -193,8 +233,9 @@ TEXT = {
     "style.tower": {"ja": "縦メーター", "en": "Bar towers"},
     "style.minimal": {"ja": "ミニマル線", "en": "Minimal lines"},
     "style.trend": {"ja": "推移グラフ", "en": "Trend lines"},
-    "items": {"ja": "表示する数値（上から順）", "en": "Numbers shown (top to bottom)"},
-    "items_hint": {"ja": "チェックで表示、▲▼で並べ替え", "en": "Tick to show, ▲▼ to reorder"},
+    "items": {"ja": "数値", "en": "Numbers"},
+    "items_hint": {"ja": "盤面の横に出す数値。チェックで表示、つかむか ▲▼ で並べ替え（上から順）",
+                   "en": "The numbers beside the boards. Tick to show, drag or ▲▼ to reorder (top to bottom)"},
     "item.apm": {"ja": "APM（1分あたりの火力）", "en": "APM (attack per minute)"},
     "item.pps": {"ja": "PPS（1秒あたりのミノ数）", "en": "PPS (pieces per second)"},
     "item.app": {"ja": "APP（1ミノあたりの火力）", "en": "APP (attack per piece)"},
@@ -203,33 +244,32 @@ TEXT = {
     "item.ren": {"ja": "今のREN", "en": "Current combo"},
     "item.b2b": {"ja": "B2B（続いている回数）", "en": "Back-to-Back chain"},
     "move_up": {"ja": "▲", "en": "▲"}, "move_down": {"ja": "▼", "en": "▼"},
-    "labels": {"ja": "ラベルの文言（空欄＝標準）", "en": "Label wording (blank = default)"},
+    "labels": {"ja": "表示名（空欄＝標準）", "en": "Names shown (blank = default)"},
     "parts_shown": {"ja": "ほかの表示", "en": "Other parts"},
-    "always_show": {"ja": "ホーム画面やメニューでも常に表示する（オフ＝試合画面のときだけ表示）",
+    "always_show": {"ja": "ホーム画面やメニューでも表示する（オフ＝試合画面のときだけ）",
                     "en": "Always show, also on the home screen and menus (off = only on the match screen)"},
     "players": {"ja": "表示するプレイヤー", "en": "Players shown"},
-    "pl.both": {"ja": "両方（1P と 2P）", "en": "Both (1P and 2P)"},
+    "pl.both": {"ja": "両方", "en": "Both"},
     "pl.left": {"ja": "1P だけ", "en": "1P only"},
     "pl.right": {"ja": "2P だけ", "en": "2P only"},
-    "opener_seconds": {"ja": "開幕テンプレ名を出しておく時間", "en": "Opener name shown for"},
+    "opener_seconds": {"ja": "出しておく時間", "en": "Shown for"},
     "os.forever": {"ja": "試合が終わるまで", "en": "Until the match ends"},
-    "opener_language": {"ja": "開幕テンプレ名の言語", "en": "Opener name language"},
+    "opener_language": {"ja": "名前の言語", "en": "Name language"},
     "ol.auto": {"ja": "表示の言語と同じ", "en": "Same as the display language"},
     "ol.ja": {"ja": "日本語", "en": "Japanese"},
     "ol.en": {"ja": "英語（英語名がなければ日本語）", "en": "English (Japanese where there's no English name)"},
     "os.seconds": {"ja": "{} 秒", "en": "{} s"},
     "show_clock": {"ja": "試合時間を表示", "en": "Show match time"},
     "show_event_log": {"ja": "イベント履歴を表示（TETRIS / REN など）", "en": "Show event history (TETRIS, combos, ...)"},
-    "event_log_count": {"ja": "イベント履歴の件数", "en": "Events shown"},
+    "event_log_count": {"ja": "件数", "en": "How many"},
     "count_suffix": {"ja": " 件", "en": ""},
     "show_opener": {"ja": "開幕テンプレ名を表示（認識できたとき）", "en": "Show the opener name (when recognized)"},
-    "opener_display": {"ja": "開幕テンプレの表示", "en": "Opener display"},
-    "od.board": {"ja": "A 盤面の上に大きく（数秒）", "en": "A  Big over the board (a few seconds)"},
-    "od.hold": {"ja": "B HOLDの下に小さく（数秒）", "en": "B  Small under HOLD (a few seconds)"},
-    "od.namebar": {"ja": "C 名前の帯の上（数秒）", "en": "C  On the name bar (a few seconds)"},
-    "od.top": {"ja": "D 上の中央に両者まとめて（数秒）", "en": "D  Both at the top center (a few seconds)"},
-    "od.cat": {"ja": "E 猫",
-               "en": "E  Cat"},
+    "opener_display": {"ja": "出し方", "en": "Where"},
+    "od.board": {"ja": "盤面の上", "en": "Over the board"},
+    "od.hold": {"ja": "HOLD の下", "en": "Under HOLD"},
+    "od.namebar": {"ja": "名前の帯", "en": "Name bar"},
+    "od.top": {"ja": "上の中央", "en": "Top center"},
+    "od.cat": {"ja": "猫", "en": "Cat"},
     "show_summary": {"ja": "試合が終わったら試合結果（まとめ）を表示", "en": "Show a match summary when a match ends"},
     "summary_items": {"ja": "試合結果に出す項目", "en": "Summary rows"},
     "sum.opener": {"ja": "開幕テンプレ", "en": "Opener"},
@@ -257,7 +297,7 @@ TEXT = {
     "text_weight": {"ja": "文字の太さ", "en": "Text weight"},
     "tw.thin": {"ja": "細い", "en": "Thin"},
     "tw.thick": {"ja": "太い", "en": "Thick"},
-    "text_outline": {"ja": "文字に縁をつける", "en": "Outline the text"},
+    "text_outline": {"ja": "すべての文字に縁をつける", "en": "Outline all text"},
     "font": {"ja": "フォント", "en": "Font"},
     "font_default": {"ja": "標準", "en": "Default"},
     "font_load": {"ja": "ファイルから読み込む…", "en": "Load from file…"},
@@ -266,7 +306,7 @@ TEXT = {
                          "en": "This file couldn't be loaded as a font."},
     "look_group": {"ja": "大きさ・色・背景", "en": "Size, colors, background"},
     "look_target": {"ja": "対象", "en": "Applies to"},
-    "lt.all": {"ja": "全体（全部まとめて）", "en": "Everything at once"},
+    "lt.all": {"ja": "全体", "en": "Everything"},
     "lt.stats": {"ja": "数値", "en": "Numbers"},
     "lt.clock": {"ja": "試合時間", "en": "Match time"},
     "lt.events": {"ja": "イベント履歴", "en": "Event history"},
@@ -282,10 +322,10 @@ TEXT = {
     "player_color_left": {"ja": "1P", "en": "1P"},
     "player_color_right": {"ja": "2P", "en": "2P"},
     "color_reset": {"ja": "元に戻す", "en": "Reset"},
-    "position": {"ja": "表示位置", "en": "Placement"},
+    "position": {"ja": "数値の置き場所", "en": "Where the numbers go"},
     "pos.left": {"ja": "盤面の左下", "en": "Lower left of each board"},
     "pos.right": {"ja": "盤面の右下", "en": "Lower right of each board"},
-    "adjust": {"ja": "位置の調整", "en": "Position"},
+    "adjust": {"ja": "細かい調整（1px ずつ）", "en": "Fine steps (1 px)"},
     "move_what": {"ja": "動かすもの", "en": "Move"},
     "target.stats": {"ja": "数値（1P と 2P 一緒に）", "en": "Numbers (1P and 2P together)"},
     "target.stats_left": {"ja": "1P の数値", "en": "1P numbers"},
@@ -301,12 +341,12 @@ TEXT = {
     "up": {"ja": "上へ", "en": "Up"}, "down": {"ja": "下へ", "en": "Down"},
     "left": {"ja": "左へ", "en": "Left"}, "right": {"ja": "右へ", "en": "Right"},
     "reset_pos": {"ja": "初期位置に戻す", "en": "Back to default position"},
-    "drag": {"ja": "ゲーム画面上でドラッグして動かす", "en": "Drag on the game screen"},
+    "drag": {"ja": "ゲーム画面でドラッグして動かす", "en": "Drag on the game screen"},
     "drag_done": {"ja": "完了（ドラッグでの調整を終わる）", "en": "Done (stop dragging)"},
     "hint": {"ja": "矢印は押し続けると連続で動きます。●で初期位置に戻ります。",
              "en": "Hold an arrow to keep moving. ● returns to the default position."},
-    "hint_drag": {"ja": "ドラッグ中は、どの枠もそのままつかんで動かせます。枠の上でマウスホイールを回すと大きさが変わります。",
-                  "en": " While dragging is on, grab any box on the game screen to move it; turn the mouse wheel over it to resize it."},
+    "hint_drag": {"ja": "押すと、ゲーム画面の表示に黄色い枠が出ます。枠をつかんで動かし、枠の上でマウスホイールを回すと大きさが変わります。終わったらもう一度押します。",
+                  "en": "Press it and yellow boxes appear on the game screen: drag one to move it, turn the mouse wheel over it to resize it. Press again when done."},
     "at_default": {"ja": "初期位置", "en": "Default position"},
     "from_default": {"ja": "初期位置から ", "en": "From default: "},
     "note": {"ja": "変更はすぐに HUD と OBS の表示に反映され、自動で保存されます。",
@@ -326,12 +366,14 @@ TEXT = {
 }
 
 
-PREVIEW_W, PREVIEW_H = 150, 92
+PREVIEW_W, PREVIEW_H = 128, 80   # the design cards on ホーム
+DESIGN_COLUMNS = 4
+LOOK_PREVIEW_W, LOOK_PREVIEW_H = 560, 150   # the preview on 見た目
 SAMPLE_LEFT = {"apm": {"apm": 77.8}, "pps": 2.09, "app": 0.62, "attack": 112, "pieces": 181, "ren": 3, "b2b": 2}
 SAMPLE_RIGHT = {"apm": {"apm": 43.2}, "pps": 1.74, "app": 0.41, "attack": 62, "pieces": 151, "ren": 0, "b2b": 0}
 
 
-def render_style_preview(style, d):
+def render_style_preview(style, d, size=None, u=0.85):
     """A small picture of the stat block in `style`, drawn by the HUD's own
     code with the current colors, font and rows (None if the HUD code can't
     be loaded) — so the design choice is something you can see, not a name."""
@@ -339,14 +381,14 @@ def render_style_preview(style, d):
         import overlay
     except Exception:
         return None
-    overlay.set_text_style(d["text_weight"], d["text_outline"])
+    overlay.set_text_style(d["text_weight"], d["text_outline"], d["text_outline_width"])
     overlay.set_font(d["font_family"], d["font_file"])
     overlay.set_labels(d["labels"])
     overlay.set_player_colors(d["player_color_left"], d["player_color_right"])
     items = d["stat_items"][:3] or ["apm", "pps", "app"]   # three rows are enough to show the look
     if style == "versus":
         w = overlay.VersusBlock(None)
-        w.configure(items, 0.6)
+        w.configure(items, u * 0.7)
         w.update_sides(SAMPLE_LEFT, SAMPLE_RIGHT)
     else:
         w = overlay.StatBlock(None, "left")
@@ -355,22 +397,27 @@ def render_style_preview(style, d):
             for i, k in enumerate(w.KEYS):
                 v = overlay.side_values(SAMPLE_LEFT)[k]
                 w.history[k].extend(v * (0.85 + 0.12 * math.sin(j / 3 + i) + j * 0.004) for j in range(30))
-        w.configure(style, "left", items, 0.85)
+        w.configure(style, "left", items, u)
     w.colors = (part_value(d, "stats", "bg_color"), part_value(d, "stats", "text_color"),
                 part_value(d, "stats", "line_color"))
     w.opacity = part_value(d, "stats", "background_opacity")
     w.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
     shot = w.grab()
-    pm = QtGui.QPixmap(PREVIEW_W, PREVIEW_H)
+    pw, ph = size or (PREVIEW_W, PREVIEW_H)
+    pm = QtGui.QPixmap(pw, ph)
+    pm.fill(QtCore.Qt.GlobalColor.transparent)
     p = QtGui.QPainter(pm)
-    g = QtGui.QLinearGradient(0, 0, PREVIEW_W, PREVIEW_H)   # a game-ish backdrop, light and dark parts
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    g = QtGui.QLinearGradient(0, 0, pw, ph)   # a game-ish backdrop, light and dark parts
     g.setColorAt(0.0, QtGui.QColor(150, 186, 214))
     g.setColorAt(1.0, QtGui.QColor(92, 74, 64))
-    p.fillRect(pm.rect(), g)
-    if shot.width() > PREVIEW_W - 8 or shot.height() > PREVIEW_H - 8:
-        shot = shot.scaled(PREVIEW_W - 8, PREVIEW_H - 8, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+    path = QtGui.QPainterPath()
+    path.addRoundedRect(QtCore.QRectF(0, 0, pw, ph), 7, 7)
+    p.fillPath(path, g)
+    if shot.width() > pw - 8 or shot.height() > ph - 8:
+        shot = shot.scaled(pw - 8, ph - 8, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                            QtCore.Qt.TransformationMode.SmoothTransformation)
-    p.drawPixmap((PREVIEW_W - shot.width()) // 2, (PREVIEW_H - shot.height()) // 2, shot)
+    p.drawPixmap((pw - shot.width()) // 2, (ph - shot.height()) // 2, shot)
     p.end()
     w.deleteLater()
     return pm
@@ -503,6 +550,9 @@ class SettingsWindow(QtWidgets.QWidget):
         """drag_available: the HUD runs in this same process, so its parts can
         be dragged directly (not when this window is run on its own)."""
         super().__init__()
+        self.setObjectName("settingsRoot")
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(ui.STYLE)
         self.lang = "ja"
         self._drag_available = drag_available
         self._offsets = {key: [0, 0] for key in TARGET_ORDER}
@@ -529,32 +579,25 @@ class SettingsWindow(QtWidgets.QWidget):
         self._save_timer.setInterval(300)  # don't write the file on every slider step
         self._save_timer.timeout.connect(self._save)
         self._row_labels = {}
+        self._page_titles = {}
 
-        # The on/off switch, above everything (user: easy to find)
-        # off -> on; on but hidden (home screen etc.) -> shown anyway
-        # (display.force_show, user's request); on -> off
-        self._enabled, self._force = True, False
-        self._off_match_screen = False   # from the HUD (set_match_screen)
-        self.enabled_button = QtWidgets.QPushButton()
-        self.enabled_button.setMinimumHeight(40)
-        self.enabled_button.clicked.connect(self._enabled_clicked)
-        # where it shows while on: over the game / in OBS, each on its own (user's request)
-        self.show_on_hud = QtWidgets.QCheckBox()
-        self.show_on_obs = QtWidgets.QCheckBox()
-        for c in (self.show_on_hud, self.show_on_obs):
-            c.setChecked(True)
-            c.toggled.connect(self._changed)
-        self.on_top_check = QtWidgets.QCheckBox()
-        self.on_top_check.setChecked(self._settings_on_top)
-        self.on_top_check.toggled.connect(self._set_settings_on_top)
-        self.tabs = QtWidgets.QTabWidget()
-        # the look first: it's what people come to change, and the window opens on it
-        self.tabs.addTab(self._scrolling(self._build_look_tab()), "")
-        self.tabs.addTab(self._scrolling(self._build_show_tab()), "")
-        self.tabs.addTab(self._build_place_tab(drag_available), "")
-        self.tabs.addTab(self._build_obs_tab(), "")
-        self.tabs.addTab(self._build_stats_tab(), "")
-        self.tabs.addTab(self._build_update_tab(), "")
+        # The pages (user's request: easier to follow, a fresh look — the
+        # mockup of 2026-11-04): a menu down the left instead of tabs, each
+        # thing in its own card, a part's details only while it's switched on.
+        from version import VERSION
+        try:
+            import overlay
+            brand = QtGui.QIcon(QtGui.QPixmap.fromImage(overlay.icon_image(56)))
+        except Exception:
+            brand = QtGui.QIcon()
+        self.tabs = ui.SideNav(brand, f"v{VERSION}")
+        self.tabs.addTab(self._build_home_page(), "", "home")
+        self.tabs.addTab(self._build_items_page(), "", "items")
+        self.tabs.addTab(self._build_look_page(), "", "look")
+        self.tabs.addTab(self._build_place_page(drag_available), "", "place")
+        self.tabs.addTab(self._build_stats_tab(), "", "stats")
+        self.tabs.addTab(self._build_obs_tab(), "", "obs")
+        self.tabs.addTab(self._build_other_page(), "", "other")
         self._update_info = None
         self._update_silent = False
         self.update_checked.connect(self._on_update_checked)
@@ -565,26 +608,20 @@ class SettingsWindow(QtWidgets.QWidget):
         self.reset_button.clicked.connect(self._reset)
         self.close_button = QtWidgets.QPushButton()
         self.close_button.clicked.connect(self.close)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.addWidget(self.reset_button)
-        buttons.addStretch(1)
-        buttons.addWidget(self.close_button)
-
-        self.note = QtWidgets.QLabel()
-        self.note.setStyleSheet("color:#71717a;")
-        self.note.setWordWrap(True)
+        self.note = ui.muted()
+        footer = QtWidgets.QWidget()
+        footer.setObjectName("footer")
+        fl = QtWidgets.QHBoxLayout(footer)
+        fl.setContentsMargins(24, 8, 24, 12)
+        fl.addWidget(self.note, 1)
+        fl.addWidget(self.reset_button)
+        fl.addWidget(self.close_button)
+        self.tabs.set_footer(footer)
 
         lay = QtWidgets.QVBoxLayout(self)
-        lay.addWidget(self.enabled_button)
-        where = QtWidgets.QHBoxLayout()
-        where.addWidget(self.show_on_hud)
-        where.addWidget(self.show_on_obs)
-        where.addStretch(1)
-        lay.addLayout(where)
-        lay.addWidget(self.on_top_check)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.tabs)
-        lay.addWidget(self.note)
-        lay.addLayout(buttons)
+        self.resize(900, 760)
         self.retranslate()
         self._loading = False
         # The mouse wheel only scrolls: over a dropdown, number box or slider it
@@ -603,48 +640,112 @@ class SettingsWindow(QtWidgets.QWidget):
             return True
         return super().eventFilter(obj, event)
 
-    @staticmethod
-    def _scrolling(page):
-        """The design tab is tall (cards, presets, text, colors): scroll it
-        rather than grow the window past a small screen."""
-        area = QtWidgets.QScrollArea()
-        area.setWidgetResizable(True)
-        area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        area.setWidget(page)
-        area.setMinimumWidth(page.sizeHint().width() + 24)
-        screen = QtGui.QGuiApplication.primaryScreen()
-        h = page.sizeHint().height() + 8
-        if screen is not None:
-            h = min(h, int(screen.availableGeometry().height() * 0.7))
-        area.setMinimumHeight(h)
-        return area
-
-    def _row(self, form, key, widget):
+    def _row(self, key, widget, label_w=110):
+        """A labeled row (the label's text set by retranslate from TEXT[key])."""
         lab = QtWidgets.QLabel()
         self._row_labels[key] = lab
-        form.addRow(lab, widget)
+        return ui.row(lab, widget, label_w)
 
-    # --- tab 1: what is shown ---
-    def _build_show_tab(self):
-        page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        form = _form()
-        self.language = QtWidgets.QComboBox()
-        self.language.addItem("日本語", "ja")
-        self.language.addItem("English", "en")
-        self.language.currentIndexChanged.connect(self._language_changed)
-        self._row(form, "language", self.language)
-        lay.addLayout(form)
+    def _page(self, key, *cards):
+        title = QtWidgets.QLabel()
+        self._page_titles[key] = title
+        return ui.page(title, *cards)
 
-        self.items_box = QtWidgets.QGroupBox()
-        ib = QtWidgets.QVBoxLayout(self.items_box)
-        self.items_hint = QtWidgets.QLabel()
-        self.items_hint.setStyleSheet("color:#71717a;")
-        ib.addWidget(self.items_hint)
+    # --- ホーム: on/off, where, the design, presets ---
+    def _build_home_page(self):
+        # The on/off switch (user: easy to find)
+        # off -> on; on but hidden (home screen etc.) -> shown anyway
+        # (display.force_show, user's request); on -> off
+        self._enabled, self._force = True, False
+        self._off_match_screen = False   # from the HUD (set_match_screen)
+        self.power_card = ui.Card()
+        self.enabled_button = QtWidgets.QPushButton()
+        self.enabled_button.setMinimumHeight(46)
+        self.enabled_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.enabled_button.clicked.connect(self._enabled_clicked)
+        self.power_card.add(self.enabled_button)
+        # where it shows while on: over the game / in OBS, each on its own (user's request)
+        self.show_on_hud = QtWidgets.QCheckBox()
+        self.show_on_obs = QtWidgets.QCheckBox()
+        where = QtWidgets.QHBoxLayout()
+        where.setSpacing(24)
+        for c in (self.show_on_hud, self.show_on_obs):
+            c.setChecked(True)
+            c.toggled.connect(self._changed)
+            where.addWidget(c)
+        where.addStretch(1)
+        self.power_card.add(where)
+
+        # the design, as cards showing what each one looks like (click to switch)
+        self.design_box = ui.Card()
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(8)
+        self._style = DISPLAY_DEFAULTS["style"]
+        self.style_group = QtWidgets.QButtonGroup(self)
+        self.style_group.setExclusive(True)
+        self.style_cards = {}
+        for i, key in enumerate(STYLE_ORDER):
+            card = QtWidgets.QToolButton()
+            card.setObjectName("designCard")
+            card.setCheckable(True)
+            card.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            card.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            card.setIconSize(QtCore.QSize(PREVIEW_W, PREVIEW_H))
+            card.setMinimumSize(PREVIEW_W + 12, PREVIEW_H + 30)   # sized before the pictures arrive
+            card.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
+            self.style_group.addButton(card, i)
+            self.style_cards[key] = card
+            grid.addWidget(card, i // DESIGN_COLUMNS, i % DESIGN_COLUMNS)
+        self.style_group.idClicked.connect(self._style_picked)
+        self.design_box.add(grid)
+        self._preview_timer = QtCore.QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(150)   # redraw the cards once a burst of edits settles
+        self._preview_timer.timeout.connect(self._refresh_previews)
+
+        self.presets_box = ui.Card()
+        self.preset_box = QtWidgets.QComboBox()
+        self.preset_box.activated.connect(self._apply_preset)
+        self.presets_box.add(self.preset_box)
+        self.preset_save, self.preset_delete = QtWidgets.QPushButton(), QtWidgets.QPushButton()
+        self.preset_export, self.preset_import = QtWidgets.QPushButton(), QtWidgets.QPushButton()
+        self.preset_save.setObjectName("primary")
+        self.preset_save.clicked.connect(self._save_preset)
+        self.preset_delete.clicked.connect(self._delete_preset)
+        self.preset_export.clicked.connect(self._export_preset)
+        self.preset_import.clicked.connect(self._import_preset)
+        self.presets_box.add(_hbox(self.preset_save, self.preset_delete, self.preset_export, self.preset_import))
+        # start with the game (user's request; on ホーム, next to on/off, where it's found first): a small watcher started with
+        # Windows starts the app when Puyo Puyo Tetris 2 starts (scripts/autostart.py)
+        import autostart
+        self._autostart = autostart
+        self.autostart_switch = ui.Switch()
+        self.autostart_card = ui.Card(self.autostart_switch, collapse=False)
+        self.autostart_switch.setChecked(autostart.is_enabled())
+        self.autostart_switch.toggled.connect(self._autostart_toggled)
+        self.autostart_note = ui.muted()
+        self.autostart_card.add(self.autostart_note)
+
+        return self._page("page.home", self.power_card, self.autostart_card, self.design_box, self.presets_box)
+
+    # --- 表示する項目: what is shown, each part in its own card ---
+    def _build_items_page(self):
+        self.players_card = ui.Card()
+        self.players = ui.Segmented()
+        for key in PLAYER_ORDER:
+            self.players.addItem("", key)
+        self.players.currentIndexChanged.connect(self._changed)
+        self.players_card.add(_hbox(self.players))
+        self.always_show = QtWidgets.QCheckBox()
+        self.always_show.toggled.connect(self._changed)
+        self.players_card.add(self.always_show)
+
+        # the numbers beside the boards, in order (drag or ▲▼ to reorder)
+        self.items_box = ui.Card()
         row = QtWidgets.QHBoxLayout()
         self.items = QtWidgets.QListWidget()
-        self.items.setMaximumHeight(160)
+        self.items.setMinimumHeight(196)
+        self.items.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
         for key in STAT_ITEMS:
             it = QtWidgets.QListWidgetItem("")
             it.setData(QtCore.Qt.ItemDataRole.UserRole, key)
@@ -652,20 +753,26 @@ class SettingsWindow(QtWidgets.QWidget):
             it.setCheckState(QtCore.Qt.CheckState.Unchecked)
             self.items.addItem(it)
         self.items.itemChanged.connect(self._changed)
+        self.items.model().rowsMoved.connect(self._changed)
         row.addWidget(self.items, 1)
         arrows = QtWidgets.QVBoxLayout()
         self.item_up, self.item_down = QtWidgets.QToolButton(), QtWidgets.QToolButton()
+        for b in (self.item_up, self.item_down):
+            b.setObjectName("pad")
+            b.setFixedSize(34, 30)
         self.item_up.clicked.connect(lambda: self._move_item(-1))
         self.item_down.clicked.connect(lambda: self._move_item(1))
         arrows.addWidget(self.item_up)
         arrows.addWidget(self.item_down)
         arrows.addStretch(1)
         row.addLayout(arrows)
-        ib.addLayout(row)
-        lay.addWidget(self.items_box)
-
-        self.labels_box = QtWidgets.QGroupBox()
-        lf = QtWidgets.QGridLayout(self.labels_box)
+        self.items_box.add(row)
+        # their names on the overlay (blank = the usual one)
+        self.labels_title = QtWidgets.QLabel()
+        self.labels_title.setStyleSheet("font-weight: 700;")
+        self.items_box.add(self.labels_title)
+        lf = QtWidgets.QGridLayout()
+        lf.setHorizontalSpacing(10)
         self.label_edits = {}
         self.label_names = {}   # the default name beside each box (by language: retranslate)
         for i, key in enumerate(STAT_ITEMS):
@@ -677,34 +784,26 @@ class SettingsWindow(QtWidgets.QWidget):
             self.label_names[key] = QtWidgets.QLabel(DEFAULT_LABELS[key])
             lf.addWidget(self.label_names[key], i // 2, (i % 2) * 2)
             lf.addWidget(e, i // 2, (i % 2) * 2 + 1)
-        lay.addWidget(self.labels_box)
+        self.items_box.add(lf)
 
-        self.parts_box = QtWidgets.QGroupBox()
-        pf = _form()
-        self.always_show = QtWidgets.QCheckBox()
-        self.always_show.toggled.connect(self._changed)
-        self.show_clock = QtWidgets.QCheckBox()
-        self.show_event_log = QtWidgets.QCheckBox()
-        self.show_summary = QtWidgets.QCheckBox()
-        self.show_opener = QtWidgets.QCheckBox()
+        self.show_clock = ui.Switch()
+        self.clock_card = ui.Card(self.show_clock)
+
+        self.show_event_log = ui.Switch()
+        self.events_card = ui.Card(self.show_event_log)
         lo, hi = DISPLAY_RANGES["event_log_count"]
         self.event_log_count = self._spin(lo, hi, "")
-        self.opener_display = QtWidgets.QComboBox()
-        for key in OPENER_DISPLAY_ORDER:
-            self.opener_display.addItem("", key)
-        pf.addRow("", self.always_show)
-        self.players = QtWidgets.QComboBox()
-        for key in PLAYER_ORDER:
-            self.players.addItem("", key)
-        self.players.currentIndexChanged.connect(self._changed)
-        self._row(pf, "players", self.players)
-        pf.addRow("", self.show_clock)
-        pf.addRow("", self.show_event_log)
-        self._row(pf, "event_log_count", self.event_log_count)
-        pf.addRow("", self.show_summary)
+        self.events_card.add(self._row("event_log_count", _hbox(self.event_log_count)))
+
+        self.show_summary = ui.Switch()
+        self.summary_card = ui.Card(self.show_summary)
         # which rows the summary shows (fixed order; tick to show)
         self.summary_items = QtWidgets.QListWidget()
-        self.summary_items.setMaximumHeight(170)
+        self.summary_items.setFlow(QtWidgets.QListView.Flow.LeftToRight)
+        self.summary_items.setWrapping(True)
+        self.summary_items.setResizeMode(QtWidgets.QListView.ResizeMode.Adjust)
+        self.summary_items.setSpacing(2)
+        self.summary_items.setMinimumHeight(118)
         for key in SUMMARY_ITEMS:
             it = QtWidgets.QListWidgetItem("")
             it.setData(QtCore.Qt.ItemDataRole.UserRole, key)
@@ -712,26 +811,30 @@ class SettingsWindow(QtWidgets.QWidget):
             it.setCheckState(QtCore.Qt.CheckState.Unchecked)
             self.summary_items.addItem(it)
         self.summary_items.itemChanged.connect(self._changed)
-        self._row(pf, "summary_items", self.summary_items)
-        pf.addRow("", self.show_opener)
-        self._row(pf, "opener_display", self.opener_display)
+        self.summary_card.add(self.summary_items)
+
+        self.show_opener = ui.Switch()
+        self.opener_card = ui.Card(self.show_opener)
+        self.opener_display = ui.Segmented()
+        for key in OPENER_DISPLAY_ORDER:
+            self.opener_display.addItem("", key)
+        self.opener_card.add(self._row("opener_display", _hbox(self.opener_display)))
         self.opener_seconds = QtWidgets.QSpinBox()
         self.opener_seconds.setRange(0, 30)
         self.opener_seconds.valueChanged.connect(self._changed)
-        self._row(pf, "opener_seconds", self.opener_seconds)
+        self.opener_card.add(self._row("opener_seconds", _hbox(self.opener_seconds)))
         self.opener_language = QtWidgets.QComboBox()
         for key in OPENER_LANGUAGES:
             self.opener_language.addItem("", key)
         self.opener_language.currentIndexChanged.connect(self._changed)
-        self._row(pf, "opener_language", self.opener_language)
-        self.parts_box.setLayout(pf)
-        lay.addWidget(self.parts_box)
-        lay.addStretch(1)
+        self.opener_card.add(self._row("opener_language", _hbox(self.opener_language)))
+
         for cb in (self.show_clock, self.show_event_log, self.show_summary, self.show_opener):
             cb.toggled.connect(self._changed)
         self.event_log_count.valueChanged.connect(self._changed)
         self.opener_display.currentIndexChanged.connect(self._changed)
-        return page
+        return self._page("page.items", self.players_card, self.items_box, self.clock_card, self.events_card,
+                          self.summary_card, self.opener_card)
 
     def _move_item(self, step):
         row = self.items.currentRow()
@@ -743,64 +846,32 @@ class SettingsWindow(QtWidgets.QWidget):
         self.items.setCurrentRow(new)
         self._changed()
 
-    # --- tab 2: how it looks ---
-    def _build_look_tab(self):
-        page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
+    # --- 見た目: a preview, text, size / colors / background, player colors ---
+    def _build_look_page(self):
+        self.preview_card = ui.Card()
+        self.look_preview = QtWidgets.QLabel()
+        self.look_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.look_preview.setMinimumHeight(LOOK_PREVIEW_H)
+        self.preview_card.add(self.look_preview)
 
-        # the design, as cards showing what each one looks like (click to switch)
-        self.design_box = QtWidgets.QGroupBox()
-        grid = QtWidgets.QGridLayout(self.design_box)
-        self._style = DISPLAY_DEFAULTS["style"]
-        self.style_group = QtWidgets.QButtonGroup(self)
-        self.style_group.setExclusive(True)
-        self.style_cards = {}
-        for i, key in enumerate(STYLE_ORDER):
-            card = QtWidgets.QToolButton()
-            card.setCheckable(True)
-            card.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-            card.setIconSize(QtCore.QSize(PREVIEW_W, PREVIEW_H))
-            card.setMinimumSize(PREVIEW_W + 16, PREVIEW_H + 34)   # sized before the pictures arrive
-            card.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
-            card.setStyleSheet("QToolButton { padding: 4px; border: 2px solid transparent; border-radius: 6px; }"
-                               "QToolButton:checked { border-color: #2563eb; background: #dbeafe; font-weight: bold; }"
-                               "QToolButton:hover:!checked { border-color: #93c5fd; }")
-            self.style_group.addButton(card, i)
-            self.style_cards[key] = card
-            grid.addWidget(card, i // 3, i % 3)
-        self.style_group.idClicked.connect(self._style_picked)
-        lay.addWidget(self.design_box)
-        self._preview_timer = QtCore.QTimer(self)
-        self._preview_timer.setSingleShot(True)
-        self._preview_timer.setInterval(150)   # redraw the cards once a burst of edits settles
-        self._preview_timer.timeout.connect(self._refresh_previews)
-
-        self.presets_box = QtWidgets.QGroupBox()
-        pb = QtWidgets.QVBoxLayout(self.presets_box)
-        self.preset_box = QtWidgets.QComboBox()
-        self.preset_box.activated.connect(self._apply_preset)
-        pb.addWidget(self.preset_box)
-        self.preset_save, self.preset_delete = QtWidgets.QPushButton(), QtWidgets.QPushButton()
-        self.preset_export, self.preset_import = QtWidgets.QPushButton(), QtWidgets.QPushButton()
-        self.preset_save.clicked.connect(self._save_preset)
-        self.preset_delete.clicked.connect(self._delete_preset)
-        self.preset_export.clicked.connect(self._export_preset)
-        self.preset_import.clicked.connect(self._import_preset)
-        pb.addWidget(_hbox(self.preset_save, self.preset_delete))
-        pb.addWidget(_hbox(self.preset_export, self.preset_import))
-        lay.addWidget(self.presets_box)
-
-        self.text_box = QtWidgets.QGroupBox()
-        tf = _form()
+        self.text_box = ui.Card()
         # a slider, thin to thick (user's request); starts where "bold" was
         self.text_weight = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.text_weight.setRange(0, 100)
         self.text_weight.valueChanged.connect(self._changed)
-        self.tw_thin, self.tw_thick = QtWidgets.QLabel(), QtWidgets.QLabel()
-        self._row(tf, "text_weight", _hbox(self.tw_thin, self.text_weight, self.tw_thick, stretch=False))
-        self.text_outline = QtWidgets.QCheckBox()
+        self.tw_thin, self.tw_thick = ui.muted(), ui.muted()
+        self.text_box.add(self._row("text_weight", _hbox(self.tw_thin, self.text_weight, self.tw_thick, stretch=False)))
+        self.text_outline = ui.Switch()
         self.text_outline.toggled.connect(self._changed)
-        tf.addRow("", self.text_outline)
+        # the outline's thickness (user's request), % of the text size
+        self.outline_width = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        lo, hi = DISPLAY_RANGES["text_outline_width"]
+        self.outline_width.setRange(int(lo), int(hi))
+        self.outline_width.valueChanged.connect(self._changed)
+        self.ow_thin, self.ow_thick = ui.muted(), ui.muted()
+        self.text_box.add(self._row("text_outline_row", _hbox(self.text_outline, stretch=True)))
+        self.text_box.add(self._row("text_outline_width", _hbox(self.ow_thin, self.outline_width, self.ow_thick,
+                                                                stretch=False)))
         # font: any installed family, or one loaded from a file (copied to assets/user_fonts/)
         self.font_box = QtWidgets.QComboBox()
         self.font_box.setMaxVisibleItems(20)
@@ -810,112 +881,137 @@ class SettingsWindow(QtWidgets.QWidget):
         self.font_box.currentIndexChanged.connect(self._font_changed)
         self.font_load = QtWidgets.QPushButton()
         self.font_load.clicked.connect(self._load_font)
-        self._row(tf, "font", _hbox(self.font_box, self.font_load, stretch=False))
-        self.text_box.setLayout(tf)
-        lay.addWidget(self.text_box)
+        self.text_box.add(self._row("font", _hbox(self.font_box, self.font_load, stretch=False)))
 
-        self.look_box = QtWidgets.QGroupBox()
-        lf = _form()
-        self.look_target = QtWidgets.QComboBox()
+        self.look_box = ui.Card()
+        self.look_target = ui.Segmented()
         for key in LOOK_TARGETS:
             self.look_target.addItem("", key)
         self.look_target.currentIndexChanged.connect(self._look_target_changed)
-        self._row(lf, "look_target", self.look_target)
+        self.look_box.add(self._row("look_target", _hbox(self.look_target)))
         self.scale = self._spin(50, 200, "%", step=5)
         self.scale.valueChanged.connect(lambda v: self._look_edited("scale", v / 100))
-        self._row(lf, "size", _hbox(self.scale))
+        self.look_box.add(self._row("size", _hbox(self.scale)))
         self.opacity = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.opacity.setRange(0, 100)
         self.opacity.valueChanged.connect(lambda v: self._look_edited("background_opacity", v / 100))
-        self._row(lf, "opacity", _hbox(self.opacity, stretch=False))
+        self.opacity_value = QtWidgets.QLabel()
+        self.opacity_value.setFixedWidth(40)
+        self.opacity.valueChanged.connect(lambda v: self.opacity_value.setText(f"{v}%"))
+        self.look_box.add(self._row("opacity", _hbox(self.opacity, self.opacity_value, stretch=False)))
         # the background row edits line_color in the minimal design (its lines are its background)
         self.color_buttons, self.color_resets = {}, {}
         for key in ("bg_color", "text_color"):
             pick, reset = QtWidgets.QPushButton(), QtWidgets.QPushButton()
-            pick.setFixedWidth(90)
+            pick.setFixedWidth(96)
             pick.clicked.connect(lambda _=False, k=key: self._pick_look_color(k))
             reset.clicked.connect(lambda _=False, k=key: self._reset_look_color(k))
             self.color_buttons[key], self.color_resets[key] = pick, reset
-            self._row(lf, key, _hbox(pick, reset))
+            self.look_box.add(self._row(key, _hbox(pick, reset)))
         self.part_reset = QtWidgets.QPushButton()
         self.part_reset.clicked.connect(self._part_to_all)
-        lf.addRow("", _hbox(self.part_reset))
-        self.look_box.setLayout(lf)
-        lay.addWidget(self.look_box)
+        self.look_box.add(_hbox(self.part_reset))
 
-        self.player_box = QtWidgets.QGroupBox()
-        plf = _form()
+        self.player_box = ui.Card()
         self.player_buttons, self.player_resets = {}, {}
         for key in ("player_color_left", "player_color_right"):
             pick, reset = QtWidgets.QPushButton(), QtWidgets.QPushButton()
-            pick.setFixedWidth(90)
+            pick.setFixedWidth(96)
             pick.clicked.connect(lambda _=False, k=key: self._pick_player_color(k))
             reset.clicked.connect(lambda _=False, k=key: self._set_player_color(k, DISPLAY_DEFAULTS[k], changed=True))
             self.player_buttons[key], self.player_resets[key] = pick, reset
-            self._row(plf, key, _hbox(pick, reset))
-        self.player_box.setLayout(plf)
-        lay.addWidget(self.player_box)
-        lay.addStretch(1)
-        return page
+            self.player_box.add(self._row(key, _hbox(pick, reset)))
+        return self._page("page.look", self.preview_card, self.text_box, self.look_box, self.player_box)
 
-    # --- tab 3: where it sits ---
-    def _build_place_tab(self, drag_available):
-        page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        form = _form()
-        self.position = QtWidgets.QComboBox()
+    # --- 位置: drag on the game screen; placement; fine steps ---
+    def _build_place_page(self, drag_available):
+        self.drag_card = ui.Card()
+        self.drag_button = QtWidgets.QPushButton()
+        self.drag_button.setObjectName("primary")
+        self.drag_button.setCheckable(True)
+        self.drag_button.setMinimumHeight(48)
+        self.drag_button.setIcon(ui.icon("place", "#ffffff"))
+        self.drag_button.toggled.connect(self._drag_toggled)
+        self.drag_card.add(self.drag_button)
+        self.drag_card.setVisible(drag_available)
+        self.hint = ui.muted()
+        self.drag_card.add(self.hint)
+        self.drag_each_side = QtWidgets.QCheckBox()
+        self.drag_each_side.toggled.connect(self._changed)
+        self.drag_card.add(self.drag_each_side)
+
+        self.placement_card = ui.Card()
+        self.position = ui.Segmented()
         self.position.addItem("", "left")
         self.position.addItem("", "right")
         self.position.currentIndexChanged.connect(self._changed)
-        self._row(form, "position", self.position)
-        lay.addLayout(form)
-        self.position_section = self._build_offset_controls(drag_available)
-        lay.addWidget(self.position_section)
-        lay.addStretch(1)
-        return page
+        self.placement_card.add(_hbox(self.position))
+        self.position_section = self._build_offset_controls()
+        return self._page("page.place", self.drag_card, self.placement_card, self.position_section)
 
-    # --- tab 4: OBS ---
-    # --- tab 5: updates (scripts/updater.py) ---
-    def _build_update_tab(self):
+    # --- その他: language, the window, starting with the game, updates ---
+    def _build_other_page(self):
+        self.language_card = ui.Card()
+        self.language = QtWidgets.QComboBox()
+        self.language.addItem("日本語", "ja")
+        self.language.addItem("English", "en")
+        self.language.currentIndexChanged.connect(self._language_changed)
+        self.language_card.add(_hbox(self.language))
+
+        self.window_card = ui.Card()
+        self.on_top_check = QtWidgets.QCheckBox()
+        self.on_top_check.setChecked(self._settings_on_top)
+        self.on_top_check.toggled.connect(self._set_settings_on_top)
+        self.window_card.add(self.on_top_check)
+
+        self.update_card = ui.Card()
+        self._build_update_section(self.update_card)
+        return self._page("page.other", self.language_card, self.window_card, self.update_card)
+
+    def _autostart_toggled(self, on):
+        try:
+            self._autostart.set_enabled(on)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, self.tr_("autostart"), self.tr_("autostart_failed").format(e))
+            self.autostart_switch.blockSignals(True)
+            self.autostart_switch.setChecked(self._autostart.is_enabled())
+            self.autostart_switch.blockSignals(False)
+
+    # --- updates (scripts/updater.py) ---
+    def _build_update_section(self, card):
         import updater
         from version import VERSION
         self._updater = updater
-        page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
         self.up_current = QtWidgets.QLabel()
-        self.up_current.setStyleSheet("font-weight:bold; font-size:14px;")
+        self.up_current.setStyleSheet("font-weight: 700;")
         self._version = VERSION
-        lay.addWidget(self.up_current)
+        card.add(self.up_current)
         self.up_check_on_start = QtWidgets.QCheckBox()
         import config_store   # read without creating the file (building the window must not save anything)
         saved = load_settings() if config_store.CONFIG_PATH.exists() else config_store.DEFAULTS
         self.up_check_on_start.setChecked(saved.get("update", {}).get("check_on_start", True))
         self.up_check_on_start.toggled.connect(self._save_update_setting)
-        lay.addWidget(self.up_check_on_start)
+        card.add(self.up_check_on_start)
         self.up_check = QtWidgets.QPushButton()
         self.up_check.clicked.connect(lambda: self.check_for_update(silent=False))
         self.up_install = QtWidgets.QPushButton()
-        self.up_install.setStyleSheet("font-weight:bold;")
+        self.up_install.setObjectName("primary")
         self.up_install.clicked.connect(self._install_update)
         self.up_install.setVisible(False)
-        lay.addWidget(_hbox(self.up_check, self.up_install))
+        card.add(_hbox(self.up_check, self.up_install))
         self.up_status = QtWidgets.QLabel()
         self.up_status.setWordWrap(True)
-        lay.addWidget(self.up_status)
+        card.add(self.up_status)
         self.up_notes_title = QtWidgets.QLabel()
-        self.up_notes_title.setStyleSheet("font-weight:bold;")
+        self.up_notes_title.setStyleSheet("font-weight: 700;")
         self.up_notes = QtWidgets.QTextBrowser()
         self.up_notes.setOpenExternalLinks(True)
         self.up_notes.setMaximumHeight(180)
         for w in (self.up_notes_title, self.up_notes):
             w.setVisible(False)
-            lay.addWidget(w)
-        self.up_note = QtWidgets.QLabel()
-        self.up_note.setWordWrap(True)
-        self.up_note.setStyleSheet("color:#71717a;")
-        lay.addWidget(self.up_note)
-        lay.addStretch(1)
-        return page
+            card.add(w)
+        self.up_note = ui.muted()
+        card.add(self.up_note)
 
     def _hidden_off_screen(self):
         """On, but hidden because the game isn't on the match screen."""
@@ -925,15 +1021,15 @@ class SettingsWindow(QtWidgets.QWidget):
         for c in (self.show_on_hud, self.show_on_obs):   # where it shows: only matters while on
             c.setEnabled(self._enabled)
         if not self._enabled:
-            key, look = "enabled_off", "background: #e4e4e7; color: #3f3f46; }"
+            key, look = "enabled_off", "background: #e4e6ec; color: #3f4459; border: 1px solid #c9cfdd; }"
         elif self._hidden_off_screen():
-            key, look = "enabled_away", "background: #f59e0b; color: white; }"
+            key, look = "enabled_away", "background: #b45309; color: white; border: none; }"
         else:
             key = "enabled_forced" if self._force and self._off_match_screen else "enabled_on"
-            look = "background: #16a34a; color: white; }"
+            look = "background: #15803d; color: white; border: none; }"
         self.enabled_button.setText(self.tr_(key))
         self.enabled_button.setStyleSheet(
-            "QPushButton { font-size: 15px; font-weight: bold; border-radius: 6px; padding: 6px; " + look)
+            "QPushButton { font-size: 15px; font-weight: bold; border-radius: 10px; padding: 8px; " + look)
 
     def _enabled_clicked(self):
         if not self._enabled:
@@ -1058,40 +1154,33 @@ class SettingsWindow(QtWidgets.QWidget):
         QtWidgets.QApplication.quit()
 
     def _build_obs_tab(self):
-        page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        self.obs_title = QtWidgets.QLabel()
-        self.obs_title.setStyleSheet("font-weight:bold; font-size:14px;")
-        lay.addWidget(self.obs_title)
+        card = ui.Card()
+        self.obs_card = card
         self.obs_steps = QtWidgets.QLabel()
         self.obs_steps.setWordWrap(True)
         self.obs_steps.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        lay.addWidget(self.obs_steps)
+        card.add(self.obs_steps)
         self.obs_path = QtWidgets.QLineEdit(str(OBS_PAGE))
         self.obs_path.setReadOnly(True)
-        lay.addWidget(self.obs_path)
+        card.add(self.obs_path)
         self.obs_copy, self.obs_open = QtWidgets.QPushButton(), QtWidgets.QPushButton()
+        self.obs_copy.setObjectName("primary")
         self.obs_copy.clicked.connect(self._copy_obs_path)
         self.obs_open.clicked.connect(
             lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(OBS_PAGE))))
-        lay.addWidget(_hbox(self.obs_copy, self.obs_open))
-        self.obs_note = QtWidgets.QLabel()
-        self.obs_note.setWordWrap(True)
-        self.obs_note.setStyleSheet("color:#71717a;")
-        lay.addWidget(self.obs_note)
-        lay.addStretch(1)
-        return page
+        card.add(_hbox(self.obs_copy, self.obs_open))
+        self.obs_note = ui.muted()
+        card.add(self.obs_note)
+        return self._page("page.obs", card)
 
     # --- 開幕の統計: opener use (pie) and win rate over the last N matches ---
     def _build_stats_tab(self):
-        page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        self.st_title = QtWidgets.QLabel()
-        self.st_title.setStyleSheet("font-weight:bold; font-size:14px;")
-        lay.addWidget(self.st_title)
+        self.stats_card = ui.Card()
+        lay = self.stats_card.body_layout
+        self.st_title = self.stats_card.title
         prefs = self._ui_preferences.get("opener_stats", {}) if isinstance(self._ui_preferences, dict) else {}
         prefs = prefs if isinstance(prefs, dict) else {}
-        self.st_side = QtWidgets.QComboBox()
+        self.st_side = ui.Segmented()
         for key in ("left", "right", "both"):
             self.st_side.addItem("", key)
         self.st_side.setCurrentIndex(max(0, self.st_side.findData(prefs.get("side", "left"))))
@@ -1101,14 +1190,14 @@ class SettingsWindow(QtWidgets.QWidget):
         last = prefs.get("last_n", 20)
         self.st_last.setValue(last if isinstance(last, int) else 20)
         # against a Tetris player / a Puyo player, apart (user's request)
-        self.st_vs = QtWidgets.QComboBox()
+        self.st_vs = ui.Segmented()
         for key in opener_stats.OPPONENTS:
             self.st_vs.addItem("", key)
         self.st_vs.setCurrentIndex(max(0, self.st_vs.findData(prefs.get("opponent", "tetris"))))
         self.st_side_label, self.st_last_label, self.st_matches_label, self.st_vs_label =             (QtWidgets.QLabel() for _ in range(4))
-        lay.addWidget(_hbox(self.st_side_label, self.st_side, QtWidgets.QLabel("  "),
-                            self.st_vs_label, self.st_vs, QtWidgets.QLabel("  "),
-                            self.st_last_label, self.st_last, self.st_matches_label))
+        lay.addLayout(ui.row(self.st_side_label, _hbox(self.st_side), 60))
+        lay.addLayout(ui.row(self.st_vs_label, _hbox(self.st_vs), 60))
+        lay.addLayout(ui.row(self.st_last_label, _hbox(self.st_last, self.st_matches_label), 60))
         self.st_summary = QtWidgets.QLabel()
         self.st_summary.setWordWrap(True)
         self.st_summary.setStyleSheet("font-size:13px;")
@@ -1121,12 +1210,12 @@ class SettingsWindow(QtWidgets.QWidget):
         self.st_avg = {}
         for key in AVG_TILES:
             box = QtWidgets.QFrame()
-            box.setStyleSheet("QFrame { background:#f4f4f5; border-radius:6px; }")
+            box.setStyleSheet("QFrame { background:#f3f6fc; border-radius:8px; }")
             v = QtWidgets.QVBoxLayout(box)
             v.setContentsMargins(8, 4, 8, 6)
             v.setSpacing(0)
             name, value = QtWidgets.QLabel(), QtWidgets.QLabel()
-            name.setStyleSheet("color:#52525b; font-size:11px; background:transparent;")
+            name.setStyleSheet("color:#4f5670; font-size:11px; background:transparent;")
             value.setStyleSheet("font-size:20px; font-weight:bold; background:transparent;")
             v.addWidget(name)
             v.addWidget(value)
@@ -1146,9 +1235,7 @@ class SettingsWindow(QtWidgets.QWidget):
         for c in (1, 2, 3):
             head.setSectionResizeMode(c, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         lay.addWidget(self.st_table, 1)
-        self.st_note = QtWidgets.QLabel()
-        self.st_note.setWordWrap(True)
-        self.st_note.setStyleSheet("color:#71717a;")
+        self.st_note = ui.muted()
         lay.addWidget(self.st_note)
         self.st_clear = QtWidgets.QPushButton()
         self.st_clear.clicked.connect(self._clear_opener_stats)
@@ -1156,7 +1243,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.st_side.currentIndexChanged.connect(self._opener_stats_options_changed)
         self.st_last.valueChanged.connect(self._opener_stats_options_changed)
         self.st_vs.currentIndexChanged.connect(self._opener_stats_options_changed)
-        return page
+        return self._page("page.stats", self.stats_card)
 
     def _retranslate_stats(self):
         t = self.tr_
@@ -1261,60 +1348,29 @@ class SettingsWindow(QtWidgets.QWidget):
         t = self.tr_
         self.setWindowTitle(t("title"))
         self._paint_enabled()
+        for i, key in enumerate(("tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.obs",
+                                 "tab.other")):
+            self.tabs.setTabText(i, t(key))
+        for key, lab in self._page_titles.items():
+            lab.setText(t(key))
         names = DEFAULT_LABELS_EN if self.lang == "en" else DEFAULT_LABELS
         for key, e in self.label_edits.items():
             e.setPlaceholderText(names[key])
             self.label_names[key].setText(names[key])
-        for i, key in enumerate(("tab.look", "tab.show", "tab.place", "tab.obs", "tab.stats", "tab.update")):
-            self.tabs.setTabText(i, t(key))
         self._retranslate_stats()
-        self.obs_title.setText(t("obs_title"))
-        self.up_current.setText(t("up.current").format(self._version))
-        self.up_check_on_start.setText(t("up.check_on_start"))
-        self.up_check.setText(t("up.check"))
-        self.up_install.setText(t("up.install"))
-        self.up_notes_title.setText(t("up.notes"))
-        self.up_note.setText(t("up.note"))
-        self.obs_steps.setText(t("obs_steps"))
-        self.obs_copy.setText(t("obs_copy"))
-        self.obs_open.setText(t("obs_open"))
-        self.obs_note.setText(t("obs_note"))
-        self.design_box.setTitle(t("design_pick"))
+        # ホーム
+        self.power_card.setTitle(t("card.power"))
+        self.show_on_hud.setText(t("show_on_hud"))
+        self.show_on_obs.setText(t("show_on_obs"))
+        for c in (self.show_on_hud, self.show_on_obs):
+            c.setToolTip(t("show_on_tip"))
+        self.autostart_card.setTitle(t("autostart"))
+        self.autostart_card.setDescription(t("autostart_desc"))
+        self.autostart_note.setText(t("autostart_note"))
+        self.design_box.setTitle(t("design"))
+        self.design_box.setDescription(t("design_desc"))
         for key, card in self.style_cards.items():
             card.setText(t("style." + key))
-        for key, lab in self._row_labels.items():
-            lab.setText(t(key))
-        self._row_labels["bg_color"].setText(t(self._color_key("bg_color")))
-        self.items_box.setTitle(t("items"))
-        self.items_hint.setText(t("items_hint"))
-        self.items.blockSignals(True)   # renaming rows isn't an edit
-        for i in range(self.items.count()):
-            it = self.items.item(i)
-            it.setText(t("item." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
-        self.items.blockSignals(False)
-        self.item_up.setText(t("move_up"))
-        self.item_down.setText(t("move_down"))
-        self.labels_box.setTitle(t("labels"))
-        self.parts_box.setTitle(t("parts_shown"))
-        self.show_clock.setText(t("show_clock"))
-        for i, key in enumerate(PLAYER_ORDER):
-            self.players.setItemText(i, t("pl." + key))
-        self.opener_seconds.setSuffix(" 秒" if self.lang == "ja" else " s")
-        self.opener_seconds.setSpecialValueText(t("os.forever"))
-        for i, key in enumerate(OPENER_LANGUAGES):
-            self.opener_language.setItemText(i, t("ol." + key))
-        self.always_show.setText(t("always_show"))
-        self.show_event_log.setText(t("show_event_log"))
-        self.show_summary.setText(t("show_summary"))
-        self.summary_items.blockSignals(True)   # renaming rows isn't an edit
-        for i in range(self.summary_items.count()):
-            it = self.summary_items.item(i)
-            it.setText(t("sum." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
-        self.summary_items.blockSignals(False)
-        self.show_opener.setText(t("show_opener"))
-        for i, key in enumerate(OPENER_DISPLAY_ORDER):
-            self.opener_display.setItemText(i, t("od." + key))
-        self.event_log_count.setSuffix(t("count_suffix"))
         self.presets_box.setTitle(t("presets"))
         if self.preset_box.count():
             self.preset_box.setItemText(0, t("preset_pick"))
@@ -1322,13 +1378,53 @@ class SettingsWindow(QtWidgets.QWidget):
         self.preset_delete.setText(t("preset_delete"))
         self.preset_export.setText(t("preset_export"))
         self.preset_import.setText(t("preset_import"))
+        # 表示する項目
+        self.players_card.setTitle(t("card.players"))
+        for i, key in enumerate(PLAYER_ORDER):
+            self.players.setItemText(i, t("pl." + key))
+        self.always_show.setText(t("always_show"))
+        self.items_box.setTitle(t("items"))
+        self.items_box.setDescription(t("items_hint"))
+        self.items.blockSignals(True)   # renaming rows isn't an edit
+        for i in range(self.items.count()):
+            it = self.items.item(i)
+            it.setText(t("item." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
+        self.items.blockSignals(False)
+        self.item_up.setText(t("move_up"))
+        self.item_down.setText(t("move_down"))
+        self.labels_title.setText(t("labels"))
+        self.clock_card.setTitle(t("card.clock"))
+        self.clock_card.setDescription(t("card.clock_desc"))
+        self.events_card.setTitle(t("card.events"))
+        self.events_card.setDescription(t("card.events_desc"))
+        self.event_log_count.setSuffix(t("count_suffix"))
+        self.summary_card.setTitle(t("card.summary"))
+        self.summary_card.setDescription(t("card.summary_desc"))
+        self.summary_items.blockSignals(True)   # renaming rows isn't an edit
+        for i in range(self.summary_items.count()):
+            it = self.summary_items.item(i)
+            it.setText(t("sum." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
+        self.summary_items.blockSignals(False)
+        self.opener_card.setTitle(t("card.opener"))
+        self.opener_card.setDescription(t("card.opener_desc"))
+        for i, key in enumerate(OPENER_DISPLAY_ORDER):
+            self.opener_display.setItemText(i, t("od." + key))
+        self.opener_seconds.setSuffix(" 秒" if self.lang == "ja" else " s")
+        self.opener_seconds.setSpecialValueText(t("os.forever"))
+        for i, key in enumerate(OPENER_LANGUAGES):
+            self.opener_language.setItemText(i, t("ol." + key))
+        # 見た目
+        self.preview_card.setTitle(t("card.preview"))
         self.text_box.setTitle(t("text_group"))
         self.tw_thin.setText(t("tw.thin"))
         self.tw_thick.setText(t("tw.thick"))
+        self.ow_thin.setText(t("tw.thin"))
+        self.ow_thick.setText(t("tw.thick"))
         self.text_outline.setText(t("text_outline"))
         self.font_box.setItemText(0, t("font_default"))
         self.font_load.setText(t("font_load"))
         self.look_box.setTitle(t("look_group"))
+        self.look_box.setDescription(t("look_desc"))
         for i, key in enumerate(LOOK_TARGETS):
             self.look_target.setItemText(i, t("lt." + key))
         self._label_part_reset()
@@ -1337,29 +1433,47 @@ class SettingsWindow(QtWidgets.QWidget):
         self.player_box.setTitle(t("player_colors"))
         for key in self.player_resets:
             self.player_resets[key].setText(t("color_reset"))
+        # 位置
+        self.drag_card.setTitle(t("card.drag"))
+        self.drag_button.setText(t("drag_done") if self.drag_button.isChecked() else t("drag"))
+        self.hint.setText(t("hint_drag").strip())
+        self.drag_each_side.setText(t("drag_each_side"))
+        self.placement_card.setTitle(t("position"))
         self.position.setItemText(0, t("pos.left"))
         self.position.setItemText(1, t("pos.right"))
         self.position_section.setTitle(t("adjust"))
         self.move_label.setText(t("move_what"))
         for i, key in enumerate(TARGET_ORDER):
             self.target_box.setItemText(i, t("target." + key))
-        self.drag_each_side.setText(t("drag_each_side"))
         for b, key in self.arrow_buttons:
             b.setToolTip(t(key))
         self.center_button.setToolTip(t("reset_pos"))
-        self.drag_button.setText(t("drag_done") if self.drag_button.isChecked() else t("drag"))
-        self.hint.setText(t("hint") + (t("hint_drag") if self._drag_available else ""))
+        self.pad_hint.setText(t("hint"))
+        # OBS
+        self.obs_card.setTitle(t("obs_title"))
+        self.obs_steps.setText(t("obs_steps"))
+        self.obs_copy.setText(t("obs_copy"))
+        self.obs_open.setText(t("obs_open"))
+        self.obs_note.setText(t("obs_note"))
+        # その他
+        self.language_card.setTitle(t("card.language"))
+        self.window_card.setTitle(t("card.window"))
+        self.on_top_check.setText(t("settings_on_top"))
+        self.update_card.setTitle(t("tab.update"))
+        self.up_current.setText(t("up.current").format(self._version))
+        self.up_check_on_start.setText(t("up.check_on_start"))
+        self.up_check.setText(t("up.check"))
+        self.up_install.setText(t("up.install"))
+        self.up_notes_title.setText(t("up.notes"))
+        self.up_note.setText(t("up.note"))
+        for key, lab in self._row_labels.items():
+            lab.setText(t(key))
+        self._row_labels["bg_color"].setText(t(self._color_key("bg_color")))
         self.note.setText(t("note"))
         self.reset_button.setText(t("reset_all"))
         self.close_button.setText(t("close"))
-        self.on_top_check.setText(t("settings_on_top"))
-        self.show_on_hud.setText(t("show_on_hud"))
-        self.show_on_obs.setText(t("show_on_obs"))
-        for c in (self.show_on_hud, self.show_on_obs):
-            c.setToolTip(t("show_on_tip"))
         self._update_offset_label()
         self._show_look()
-        self.adjustSize()
 
     def _language_changed(self, *_):
         self.lang = self.language.currentData()
@@ -1384,6 +1498,9 @@ class SettingsWindow(QtWidgets.QWidget):
             pm = render_style_preview(key, d)
             if pm is not None:
                 card.setIcon(QtGui.QIcon(pm))
+        pm = render_style_preview(self._style, d, (LOOK_PREVIEW_W, LOOK_PREVIEW_H), 1.25)
+        if pm is not None:
+            self.look_preview.setPixmap(pm)
 
     # --- size / colors / background, overall or per part ---
     def _look_value(self, key):
@@ -1567,35 +1684,27 @@ class SettingsWindow(QtWidgets.QWidget):
         self._apply_preset(self.preset_box.currentIndex())
 
     # --- position section ---
-    def _build_offset_controls(self, drag_available):
-        """Which part to move, an arrow pad (click or hold; both boards move
-        together), a reset, the current shift in words, and — when the HUD is
-        in this process — a button to drag the parts on the game screen."""
-        box = QtWidgets.QGroupBox()
-        outer = QtWidgets.QVBoxLayout(box)
-
-        targets = QtWidgets.QHBoxLayout()
+    def _build_offset_controls(self):
+        """Which part to move, an arrow pad (click or hold), a reset, and the
+        current shift in words."""
+        box = ui.Card()
         self.move_label = QtWidgets.QLabel()
-        targets.addWidget(self.move_label)
         self.target_box = QtWidgets.QComboBox()   # 9 choices: a dropdown, not a row of buttons
         for key in TARGET_ORDER:
             self.target_box.addItem("", key)
         self.target_box.setCurrentIndex(TARGET_ORDER.index(self._target))
         self.target_box.currentIndexChanged.connect(self._target_changed)
-        targets.addWidget(self.target_box, 1)
-        outer.addLayout(targets)
-        self.drag_each_side = QtWidgets.QCheckBox()
-        self.drag_each_side.toggled.connect(self._changed)
-        outer.addWidget(self.drag_each_side)
+        box.add(ui.row(self.move_label, self.target_box))
 
         pad = QtWidgets.QGridLayout()
-        pad.setSpacing(2)
+        pad.setSpacing(4)
         self.arrow_buttons = []
 
         def arrow(text, dx, dy, tip_key):
             b = QtWidgets.QToolButton()
+            b.setObjectName("pad")
             b.setText(text)
-            b.setFixedSize(32, 28)
+            b.setFixedSize(40, 36)
             b.setAutoRepeat(True)          # hold to keep moving
             b.setAutoRepeatDelay(350)
             b.setAutoRepeatInterval(60)
@@ -1606,30 +1715,24 @@ class SettingsWindow(QtWidgets.QWidget):
         pad.addWidget(arrow("↑", 0, -NUDGE_STEP, "up"), 0, 1)
         pad.addWidget(arrow("←", -NUDGE_STEP, 0, "left"), 1, 0)
         self.center_button = QtWidgets.QToolButton()
+        self.center_button.setObjectName("pad")
         self.center_button.setText("●")
-        self.center_button.setFixedSize(32, 28)
+        self.center_button.setFixedSize(40, 36)
         self.center_button.clicked.connect(self._reset_offset)
         pad.addWidget(self.center_button, 1, 1)
         pad.addWidget(arrow("→", NUDGE_STEP, 0, "right"), 1, 2)
         pad.addWidget(arrow("↓", 0, NUDGE_STEP, "down"), 2, 1)
 
         row = QtWidgets.QHBoxLayout()
+        row.setSpacing(18)
         row.addLayout(pad)
         self.offset_label = QtWidgets.QLabel()
         self.offset_label.setWordWrap(True)
         self.offset_label.setMinimumWidth(170)
         row.addWidget(self.offset_label, 1)
-        outer.addLayout(row)
-
-        self.drag_button = QtWidgets.QPushButton()
-        self.drag_button.setCheckable(True)
-        self.drag_button.toggled.connect(self._drag_toggled)
-        self.drag_button.setVisible(drag_available)
-        outer.addWidget(self.drag_button)
-        self.hint = QtWidgets.QLabel()
-        self.hint.setStyleSheet("color:#71717a;")
-        self.hint.setWordWrap(True)
-        outer.addWidget(self.hint)
+        box.add(row)
+        self.pad_hint = ui.muted()
+        box.add(self.pad_hint)
         return box
 
     def _target_changed(self, *_):
@@ -1733,6 +1836,8 @@ class SettingsWindow(QtWidgets.QWidget):
             e.setText(d["labels"].get(key, ""))
         self.text_weight.setValue(int(d["text_weight"]))
         self.text_outline.setChecked(d["text_outline"])
+        self.outline_width.setValue(int(d["text_outline_width"]))
+        self.outline_width.setEnabled(d["text_outline"])
         self._overall = {k: d[k] for k in LOOK_KEYS}
         self._parts = {p: dict(d["parts"].get(p, {})) for p in PARTS}
         for key in self._player_colors:
@@ -1765,6 +1870,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_display.setEnabled(d["show_opener"])
         self.event_log_count.setValue(d["event_log_count"])
         self.event_log_count.setEnabled(d["show_event_log"])
+        for card in (self.clock_card, self.events_card, self.summary_card, self.opener_card):
+            card.sync()   # a part's details only while it's on
         self.retranslate()
         self._loading = False
         self._preview_timer.start()
@@ -1783,6 +1890,7 @@ class SettingsWindow(QtWidgets.QWidget):
             **self._player_colors,
             "text_weight": self.text_weight.value(),
             "text_outline": self.text_outline.isChecked(),
+            "text_outline_width": self.outline_width.value(),
             "font_family": self.font_box.currentData() or "",
             "font_file": self._font_file,
             "show_clock": self.show_clock.isChecked(),
@@ -1852,6 +1960,7 @@ class SettingsWindow(QtWidgets.QWidget):
             return
         self.event_log_count.setEnabled(self.show_event_log.isChecked())
         self.opener_display.setEnabled(self.show_opener.isChecked())
+        self.outline_width.setEnabled(self.text_outline.isChecked())
         self.display_changed.emit(self.values())
         self._save_timer.start()
         self._preview_timer.start()

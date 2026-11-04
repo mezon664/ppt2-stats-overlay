@@ -283,10 +283,13 @@ TEXT_OUTLINE_RGB = (0, 0, 0)
 TEXT_OUTLINE = 0.0
 
 
-def set_text_style(weight, outline):
+def set_text_style(weight, outline, width_pct=None):
+    """width_pct: display.text_outline_width, the outline's thickness as % of
+    the text size (None: the original 10%)."""
     global BOLD, SEMI, THICKEN, TEXT_OUTLINE
     BOLD, SEMI, THICKEN = weight_style(weight)
-    TEXT_OUTLINE = TEXT_OUTLINE_RATIO if outline else 0.0
+    ratio = TEXT_OUTLINE_RATIO if width_pct is None else width_pct / 100.0
+    TEXT_OUTLINE = ratio if outline else 0.0
 
 
 def hex_rgb(value):
@@ -1985,7 +1988,7 @@ class HudWindow(QtWidgets.QWidget):
         w, h = self._size
         s = self._scale
         d = self.display
-        set_text_style(d["text_weight"], d["text_outline"])
+        set_text_style(d["text_weight"], d["text_outline"], d["text_outline_width"])
         set_colors(d["bg_color"], d["text_color"], d["line_color"])
         set_font(d["font_family"], d["font_file"])
         set_labels(d["labels"], d["language"])
