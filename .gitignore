@@ -14,6 +14,7 @@ server_log.txt
 # file is created on first run)
 config/overlay_settings.json
 config/opener_history.json
+config/rating_history.json
 config/*.tmp
 # Fonts a user loaded from the settings window (copies of their own files)
 assets/user_fonts/
