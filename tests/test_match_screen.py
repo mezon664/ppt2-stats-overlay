@@ -120,3 +120,25 @@ def test_the_summary_is_drawn_over_the_other_parts():
     above = order[order.index(win.summary) + 1:]
     others = [*win.stats.values(), *win.events.values(), win.versus, win.clock, *win.badges.values()]
     assert not any(w in above for w in others)
+
+
+class _Screen:
+    def __init__(self, x, y, w, h, r):
+        from PyQt6 import QtCore
+        self._g, self._r = QtCore.QRect(x, y, w, h), r
+
+    def geometry(self):
+        return self._g
+
+    def devicePixelRatio(self):
+        return self._r
+
+
+def test_the_hud_goes_to_the_game_on_any_monitor():
+    """Qt keeps each monitor's top-left in screen pixels: a game on a second
+    monitor with 150% scaling lands at that monitor's own origin plus the
+    scaled-down offset, not at its whole position divided by the scaling."""
+    import overlay
+    screens = [_Screen(0, 0, 2560, 1440, 1.0), _Screen(2560, 0, 1280, 720, 1.5)]   # 1920x1080 at 150%
+    assert overlay.native_to_logical(100, 50, 1320, 742, screens) == (100, 50, 1.0)
+    assert overlay.native_to_logical(2560 + 300, 90, 1320, 742, screens) == (2560 + 200, 60, 1.5)

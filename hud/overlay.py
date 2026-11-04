@@ -2002,6 +2002,17 @@ class HudWindow(QtWidgets.QWidget):
         self.ws_client.state_received.connect(self.on_state)
         self.ws_client.start()
 
+        # The HUD's own health, once a second (user: sometimes only OBS shows
+        # it and the HUD doesn't): puts the HUD back in front of the game if
+        # the game ended up over it, and writes what it sees to
+        # logs/hud_status.txt (and each change to logs/hud.log).
+        self._health_sig = None
+        self._recv_t = time.monotonic()
+        self._health_written = 0.0
+        self._health = QtCore.QTimer(self)
+        self._health.timeout.connect(self._check_health)
+        self._health.start(1000)
+
     # --- layout ---
     # After a change made here (settings window / drag), the server's copy of
     # the settings is ignored this long: it re-reads the file only every ~1s,
@@ -2095,6 +2106,91 @@ class HudWindow(QtWidgets.QWidget):
         return (not self.display["always_show"] and not self.display["force_show"] and not self.edit_mode
                 and self._last_state.get("match_screen") is False)
 
+    def _away_reason(self):
+        """Why nothing is shown right now, in words ("" = it should show)."""
+        if not self.display["enabled"]:
+            return "switched off"
+        if not self.display["show_on_hud"] and not self.edit_mode:
+            return "OBS only (show_on_hud off)"
+        if self._away_from_match():
+            return "not the match screen"
+        return ""
+
+    def _game_below_hud(self):
+        """True when the game's window is under the HUD's (None: can't tell)."""
+        if not HAS_WIN32 or self._hwnd is None:
+            return None
+        try:
+            hud = int(self.winId())
+            w, n = win32gui.GetWindow(hud, win32con.GW_HWNDNEXT), 0
+            while w and n < 5000:
+                if w == self._hwnd:
+                    return True
+                w, n = win32gui.GetWindow(w, win32con.GW_HWNDNEXT), n + 1
+            return False
+        except Exception:
+            return None
+
+    def _check_health(self):
+        try:
+            self._check_health_inner()
+        except Exception as e:   # never let the check itself break the HUD
+            _hud_note(f"health check failed: {e!r}")
+
+    def _check_health_inner(self):
+        now = time.monotonic()
+        game_ok = (HAS_WIN32 and self._hwnd is not None and win32gui.IsWindow(self._hwnd)
+                   and win32gui.IsWindowVisible(self._hwnd) and not win32gui.IsIconic(self._hwnd))
+        below = self._game_below_hud() if game_ok else None
+        raised = False
+        if below is False and self.isVisible():
+            # the game is over the HUD: back on top (without taking the focus)
+            win32gui.SetWindowPos(int(self.winId()), win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
+            raised = True
+        if not self.isVisible():
+            self.show()
+            raised = True
+        game_rect = None
+        if game_ok:
+            _, _, cw, ch = win32gui.GetClientRect(self._hwnd)
+            gx, gy = win32gui.ClientToScreen(self._hwnd, (0, 0))
+            game_rect = (gx, gy, cw, ch)
+        g = self.geometry()
+        dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+        sg = self.screen().geometry() if self.screen() else QtCore.QRect()
+        hud_rect = (round(sg.x() + (g.x() - sg.x()) * dpr), round(sg.y() + (g.y() - sg.y()) * dpr),
+                    round(g.width() * dpr), round(g.height() * dpr))
+        parts = [name for name, w in (("stats_left", self.stats["left"]), ("stats_right", self.stats["right"]),
+                                      ("clock", self.clock), ("summary", self.summary),
+                                      ("events_left", self.events["left"]), ("events_right", self.events["right"]),
+                                      ("versus", self.versus)) if w.isVisible()]
+        connected = self.ws_client._ws is not None
+        age = now - self._recv_t
+        reason = self._away_reason()
+        st = self._last_state or {}
+        sig = (connected, age > 5, game_ok, below, game_rect == hud_rect, self.isVisible(), reason, bool(parts),
+               st.get("match_screen"))
+        lines = [
+            time.strftime("%Y-%m-%d %H:%M:%S") + "  HUD",
+            f"server: {'connected' if connected else 'NOT connected'}, last state {age:.1f}s ago",
+            f"game window: {game_rect if game_ok else 'not found / minimized / hidden'}",
+            f"HUD window: {hud_rect} visible={self.isVisible()} over the game={below}"
+            + ("  (raised just now)" if raised else ""),
+            f"match_screen={st.get('match_screen')} frozen={st.get('frozen')} capture_ok={st.get('capture', {}).get('ok')}",
+            f"hidden because: {reason or '-'}",
+            f"parts shown: {', '.join(parts) or 'none'}",
+        ]
+        if sig != self._health_sig or raised:
+            self._health_sig = sig
+            _hud_note(" | ".join(lines[1:]))
+        if raised or now - self._health_written >= 5.0:
+            self._health_written = now
+            try:
+                (ROOT_DIR / "logs" / "hud_status.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            except OSError:
+                pass
+
     def off_match_screen(self):
         """The server says the match screen isn't showing (home, menus)."""
         return self._last_state.get("match_screen") is False
@@ -2184,18 +2280,19 @@ class HudWindow(QtWidgets.QWidget):
             return
         if cw <= 0 or ch <= 0:
             return
-        dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+        x, y, dpr = native_to_logical(left, top, cw, ch)
         geom = (left, top, cw, ch, dpr)
         if geom == self._last_geom:
             return
         self._last_geom = geom
-        self.move(int(left / dpr), int(top / dpr))
+        self.move(x, y)
         self._size = (cw / dpr, ch / dpr)
         self._scale = cw / (REFERENCE_W * dpr)
         self._layout()
 
     # --- data ---
     def on_state(self, state):
+        self._recv_t = time.monotonic()   # anything from the server, same or not (_check_health)
         # The server sends 10 a second even when nothing changes (menus, the
         # result screen): an identical one is skipped instead of laying out
         # and repainting everything again (user: make the app lighter).
@@ -2552,6 +2649,37 @@ def already_running():
         sock.disconnectFromServer()
         return True
     return False
+
+
+def native_to_logical(left, top, width, height, screens=None):
+    """Where a window at these screen pixels goes in Qt's coordinates, and the
+    scaling of the monitor it's on. Qt keeps each monitor's top-left in screen
+    pixels and scales only within it, so the monitor under the game decides
+    (it used the HUD's own monitor and divided the whole position by its
+    scaling: on a second monitor, or after the game moved to one with other
+    scaling, the HUD went somewhere else, even off screen)."""
+    cx, cy = left + width / 2, top + height / 2
+    screens = QtGui.QGuiApplication.screens() if screens is None else screens
+    for sc in screens:
+        g, r = sc.geometry(), sc.devicePixelRatio()
+        if g.x() <= cx < g.x() + g.width() * r and g.y() <= cy < g.y() + g.height() * r:
+            return int(g.x() + (left - g.x()) / r), int(g.y() + (top - g.y()) / r), r
+    r = screens[0].devicePixelRatio() if screens else 1.0
+    return int(left / r), int(top / r), r
+
+
+def _hud_note(text):
+    """One line in logs/hud.log (the HUD's own record; see _check_health)."""
+    try:
+        logs = ROOT_DIR / "logs"
+        logs.mkdir(exist_ok=True)
+        path = logs / "hud.log"
+        if path.exists() and path.stat().st_size > 2 * 1024 * 1024:   # keep it small
+            path.replace(logs / "hud.log.1")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + text + "\n")
+    except OSError:
+        pass
 
 
 def log_errors():
