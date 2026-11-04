@@ -47,8 +47,11 @@ _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 _server_log_handler = RotatingFileHandler(
     _LOG_DIR / "server.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+# force: live_pipeline (imported above) already set up logging to the
+# console, and without it this was ignored — nothing reached server.log
+# after that (found looking into an opener not recognized live).
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                    handlers=[_server_log_handler])
+                    handlers=[_server_log_handler], force=True)
 log = logging.getLogger("data_server")
 
 CLIENTS = set()

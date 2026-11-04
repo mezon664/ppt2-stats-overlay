@@ -372,6 +372,8 @@ class OpenerDetector:
         self._board = 0       # the board as last seen settled (a mask, see _mask)
         self._seen = None     # the board on the previous frame
         self.landed = []      # each piece that landed, as a mask (the hold case)
+        self._reported = False   # _report_miss: once
+        self._last_hold = None
 
     def on_frame(self, frame, t_in_match, placements=0, hold=None):
         """Call on every frame with the time since the match started, the
@@ -380,8 +382,27 @@ class OpenerDetector:
         the opener name when it becomes known or changes, else None."""
         self.placements += placements
         if t_in_match > OPENING_S or self.placements > MAX_PLACEMENTS:
+            self._report_miss()
             return None
+        self._last_hold = hold
         return self._check(frame, hold)
+
+    def _report_miss(self):
+        """Once per match, when the opening ends with no opener: what was on
+        the board, the pieces as they landed and HOLD, in server.log (so a
+        "not recognized" can be looked into)."""
+        if self.name is not None or self._reported or not self._board:
+            return
+        self._reported = True
+        import logging
+
+        def draw(m):
+            top = max((i // COLS for i in range(MASK_ROWS * COLS) if m >> i & 1), default=0)
+            return "/".join("".join("#" if m >> (r * COLS + c) & 1 else "." for c in range(COLS))
+                            for r in range(top, -1, -1))
+        logging.getLogger("opener").info(
+            "[%s] no opener: board %s | landed %s | hold %s | placements %d", self.side, draw(self._board),
+            " ".join(draw(p) for p in self.landed), self._last_hold, self.placements)
 
     def _note_landing(self, mask):
         """A board the same two frames running that holds everything the
