@@ -42,6 +42,10 @@ HISTORY_PATH = ROOT / "config" / "rating_history.json"
 TEMPLATES = ROOT / "assets" / "templates"
 KEEP = 1000
 READ_EVERY_S = 1.0
+# A number with another count of digits than the league's last one (2633 ->
+# 263: a window over its last digit, user report) counts only after this many
+# reads in a row; a real change of digit count (999 -> 1000) is rare.
+DIGITS_CHANGE_READS = 10
 
 # Places on a 1320-wide game window (any 16:9 size is scaled from it)
 BASE_W = 1320
@@ -76,7 +80,8 @@ class RatingReader:
         self._engine = None
         self._engine_tried = False
         self._last_t = 0.0
-        self._pending = None   # (league, value) read once, waiting for a second read
+        self._pending = None   # (league, value) read before, waiting to be read again
+        self._pending_n = 0    # how many times in a row
         self.league = None     # the league whose menu was last on screen
         self.last_value = {}   # league -> the last value kept
 
@@ -195,10 +200,11 @@ class RatingReader:
         result = await engine.recognize_async(bmp)
         return result.text
 
-    def update(self, frame, now=None):
+    def update(self, frame, now=None, is_covered=None):
         """Looks at the frame (at most once every READ_EVERY_S): returns
         (league, rating) once your rating is read the same twice in a row and
-        differs from that league's last one, else None."""
+        differs from that league's last one, else None. is_covered(box):
+        True when a window lies over that box on the screen (then not read)."""
         now = time.monotonic() if now is None else now
         if now - self._last_t < READ_EVERY_S:
             return None
@@ -213,18 +219,82 @@ class RatingReader:
             self._pending = None
             return None
         box = found[1]
+        if is_covered is not None and is_covered(box):
+            self._pending = None
+            return None
         x1, y1, x2, y2 = box
         value = self.read_number(frame[y1:y2, x1:x2])
         if value is None:
             return None
         read = (self.league, value)
         if read != self._pending:
-            self._pending = read
+            self._pending, self._pending_n = read, 1
             return None
-        if self.last_value.get(self.league) == value:
+        self._pending_n += 1
+        last = self.last_value.get(self.league)
+        if last == value:
+            return None
+        if last is not None and len(str(last)) != len(str(value)) and self._pending_n < DIGITS_CHANGE_READS:
             return None
         self.last_value[self.league] = value
         return read
+
+    def set_last(self, league, value):
+        """The league's last kept rating (from the history at start-up)."""
+        self.last_value[league] = value
+
+
+# --- a window over the box ---
+def covered(hwnd, origin, client_size, frame_size, box):
+    """True when some other window lies over `box` (frame coordinates) on the
+    screen: the capture takes the screen as it is, so a window over the rating
+    shows instead of it (user: hiding the last digit with another window got
+    263 kept). Windows that don't show in captures (this app's own, made so
+    with WDA_EXCLUDEFROMCAPTURE), click-through overlays, hidden, minimized or
+    cloaked ones, and the game's own windows don't count."""
+    try:
+        import ctypes
+        import win32con
+        import win32gui
+        import win32process
+    except Exception:
+        return False
+    if not hwnd or origin is None or client_size is None:
+        return False
+    k = client_size[0] / frame_size[0]
+    x1, y1, x2, y2 = box
+    left, top = origin
+    rect = (left + x1 * k, top + y1 * k, left + x2 * k, top + y2 * k)
+    try:
+        _, game_pid = win32process.GetWindowThreadProcessId(hwnd)
+    except Exception:
+        return False
+    user32 = ctypes.windll.user32
+    dwm = ctypes.windll.dwmapi
+    w = win32gui.GetWindow(hwnd, win32con.GW_HWNDPREV)   # the windows above the game, nearest first
+    seen = 0
+    while w and seen < 2000:
+        seen += 1
+        try:
+            if win32gui.IsWindowVisible(w) and not win32gui.IsIconic(w):
+                ex = win32gui.GetWindowLong(w, win32con.GWL_EXSTYLE)
+                affinity = ctypes.c_uint(0)
+                user32.GetWindowDisplayAffinity(w, ctypes.byref(affinity))
+                cloaked = ctypes.c_int(0)
+                dwm.DwmGetWindowAttribute(w, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))   # DWMWA_CLOAKED
+                _, pid = win32process.GetWindowThreadProcessId(w)
+                if not (ex & win32con.WS_EX_TRANSPARENT) and affinity.value == 0 and not cloaked.value                         and pid != game_pid:
+                    bounds = (ctypes.c_long * 4)()
+                    if dwm.DwmGetWindowAttribute(w, 9, ctypes.byref(bounds), ctypes.sizeof(bounds)) == 0:
+                        wl, wt, wr, wb = bounds   # DWMWA_EXTENDED_FRAME_BOUNDS: without the drop shadow
+                    else:
+                        wl, wt, wr, wb = win32gui.GetWindowRect(w)
+                    if wl < rect[2] and wr > rect[0] and wt < rect[3] and wb > rect[1]:
+                        return True
+        except Exception:
+            pass
+        w = win32gui.GetWindow(w, win32con.GW_HWNDPREV)
+    return False
 
 
 # --- the history ---

@@ -126,6 +126,7 @@ class GameWindowCapture:
         self.hwnd = None
         self._sizes = SizeSettler()
         self.last_client_size = None   # the game window's size before shrinking (diagnostic.py)
+        self.last_client_origin = None # its top-left on the screen (rating.covered: what's over a box)
 
     def close(self):
         """Release the screen-capture handle before rebuilding after an error."""
@@ -182,5 +183,6 @@ class GameWindowCapture:
 
         frame = np.array(shot)[:, :, :3]  # BGRA -> BGR
         self.last_client_size = (client_w, client_h)
+        self.last_client_origin = (left, top)
         frame, work_profile = shrink_for_recognition(frame)
         return frame, True, None, work_profile if work_profile.ok else profile

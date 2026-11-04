@@ -117,7 +117,7 @@ def idle_period(reason, since, now, period):
 _RATING = {"reader": None, "failed": False}
 
 
-def read_rating(frame):
+def read_rating(frame, cap=None):
     """Off the match screen, your online rating (パズルリーグ etc.) is read
     off the まちうけ / league menu screens and kept per league (scripts/rating.py,
     user: see how the rating moves). Never stops recognition."""
@@ -130,8 +130,15 @@ def read_rating(frame):
         if _RATING["reader"] is None:
             import rating
             _RATING["reader"] = rating.RatingReader()
+            for p in rating.load():   # each league's last kept one
+                _RATING["reader"].set_last(p["league"], p["rating"])
         import rating
-        read = _RATING["reader"].update(frame)
+        is_covered = None
+        if cap is not None:
+            def is_covered(box):
+                return rating.covered(getattr(cap, "hwnd", None), getattr(cap, "last_client_origin", None),
+                                      getattr(cap, "last_client_size", None), (frame.shape[1], frame.shape[0]), box)
+        read = _RATING["reader"].update(frame, is_covered=is_covered)
         if read is not None:
             league, value = read
             if rating.add(league, value):
@@ -166,7 +173,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
             if ok:
                 PIPELINE.rebuild_for_profile(profile)
                 PIPELINE.process_frame(frame, time.monotonic() - t0)
-                read_rating(frame)
+                read_rating(frame, cap)
                 CAPTURE_STATUS = {
                     "ok": True, "message": "capturing",
                     "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),

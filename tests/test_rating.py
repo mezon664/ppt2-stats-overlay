@@ -119,3 +119,30 @@ def test_the_live_menu_that_read_wrong():
     img = cv2.imread(str(FIX / "rating_menu_live.png"))
     x1, y1, x2, y2 = r.own_box(img)
     assert r.read_number(img[y1:y2, x1:x2]) == 2618
+
+
+def test_a_shorter_number_needs_many_reads(monkeypatch):
+    """2633 -> 263 (a window over the last digit, user report): not kept
+    unless read that way DIGITS_CHANGE_READS times in a row."""
+    r = rating.RatingReader()
+    r.league = "puzzle"
+    r.set_last("puzzle", 2633)
+    monkeypatch.setattr(r, "read_number", lambda crop: 263)
+    wait = frame("rating_wait_1p.jpg")
+    got = [r.update(wait, now=10 + i) for i in range(rating.DIGITS_CHANGE_READS - 1)]
+    assert got == [None] * (rating.DIGITS_CHANGE_READS - 1)
+    monkeypatch.setattr(r, "read_number", lambda crop: 2640)   # a real change: kept on the second read
+    assert r.update(wait, now=30) is None and r.update(wait, now=31) == ("puzzle", 2640)
+
+
+def test_not_read_while_a_window_covers_the_box(monkeypatch):
+    r = rating.RatingReader()
+    r.league = "puzzle"
+    calls = []
+    monkeypatch.setattr(r, "read_number", lambda crop: calls.append(1) or 2618)
+    wait = frame("rating_wait_1p.jpg")
+    assert r.update(wait, now=10, is_covered=lambda box: True) is None
+    assert r.update(wait, now=11, is_covered=lambda box: True) is None
+    assert calls == []                                    # covered: not even read
+    r.update(wait, now=12, is_covered=lambda box: False)
+    assert r.update(wait, now=13, is_covered=lambda box: False) == ("puzzle", 2618)
