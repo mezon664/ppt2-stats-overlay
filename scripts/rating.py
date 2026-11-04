@@ -12,10 +12,11 @@ second; a value counts once it was read the same twice in a row.
 
 Each league has its own rating (user: see them per league). The まちうけ
 screen doesn't say which league it is, so a rating counts for the league whose
-menu was last on screen (its title, top left: LEAGUE_TITLES). A league whose
-title template isn't there yet (only パズルリーグ was recorded so far) can't
-be told apart: on its menu the league becomes unknown, and ratings read while
-no league is known aren't kept (not put down as the league seen before).
+menu was last on screen (its title, top left: LEAGUE_TITLES; all four from
+debug_frames/burst_rating and burst_leagues — each scores 1.0 on its own menu,
+0.56 at most on another's). A league whose title isn't known (a new one, a
+changed screen): on its menu the league becomes unknown, and ratings read
+while no league is known aren't kept (not put down as the league seen before).
 
 A rating is kept when it differs from that league's last kept one: going to
 the まちうけ screen, back and there again keeps it once, and the same number

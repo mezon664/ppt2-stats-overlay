@@ -87,3 +87,24 @@ def test_same_number_kept_once_per_league_but_again_for_another(tmp_path):
     assert not rating.add("puzzle", 2610, path, now=2)
     assert rating.add("tetris", 2610, path, now=3)
     assert len(rating.load(path)) == 2
+
+
+@pytest.mark.parametrize("name, league", [("rating_menu.jpg", "puzzle"), ("rating_menu_tetris.jpg", "tetris"),
+                                          ("rating_menu_puyo.jpg", "puyo"), ("rating_menu_skill.jpg", "skill")])
+def test_each_leagues_menu(name, league):
+    """Every league's menu is told apart by its title (debug_frames/burst_leagues)."""
+    r = rating.RatingReader()
+    for shrink in (False, True):
+        img = frame(name, shrink)
+        assert r.league_on_screen(img) == league
+        assert r.find(img)[0] == "menu"
+
+
+def test_each_leagues_rating_is_read():
+    r = rating.RatingReader()
+    if r._ocr_engine() is None:
+        pytest.skip("no Windows text recognition here")
+    for name, want in (("rating_menu_tetris.jpg", 2504), ("rating_menu_puyo.jpg", 984), ("rating_menu_skill.jpg", 985)):
+        img = frame(name)
+        x1, y1, x2, y2 = r.own_box(img)
+        assert r.read_number(img[y1:y2, x1:x2]) == want, name
