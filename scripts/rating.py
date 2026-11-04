@@ -42,10 +42,15 @@ HISTORY_PATH = ROOT / "config" / "rating_history.json"
 TEMPLATES = ROOT / "assets" / "templates"
 KEEP = 1000
 READ_EVERY_S = 1.0
-# A number with another count of digits than the league's last one (2633 ->
-# 263: a window over its last digit, user report) counts only after this many
-# reads in a row; a real change of digit count (999 -> 1000) is rare.
-DIGITS_CHANGE_READS = 10
+# One match moves the rating by about 40 at most (user). So while the app runs,
+# a number this far from the one read before in this run, or with another
+# count of digits (2633 -> 263: a window over its last digit, user report),
+# counts only after UNLIKELY_READS reads in a row. Not against the history:
+# opened again after matches played without it, the rating may have moved a
+# lot, and that must show at once (user).
+UNLIKELY_STEP = 60
+UNLIKELY_READS = 10
+DIGITS_CHANGE_READS = UNLIKELY_READS   # (the older name)
 
 # Places on a 1320-wide game window (any 16:9 size is scaled from it)
 BASE_W = 1320
@@ -83,7 +88,8 @@ class RatingReader:
         self._pending = None   # (league, value) read before, waiting to be read again
         self._pending_n = 0    # how many times in a row
         self.league = None     # the league whose menu was last on screen
-        self.last_value = {}   # league -> the last value kept
+        self.last_value = {}   # league -> the last value kept (from the history too: not kept twice)
+        self.session_value = {}   # league -> the last value read in this run (UNLIKELY_STEP)
 
     # --- where's my rating on this screen? ---
     def _found(self, frame, key, spec, k):
@@ -231,10 +237,12 @@ class RatingReader:
             self._pending, self._pending_n = read, 1
             return None
         self._pending_n += 1
-        last = self.last_value.get(self.league)
-        if last == value:
+        before = self.session_value.get(self.league)
+        unlikely = before is not None and (abs(value - before) >= UNLIKELY_STEP or len(str(before)) != len(str(value)))
+        if unlikely and self._pending_n < UNLIKELY_READS:
             return None
-        if last is not None and len(str(last)) != len(str(value)) and self._pending_n < DIGITS_CHANGE_READS:
+        self.session_value[self.league] = value
+        if self.last_value.get(self.league) == value:
             return None
         self.last_value[self.league] = value
         return read

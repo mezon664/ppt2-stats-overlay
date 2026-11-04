@@ -123,10 +123,11 @@ def test_the_live_menu_that_read_wrong():
 
 def test_a_shorter_number_needs_many_reads(monkeypatch):
     """2633 -> 263 (a window over the last digit, user report): not kept
-    unless read that way DIGITS_CHANGE_READS times in a row."""
+    unless read that way UNLIKELY_READS times in a row."""
     r = rating.RatingReader()
     r.league = "puzzle"
     r.set_last("puzzle", 2633)
+    r.session_value["puzzle"] = 2633
     monkeypatch.setattr(r, "read_number", lambda crop: 263)
     wait = frame("rating_wait_1p.jpg")
     got = [r.update(wait, now=10 + i) for i in range(rating.DIGITS_CHANGE_READS - 1)]
@@ -146,3 +147,24 @@ def test_not_read_while_a_window_covers_the_box(monkeypatch):
     assert calls == []                                    # covered: not even read
     r.update(wait, now=12, is_covered=lambda box: False)
     assert r.update(wait, now=13, is_covered=lambda box: False) == ("puzzle", 2618)
+
+
+
+def test_a_big_jump_in_this_run_needs_many_reads_but_not_after_a_restart(monkeypatch):
+    """One match moves the rating ~40 at most: 2633 -> 2733 in one run needs
+    10 reads. Opened again after matches without the app, the new rating
+    shows at once even far from the history's last (user)."""
+    wait = frame("rating_wait_1p.jpg")
+    r = rating.RatingReader()
+    r.league = "puzzle"
+    r.session_value["puzzle"] = 2633
+    monkeypatch.setattr(r, "read_number", lambda crop: 2733)
+    got = [r.update(wait, now=10 + i) for i in range(rating.UNLIKELY_READS)]
+    assert got[:-1] == [None] * (rating.UNLIKELY_READS - 1) and got[-1] == ("puzzle", 2733)
+    fresh = rating.RatingReader()              # a new run: the history's last only stops a repeat
+    fresh.league = "puzzle"
+    fresh.set_last("puzzle", 2633)
+    monkeypatch.setattr(fresh, "read_number", lambda crop: 2733)
+    assert fresh.update(wait, now=10) is None and fresh.update(wait, now=11) == ("puzzle", 2733)
+    monkeypatch.setattr(fresh, "read_number", lambda crop: 2760)   # +27 after a match: as usual
+    assert fresh.update(wait, now=12) is None and fresh.update(wait, now=13) == ("puzzle", 2760)
