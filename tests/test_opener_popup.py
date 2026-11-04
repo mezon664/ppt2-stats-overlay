@@ -257,7 +257,7 @@ def test_both_cats_share_one_set_of_frames_and_let_go_of_it():
     assert sum(abs(p - q) > 40 for p, q in zip(row_a, row_b)) < w * 0.02
     assert "img" not in cat["frames"][index]                       # the read file isn't kept
     left.release()
-    assert overlay.CAT_FRAMES.frames == {}
+    assert all(not f.frames for f in overlay.CAT_FRAMES.values())
 
 
 def test_choosing_another_display_lets_go_of_the_cat():
@@ -266,7 +266,7 @@ def test_choosing_another_display_lets_go_of_the_cat():
     APP.processEvents()
     assert win._cat
     win.apply_display(overlay.display_settings({"display": {"opener_display": "board"}}), local=True)
-    assert win._cat is None and overlay.CAT_FRAMES.frames == {}
+    assert win._cat is None and all(not f.frames for f in overlay.CAT_FRAMES.values())
 
 
 def test_an_unchanged_state_is_skipped():

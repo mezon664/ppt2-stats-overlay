@@ -20,6 +20,7 @@
   <canvas class="cat hidden" id="cat-left"></canvas>
   <canvas class="cat hidden" id="cat-right"></canvas>
 <script src="../assets/cat/cat.js"></script>
+<script src="../assets/cat2/cat.js"></script>
 
 <script>
 "use strict";
@@ -1051,10 +1052,27 @@ const CAT_BOTTOM_Y = 632, CAT_SCALE = 0.625, CAT_MIN_STILL_S = 0.5;
 const CAT_CENTER_X = { left: 320, right: 912 };
 const PAPER_W = 184, PAPER_H = 130, PAPER_MAX_PX = 40, CAT_PAPER_MIN_PX = 30, PAPER_TWO_LINE_MIN_PX = 22;
 const CAT_IMAGES = {};
-function catImage(file) {
-  if (!CAT_IMAGES[file]) { const im = new Image(); im.src = "../assets/cat/" + file; CAT_IMAGES[file] = im; }
-  return CAT_IMAGES[file];
+function catImage(folder, file) {
+  const key = folder + "/" + file;
+  if (!CAT_IMAGES[key]) { const im = new Image(); im.src = "../assets/" + key; CAT_IMAGES[key] = im; }
+  return CAT_IMAGES[key];
 }
+// The second clip (assets/cat2): one popup in CAT2_EVERY, picked the same way
+// as the HUD (hud/overlay.py pick_cat_clip), so both show the same cat.
+const CAT2_EVERY = 5;
+function catHash(text) {   // FNV-1a, as hud/overlay.py fnv1a
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(text)) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h >>> 0;
+}
+function pickCatClip(state, side, name) {
+  const start = Number((state || {}).match_start_t) || 0;
+  const key = `${pyRound(start * 10)}|${side}|${name}`;
+  return window.CAT2 && catHash(key) % CAT2_EVERY === 0 ? "cat2" : "cat";
+}
+const clipOf = (key) => key === "cat2" && window.CAT2 ? window.CAT2 : window.CAT;
+const clipFolder = { cat: "cat", cat2: "cat2" };
+const catClip = { left: null, right: null };
 function catPos(cat, age, seconds) {   // [frame, next frame, how far toward it], or null when gone
   const n = cat.frames.length, hs = cat.hold_start, he = cat.hold_end;
   const s0 = cat.still_start ?? hs, s1 = cat.still_end ?? he, span = Math.max(1, s1 - s0);
@@ -1102,15 +1120,17 @@ function placeCats(names, st, since) {
     if (cat && names[sd] && age != null && !st.frozen) {
       const now = performance.now() / 1000, serverAge = age + since;
       // a new opener, or this page's clock and the server's drifted apart: start over from the server's age
+      if (catStart[sd] == null || catName[sd] !== names[sd]) catClip[sd] = pickCatClip(st, sd, names[sd]);   // a new popup
       if (catStart[sd] == null || catName[sd] !== names[sd] || Math.abs((now - catStart[sd]) - serverAge) > 0.35) {
         catStart[sd] = now - serverAge; catName[sd] = names[sd];
       }
-      pos = catPos(cat, now - catStart[sd], display.opener_seconds);
+      pos = catPos(clipOf(catClip[sd]), now - catStart[sd], display.opener_seconds);
     }
     if (pos == null) { el.classList.add("hidden"); catStart[sd] = null; continue; }
     const s = scale, u = s * CAT_SCALE * partValue("opener", "scale");
-    drawCat(sd, pos, names[sd], u);
-    const w = cat.size[0] * u, h = cat.size[1] * u;
+    const clip = clipOf(catClip[sd]);
+    drawCat(sd, pos, names[sd], u, clip, clipFolder[catClip[sd]] || "cat");
+    const w = clip.size[0] * u, h = clip.size[1] * u;
     const [dx, dy] = openerOffset(display, sd);
     el.style.left = int(CAT_CENTER_X[sd] * s - w / 2 + dx * s) + "px";
     el.style.top = int(CAT_BOTTOM_Y * s - h + dy * s) + "px";
@@ -1119,8 +1139,8 @@ function placeCats(names, st, since) {
   }
   return any;
 }
-function drawCat(side, pos, name, u) {
-  const cat = window.CAT, el = $("cat-" + side), mirror = side === "left";
+function drawCat(side, pos, name, u, cat = window.CAT, folder = "cat") {
+  const el = $("cat-" + side), mirror = side === "left";
   const [i, j] = pos, frac = clamp01(pos[2]);
   const [w, h] = cat.size, cw = int(w * u), ch = int(h * u);
   if (el.width !== cw || el.height !== ch) { el.width = cw; el.height = ch; }
@@ -1130,7 +1150,7 @@ function drawCat(side, pos, name, u) {
   for (const [k, alpha] of [[i, 1], [j, j !== i ? frac : 0]]) {
     const f = cat.frames[k];
     if (!f.file || alpha <= 0) continue;
-    const im = catImage(f.file);
+    const im = catImage(folder, f.file);
     if (!im.complete || !im.naturalWidth) continue;
     const iw = Math.max(1, pyRound(im.naturalWidth * u)), ih = Math.max(1, pyRound(im.naturalHeight * u));
     let x = f.x * u;

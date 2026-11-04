@@ -1555,25 +1555,49 @@ CAT_CENTER_X = {"left": 320, "right": 912}
 CAT_MIN_STILL_S = 0.5     # the standing-still part is never squeezed below this
 CAT_PREPARE_PER_TICK = 2  # frames read and scaled ahead of time every 15 ms (CatPopup.prepare): 130 a second, ahead of the 24 a second it shows
 CAT_PAPER_MIN_PX = 30     # smallest one-line name on the paper (200x140 box); longer names run off its sides
+# The second clip (assets/cat2: the cat breaks through the glass with a sign):
+# one popup in CAT2_EVERY (user's request). Which one is decided from the
+# match, the side and the name (pick_cat_clip), so the HUD and the OBS page
+# show the same cat.
+CAT2_EVERY = 5
 
 
-def load_cat():
-    """The cat clip (cat.json), or None if it isn't there. The frame images
-    are read when first needed (cat_image): reading all 225 up front froze the
-    app for half a second the first time the cat display was chosen."""
+def load_cat(name="cat"):
+    """A cat clip (assets/<name>/cat.json), or None if it isn't there. The
+    frame images are read when first needed (cat_image): reading all 225 up
+    front froze the app for half a second the first time the cat display was
+    chosen."""
+    folder = ROOT_DIR / "assets" / name
     try:
-        data = json.loads((CAT_DIR / "cat.json").read_text(encoding="utf-8"))
+        data = json.loads((folder / "cat.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    data["_name"], data["_dir"] = name, str(folder)
     return data
 
 
-def cat_image(frame):
+def fnv1a(text):
+    """A small hash, the same in obs/overlay.html (catHash)."""
+    h = 0x811C9DC5
+    for b in text.encode("utf-8"):
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def pick_cat_clip(state, side, name):
+    """"cat2" for about one popup in CAT2_EVERY, else "cat": from this match's
+    start, the side and the opener's name, so the HUD and OBS agree."""
+    start = (state or {}).get("match_start_t") or 0
+    key = f"{int(round(float(start) * 10))}|{side}|{name}"
+    return "cat2" if fnv1a(key) % CAT2_EVERY == 0 else "cat"
+
+
+def cat_image(frame, folder=None):
     """A frame's image read from its file (not kept: only the scaled copies
     are, see CatFrames), or None for a frame without the cat."""
     if not frame.get("file"):
         return None
-    return QtGui.QImage(str(CAT_DIR / frame["file"]))
+    return QtGui.QImage(str(Path(folder or CAT_DIR) / frame["file"]))
 
 
 class CatFrames:
@@ -1593,7 +1617,7 @@ class CatFrames:
             self.cat, self.u, self.frames = cat, u, {}
         if index not in self.frames:
             f = cat["frames"][index]
-            src = cat_image(f)
+            src = cat_image(f, cat.get("_dir"))
             if src is None or src.isNull():
                 self.frames[index] = None
             else:
@@ -1611,7 +1635,11 @@ class CatFrames:
         self.cat, self.u, self.frames = None, None, {}
 
 
-CAT_FRAMES = CatFrames()
+CAT_FRAMES = {}   # clip name -> its CatFrames (the two clips never push each other out)
+
+
+def cat_frames(cat):
+    return CAT_FRAMES.setdefault((cat or {}).get("_name", "cat"), CatFrames())
 
 
 def cat_pos(cat, age, seconds):
@@ -1761,7 +1789,8 @@ class CatPopup(QtWidgets.QWidget):
         shown, between other work: all at once froze the app for about a
         second the first time the cat display was chosen (user: it flickered)."""
         self.cat, self.u = cat, u
-        self._todo = [i for i in range(len(cat["frames"])) if not CAT_FRAMES.has(cat, u, i)]
+        frames = cat_frames(cat)
+        self._todo = [i for i in range(len(cat["frames"])) if not frames.has(cat, u, i)]
         if self._todo and not self._prep_timer.isActive():
             self._prep_timer.start()
 
@@ -1775,7 +1804,7 @@ class CatPopup(QtWidgets.QWidget):
     def _frame(self, index):
         """Frame `index` at self.u and its top-left in this widget, or None.
         For 1P the frame is mirrored as it's drawn (paintEvent)."""
-        f = CAT_FRAMES.get(self.cat, self.u, index)
+        f = cat_frames(self.cat).get(self.cat, self.u, index)
         if f is None:
             return None
         img, x, y = f
@@ -1787,7 +1816,8 @@ class CatPopup(QtWidgets.QWidget):
         """The cat display isn't chosen any more: let go of the frames."""
         self._prep_timer.stop()
         self._todo, self.cat, self.pos, self._dirty = [], None, None, None
-        CAT_FRAMES.clear()
+        for frames in CAT_FRAMES.values():
+            frames.clear()
 
     def _draw(self, p, f):
         img, x, y = f
@@ -1922,6 +1952,8 @@ class HudWindow(QtWidgets.QWidget):
         for c in self.cats.values():
             c.setVisible(False)
         self._cat = None   # the clip, loaded the first time it's shown
+        self._cat2 = None  # the second clip (one popup in CAT2_EVERY), loaded when first picked
+        self._cat_clip = {"left": None, "right": None}   # the clip each side's popup plays
         # each cat runs on this PC's clock from when it started: the age the
         # server sends 10 times a second jitters by a few hundredths of a
         # second, and following it made the cat stutter (user: not smooth)
@@ -2293,17 +2325,22 @@ class HudWindow(QtWidgets.QWidget):
             elif self._cat and names[sd] and age is not None and not st.get("frozen"):
                 server_age = age + since
                 start = self._cat_start[sd]
+                u = self._scale * CAT_SCALE * part_value(self.display, "opener", "scale")
+                if start is None or self._cat_name[sd] != names[sd]:   # a new popup: which cat
+                    self._cat_clip[sd] = self._pick_clip(st, sd, names[sd], cat_w, u)
                 # a new opener, or this PC's clock and the server's drifted apart: start over from the server's age
                 if start is None or self._cat_name[sd] != names[sd] or abs((now - start) - server_age) > 0.35:
                     self._cat_start[sd], self._cat_name[sd] = now - server_age, names[sd]
-                pos = cat_pos(self._cat, now - self._cat_start[sd], self.display["opener_seconds"])
+                pos = cat_pos(self._clip(sd), now - self._cat_start[sd], self.display["opener_seconds"])
             if pos is None:
                 cat_w.setVisible(False)
                 self._cat_start[sd] = None
+                self._done_with_clip(sd)
                 continue
+            clip = self._clip(sd) if not self.edit_mode else self._cat
             u = self._scale * CAT_SCALE * part_value(self.display, "opener", "scale")
-            cat_w.show_frame(self._cat, pos, names[sd], u)
-            w, h = self._cat["size"][0] * u, self._cat["size"][1] * u
+            cat_w.show_frame(clip, pos, names[sd], u)
+            w, h = clip["size"][0] * u, clip["size"][1] * u
             x = CAT_CENTER_X[sd] * self._scale - w / 2   # its middle over the board (see CAT_CENTER_X)
             dx, dy = opener_offset(self.display, sd)
             s = self._scale
@@ -2315,6 +2352,33 @@ class HudWindow(QtWidgets.QWidget):
             self._fade.start()
         elif not any_up:
             self._fade.stop()
+
+    def _clip(self, sd):
+        return self._cat2 if self._cat_clip[sd] == "cat2" and self._cat2 else self._cat
+
+    def _pick_clip(self, st, sd, name, cat_w, u):
+        """The clip for a new popup; the second one's frames start being
+        prepared now, ahead of where it's shown (CatPopup.prepare)."""
+        if pick_cat_clip(st, sd, name) != "cat2":
+            if self._cat:
+                cat_w.prepare(self._cat, u)
+            return "cat"
+        if self._cat2 is None:
+            self._cat2 = load_cat("cat2") or False
+        if not self._cat2:
+            return "cat"
+        cat_w.prepare(self._cat2, u)
+        return "cat2"
+
+    def _done_with_clip(self, sd):
+        """A popup ended: the second clip's frames are let go once no side
+        plays it (it's one in CAT2_EVERY: not kept in memory between)."""
+        if self._cat_clip[sd] == "cat2":
+            self._cat_clip[sd] = None
+            if "cat2" not in self._cat_clip.values() and "cat2" in CAT_FRAMES:
+                CAT_FRAMES["cat2"].clear()
+                if self._cat:   # its popup prepares the usual clip again (already kept: no work)
+                    self.cats[sd].prepare(self._cat, self._scale * CAT_SCALE * part_value(self.display, "opener", "scale"))
 
     def _summary_ready(self):
         """A match was played and has ended: the server froze the numbers."""

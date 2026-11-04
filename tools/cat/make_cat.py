@@ -130,6 +130,33 @@ def key_black(frame):
     return out
 
 
+NEAR_MARGIN = 80   # px around the cat (and its sign) where loose bits are kept
+
+
+def keep_near_the_cat(bgra):
+    """Only the cat and what's right around it: the fourth clip (the cat
+    breaking through glass) leaves faint crack lines all over the picture,
+    which would sit over the game the whole time and made every frame
+    full-size (memory). The biggest solid part is the cat with its sign; bits
+    within NEAR_MARGIN of it stay (the glass bursting around it)."""
+    solid = (bgra[..., 3] > 128).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(solid, connectivity=8)
+    if n < 2:
+        return bgra
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    x, y, w, h, area = stats[i]
+    if area < 2000:   # no cat yet (only the first bits of glass): nothing kept
+        out = bgra.copy()
+        out[...] = 0
+        return out
+    m = NEAR_MARGIN
+    keep = np.zeros(bgra.shape[:2], bool)
+    keep[max(0, y - m):y + h + m, max(0, x - m):x + w + m] = True
+    out = bgra.copy()
+    out[~keep] = 0
+    return out
+
+
 def paper_quad(bgra):
     """The paper's 4 corners (x, y) when it's held up facing us, else None:
     the biggest white, colorless area, nearly rectangular and wide enough."""
@@ -185,6 +212,7 @@ def still_part(frames):
 
 
 WALK_CYCLE = 12   # frames: the last ones repeated to finish walking off
+JS_NAME = {"cat": "CAT", "cat2": "CAT2"}   # the global each clip's cat.js sets (the OBS page)
 
 
 def finish_walking_off(frames, width):
@@ -193,9 +221,24 @@ def finish_walking_off(frames, width):
     further toward the edge at the speed it was walking, until the cat is out
     of the picture. (Same images, new positions: no extra files.)"""
     last = frames[-1]
-    if not last["file"] or last["x"] >= width:
+    if not last["file"]:
         return
     n = len(frames)
+    if last["x"] <= 0:   # walking off to the left (the fourth clip): its right edge moves left
+        w_of = lambda e: cv2.imread(str(OUT / e["file"]), cv2.IMREAD_UNCHANGED).shape[1]
+        right = last["x"] + w_of(last)
+        speed = max(4.0, (frames[n - 5]["x"] + w_of(frames[n - 5]) - right) / 4)
+        cycle = frames[n - WALK_CYCLE:]
+        j = 0
+        while right > 0:
+            right -= speed
+            src = cycle[j % WALK_CYCLE]
+            frames.append({"file": src["file"], "x": int(round(right - w_of(src))), "y": src["y"], "paper": None,
+                           "_grey": None})
+            j += 1
+        return
+    if last["x"] >= width:
+        return
     speed = max(4.0, (last["x"] - frames[n - 5]["x"]) / 4)   # px a frame, from the tail's left edge
     cycle = frames[n - WALK_CYCLE:]
     target, j = float(last["x"]), 0
@@ -229,7 +272,7 @@ def main(video):
         if not ok:
             break
         if i % STEP == 0:
-            bgra = cut(f)
+            bgra = keep_near_the_cat(cut(f))
             size = [bgra.shape[1], bgra.shape[0]]
             ys, xs = np.nonzero(bgra[..., 3] > 8)
             entry = {"file": None, "x": 0, "y": 0, "paper": None}
@@ -272,7 +315,8 @@ def main(video):
     }
     (OUT / "cat.json").write_text(json.dumps(data, indent=0), encoding="utf-8")
     # the OBS page is opened from a file, where it can't fetch() JSON: the same data as a script
-    (OUT / "cat.js").write_text("window.CAT = " + json.dumps(data) + ";" + chr(10), encoding="utf-8")
+    (OUT / "cat.js").write_text(f"window.{JS_NAME.get(OUT.name, 'CAT')} = " + json.dumps(data) + ";" + chr(10),
+                                encoding="utf-8")
     total = sum(f.stat().st_size for f in OUT.glob("f_*.webp"))
     print(f"{len(frames)} frames, paper held {data['hold_start']}-{data['hold_end']}, "
           f"still {still[0]}-{still[1]}, "
@@ -280,4 +324,7 @@ def main(video):
 
 
 if __name__ == "__main__":
+    # make_cat.py <clip> [output folder under assets/, default "cat"]
+    if len(sys.argv) > 2:
+        OUT = ROOT / "assets" / sys.argv[2]
     main(sys.argv[1])
