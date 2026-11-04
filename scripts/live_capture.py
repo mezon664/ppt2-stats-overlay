@@ -16,6 +16,13 @@ click-through HUD above it simply wasn't drawn. Getting past that means hooking
 the game's rendering (how Discord's overlay / OBS game capture work), which the
 project rules out. So in fullscreen this reports a reason asking for windowed
 mode instead of feeding black frames to recognition.
+
+Windowed fullscreen (borderless: a window exactly the size of the monitor,
+user's request 2026-11-04) is just a window and captures like one. It has the
+same size and place as the real fullscreen, so the two are told apart by what
+Windows says (an exclusive Direct3D fullscreen app is running:
+SHQueryUserNotificationState) and, should that not be reported, by the
+capture staying black (FULLSCREEN_BLACK_S).
 """
 import time
 
@@ -59,8 +66,35 @@ SIZE_SETTLE_S = 0.5
 
 
 def covers_monitor(left, top, width, height, monitor_rect):
-    """True when the client area is exactly the monitor: the game's fullscreen."""
+    """True when the client area is exactly the monitor: the game's
+    fullscreen, or a windowed (borderless) fullscreen."""
     return (left, top, left + width, top + height) == tuple(monitor_rect)
+
+
+# Seconds of an all-black capture of a monitor-sized game before it's taken
+# as the real fullscreen (black there: measured 0 brightness). Longer than a
+# loading screen's black, which recognition must still see (the numbers are
+# cleared on a black screen).
+FULLSCREEN_BLACK_S = 3.0
+QUNS_RUNNING_D3D_FULL_SCREEN = 3
+
+
+def exclusive_fullscreen_running():
+    """True when Windows reports an exclusive Direct3D fullscreen app (not a
+    borderless window). False when it can't be asked."""
+    try:
+        import ctypes
+        state = ctypes.c_int(0)
+        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) != 0:
+            return False
+        return state.value == QUNS_RUNNING_D3D_FULL_SCREEN
+    except Exception:
+        return False
+
+
+def is_black(frame):
+    """Every sampled pixel (near) black."""
+    return int(frame[::8, ::8].max()) <= 8
 
 
 class SizeSettler:
@@ -127,6 +161,7 @@ class GameWindowCapture:
         self._sizes = SizeSettler()
         self.last_client_size = None   # the game window's size before shrinking (diagnostic.py)
         self.last_client_origin = None # its top-left on the screen (rating.covered: what's over a box)
+        self._black_since = None       # monitor-sized and black since then (FULLSCREEN_BLACK_S)
 
     def close(self):
         """Release the screen-capture handle before rebuilding after an error."""
@@ -161,7 +196,9 @@ class GameWindowCapture:
             mon = win32api.GetMonitorInfo(win32api.MonitorFromWindow(self.hwnd))["Monitor"]
         except Exception:
             mon = None
-        if mon is not None and covers_monitor(left, top, client_w, client_h, mon):
+        monitor_sized = mon is not None and covers_monitor(left, top, client_w, client_h, mon)
+        if monitor_sized and exclusive_fullscreen_running():
+            self._black_since = None
             return None, False, FULLSCREEN_REASON, None
 
         if not self._sizes.update((client_w, client_h), time.monotonic()):
@@ -182,6 +219,14 @@ class GameWindowCapture:
             return None, False, f"キャプチャに失敗しました: {e}", profile
 
         frame = np.array(shot)[:, :, :3]  # BGRA -> BGR
+        if monitor_sized and is_black(frame):
+            now = time.monotonic()
+            if self._black_since is None:
+                self._black_since = now
+            elif now - self._black_since >= FULLSCREEN_BLACK_S:
+                return None, False, FULLSCREEN_REASON, None
+        else:
+            self._black_since = None
         self.last_client_size = (client_w, client_h)
         self.last_client_origin = (left, top)
         frame, work_profile = shrink_for_recognition(frame)

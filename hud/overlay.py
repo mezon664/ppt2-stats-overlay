@@ -1556,10 +1556,11 @@ CAT_MIN_STILL_S = 0.5     # the standing-still part is never squeezed below this
 CAT_PREPARE_PER_TICK = 2  # frames read and scaled ahead of time every 15 ms (CatPopup.prepare): 130 a second, ahead of the 24 a second it shows
 CAT_PAPER_MIN_PX = 30     # smallest one-line name on the paper (200x140 box); longer names run off its sides
 # The second clip (assets/cat2: the cat breaks through the glass with a sign):
-# one popup in CAT2_EVERY (user's request). Which one is decided from the
-# match, the side and the name (pick_cat_clip), so the HUD and the OBS page
-# show the same cat.
-CAT2_EVERY = 5
+# one popup in CAT2_EVERY. Which one is decided from the match, the side and
+# the name (pick_cat_clip), so the HUD and the OBS page show the same cat.
+# 0 = never: held back for now (user, 2026-11-04), and left out of the
+# release zip (tools/make_release.py).
+CAT2_EVERY = 0
 
 
 def load_cat(name="cat"):
@@ -1589,7 +1590,7 @@ def pick_cat_clip(state, side, name):
     start, the side and the opener's name, so the HUD and OBS agree."""
     start = (state or {}).get("match_start_t") or 0
     key = f"{int(round(float(start) * 10))}|{side}|{name}"
-    return "cat2" if fnv1a(key) % CAT2_EVERY == 0 else "cat"
+    return "cat2" if CAT2_EVERY and fnv1a(key) % CAT2_EVERY == 0 else "cat"
 
 
 def cat_image(frame, folder=None):

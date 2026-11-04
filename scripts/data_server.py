@@ -39,7 +39,7 @@ from server_control import handle_control_message
 
 # Changes when the OBS page's files change (an update, a new cat clip): the
 # page reloads itself when it sees a different value (obs/overlay.html).
-_PAGE_FILES = ("obs/overlay.html", "assets/cat/cat.js", "assets/cat2/cat.js")
+_PAGE_FILES = ("obs/overlay.html", "assets/cat/cat.js")
 _ROOT = Path(__file__).resolve().parent.parent
 PAGE_REV = "-".join(str(int((_ROOT / f).stat().st_mtime)) if (_ROOT / f).exists() else "0" for f in _PAGE_FILES)
 

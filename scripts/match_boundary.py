@@ -50,6 +50,14 @@ GO_RISE = 0.08         # above background to count as GO! on screen
 GO_FALL = 0.03         # within this of background again = GO! gone
 GO_MIN = 0.10          # and never below this absolute level for GO! itself
 GO_BASELINE_FRAMES = 15  # recent non-GO frames the background is the median of
+# GO! is also gone once the orange has fallen most of the way back from its
+# peak toward the background. Needed for the English game: its big "Ready?"
+# covers this region during the countdown, so the background measured then is
+# lower than the stage's own orange once play starts (live: background 0.027
+# and 0.041, START! 0.24-0.26, then the stage at 0.088-0.096 — above
+# background + GO_FALL, so START! never read as gone, the start fell back to
+# the 8 s timeout and an opener T-SPIN Double in those seconds was dropped).
+GO_DROP = 0.6
 GO_ENTER, GO_EXIT = GO_MIN, GO_FALL  # kept for tests describing the absolute floor
 
 
@@ -102,6 +110,7 @@ class MatchBoundaryDetector:
         self.yatta_window_right = scale_box(YATTA_WINDOW_RIGHT, self.profile)
 
         self._go_active = False
+        self._go_peak = 0.0
         self._go_background = deque(maxlen=GO_BASELINE_FRAMES)
         self._yatta_active = False
         self.last_go_conf = 0.0
@@ -136,10 +145,14 @@ class MatchBoundaryDetector:
         if not self._go_active:
             if go_conf >= GO_MIN and go_conf >= background + GO_RISE:
                 self._go_active = True
+                self._go_peak = go_conf
             else:
                 self._go_background.append(go_conf)
-        elif go_conf <= background + GO_FALL:
-            self._go_active = False
-            go_disappeared_edge = True
+        else:
+            self._go_peak = max(self._go_peak, go_conf)
+            if (go_conf <= background + GO_FALL
+                    or go_conf <= self._go_peak - GO_DROP * (self._go_peak - background)):
+                self._go_active = False
+                go_disappeared_edge = True
 
         return victory_edge, go_disappeared_edge

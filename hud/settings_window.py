@@ -20,6 +20,7 @@ then the HUD and OBS follow through the server.
 import json
 import math
 import time
+import copy
 import re
 import shutil
 import sys
@@ -386,12 +387,24 @@ TEXT = {
                        "en": "Reset the display settings to their defaults?"},
     "delete_confirm": {"ja": "プリセット「{}」を削除します。よろしいですか？",
                        "en": "Delete the preset “{}”?"},
+    "card_reset": {"ja": "↺ 元に戻す", "en": "↺ Reset"},
+    "card_reset_tip": {"ja": "この項目だけ初期設定に戻します", "en": "Back to the defaults for this item only"},
+    "card_reset_look_all": {"ja": "全体の大きさ・色・背景を初期設定に戻します",
+                            "en": "Back to the default size, colors and background for everything"},
+    "card_reset_look_part": {"ja": "この部分の大きさ・色・背景を全体と同じに戻します",
+                             "en": "This part's size, colors and background back to the overall ones"},
+    "theme": {"ja": "設定画面の色", "en": "Window colors"},
+    "theme.navy": {"ja": "紺", "en": "Navy"},
+    "theme.light": {"ja": "ライト", "en": "Light"},
+    "theme.game": {"ja": "ゲーム風", "en": "Game"},
+    "theme.mono": {"ja": "モノクロ", "en": "Mono"},
 }
 
 
-PREVIEW_W, PREVIEW_H = 100, 62   # the design cards on 見た目 (smaller, five a row: user's request)
+WINDOW_W, WINDOW_MAX_H = 830, 860   # the window's size on opening
+PREVIEW_W, PREVIEW_H = 92, 57   # the design cards on 見た目 (smaller, five a row: user's request)
 DESIGN_COLUMNS = 5
-LOOK_PREVIEW_W, LOOK_PREVIEW_H = 560, 150   # the preview on 見た目
+LOOK_PREVIEW_W, LOOK_PREVIEW_H = 520, 140   # the preview on 見た目
 SAMPLE_LEFT = {"apm": {"apm": 77.8}, "pps": 2.09, "app": 0.62, "attack": 112, "pieces": 181, "ren": 3, "b2b": 2}
 SAMPLE_RIGHT = {"apm": {"apm": 43.2}, "pps": 1.74, "app": 0.41, "attack": 62, "pieces": 151, "ren": 0, "b2b": 0}
 
@@ -661,7 +674,6 @@ class SettingsWindow(QtWidgets.QWidget):
         super().__init__()
         self.setObjectName("settingsRoot")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(ui.STYLE)
         self.lang = "ja"
         self._drag_available = drag_available
         self._offsets = {key: [0, 0] for key in TARGET_ORDER}
@@ -677,6 +689,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self._font_loaded_family = None
         self._ui_preferences = load_settings(persist_defaults=False).get("ui", {})
         self._settings_on_top = bool(self._ui_preferences.get("settings_on_top", False))
+        theme = self._ui_preferences.get("theme") if isinstance(self._ui_preferences, dict) else None
+        self._theme = theme if theme in ui.THEMES else ui.DEFAULT_THEME
+        self.setStyleSheet(ui.apply_theme(self._theme))
         if self._settings_on_top:
             self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         # True while controls are being filled in (building, loading a file or
@@ -731,10 +746,12 @@ class SettingsWindow(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.tabs)
-        # taller than wide (user's request), but never past the screen
+        # taller than wide (user's request), but never past the screen; a
+        # little smaller than at first (user: 880 x up to 980 felt big)
         screen = QtGui.QGuiApplication.primaryScreen()
         avail = screen.availableGeometry().height() if screen is not None else 1000
-        self.resize(880, max(600, min(980, int(avail * 0.9))))
+        self.resize(WINDOW_W, max(560, min(WINDOW_MAX_H, int(avail * 0.8))))
+        self._add_card_resets()
         self.retranslate()
         self._loading = False
         # The mouse wheel only scrolls: over a dropdown, number box or slider it
@@ -932,7 +949,11 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_display = ui.Segmented()
         for key in OPENER_DISPLAY_ORDER:
             self.opener_display.addItem("", key)
-        self.opener_card.add(self._row("opener_display", _hbox(self.opener_display)))
+        # the label above the five choices (beside them, the English ones were wider than the window)
+        display_label = QtWidgets.QLabel()
+        self._row_labels["opener_display"] = display_label
+        self.opener_card.add(display_label)
+        self.opener_card.add(_hbox(self.opener_display))
         self.opener_seconds = QtWidgets.QSpinBox()
         self.opener_seconds.setRange(0, 30)
         self.opener_seconds.valueChanged.connect(self._changed)
@@ -1002,7 +1023,11 @@ class SettingsWindow(QtWidgets.QWidget):
         for key in LOOK_TARGETS:
             self.look_target.addItem("", key)
         self.look_target.currentIndexChanged.connect(self._look_target_changed)
-        self.look_box.add(self._row("look_target", _hbox(self.look_target)))
+        # the label above the choices (six of them: beside it they were wider than the window)
+        target_label = QtWidgets.QLabel()
+        self._row_labels["look_target"] = target_label
+        self.look_box.add(target_label)
+        self.look_box.add(_hbox(self.look_target))
         self.scale = self._spin(50, 200, "%", step=5)
         self.scale.valueChanged.connect(lambda v: self._look_edited("scale", v / 100))
         self.look_box.add(self._row("size", _hbox(self.scale)))
@@ -1079,6 +1104,12 @@ class SettingsWindow(QtWidgets.QWidget):
         self.on_top_check.setChecked(self._settings_on_top)
         self.on_top_check.toggled.connect(self._set_settings_on_top)
         self.window_card.add(self.on_top_check)
+        self.theme_pick = ui.Segmented()
+        for key in ui.THEME_ORDER:
+            self.theme_pick.addItem("", key)
+        self.theme_pick.setCurrentIndex(ui.THEME_ORDER.index(self._theme))
+        self.theme_pick.currentIndexChanged.connect(self._theme_picked)
+        self.window_card.add(self._row("theme", _hbox(self.theme_pick)))
 
         self.update_card = ui.Card()
         self._build_update_section(self.update_card)
@@ -1699,6 +1730,13 @@ class SettingsWindow(QtWidgets.QWidget):
         self.language_card.setTitle(t("card.language"))
         self.window_card.setTitle(t("card.window"))
         self.on_top_check.setText(t("settings_on_top"))
+        for i, key in enumerate(ui.THEME_ORDER):
+            self.theme_pick.setItemText(i, t("theme." + key))
+        for card in self._card_reset_cards:
+            card.reset_button.setText(t("card_reset"))
+            card.reset_button.setToolTip(t("card_reset_tip"))
+        self.look_box.reset_button.setToolTip(
+            t("card_reset_look_all") if self._look_target == "all" else t("card_reset_look_part"))
         self.update_card.setTitle(t("tab.update"))
         self.up_current.setText(t("up.current").format(self._version))
         self.up_check_on_start.setText(t("up.check_on_start"))
@@ -1764,6 +1802,9 @@ class SettingsWindow(QtWidgets.QWidget):
     def _look_target_changed(self, *_):
         self._look_target = self.look_target.currentData()
         self._show_look()
+        self.look_box.reset_button.setToolTip(
+            self.tr_("card_reset_look_all") if self._look_target == "all" else self.tr_("card_reset_look_part"))
+        self._update_card_resets()
 
     def _look_edited(self, key, value):
         if self._loading:
@@ -2114,6 +2155,7 @@ class SettingsWindow(QtWidgets.QWidget):
             card.sync()   # a part's details only while it's on
         self.retranslate()
         self._loading = False
+        self._update_card_resets()
         self._preview_timer.start()
 
     def values(self):
@@ -2201,7 +2243,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.event_log_count.setEnabled(self.show_event_log.isChecked())
         self.opener_display.setEnabled(self.show_opener.isChecked())
         self.outline_width.setEnabled(self.text_outline.isChecked())
-        self.display_changed.emit(self.values())
+        d = self.values()
+        self._update_card_resets(d)
+        self.display_changed.emit(d)
         self._save_timer.start()
         self._preview_timer.start()
 
@@ -2214,6 +2258,78 @@ class SettingsWindow(QtWidgets.QWidget):
             return
         # keep the chosen language: resetting the display shouldn't switch it
         self._show_values(display_settings({"display": {**DISPLAY_DEFAULTS, "language": self.lang}}))
+        self._changed()
+
+    def _theme_picked(self, *_):
+        """The window's own colors (ui_kit.THEMES), kept in ui.theme."""
+        self._theme = self.theme_pick.currentData()
+        self.setStyleSheet(ui.apply_theme(self._theme))
+        self.tabs.refresh_icons()
+        self.drag_button.setIcon(ui.icon("place", "#ffffff"))
+        for w in self.findChildren(ui.Switch):
+            w.update()
+        self.update()
+        settings = load_settings()
+        preferences = settings.get("ui", {})
+        preferences["theme"] = self._theme
+        settings["ui"] = preferences
+        save_settings(settings)
+
+    # --- "元に戻す" on each card (user: one for each item) ---
+    def _add_card_resets(self):
+        offsets = tuple(k for pair in TARGET_KEYS.values() for k in pair)
+        cards = (
+            (self.design_box, ("style",)),
+            (self.text_box, ("text_weight", "text_outline", "text_outline_width", "font_family", "font_file")),
+            (self.player_box, ("player_color_left", "player_color_right")),
+            (self.players_card, ("players", "always_show")),
+            (self.items_box, ("stat_items", "labels")),
+            (self.clock_card, ("show_clock",)),
+            (self.events_card, ("show_event_log", "event_log_count")),
+            (self.summary_card, ("show_summary", "summary_items")),
+            (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),
+            (self.drag_card, ("drag_each_side",)),
+            (self.placement_card, ("stats_position",)),
+            (self.position_section, offsets),
+        )
+        self._card_reset_cards = []
+        self._card_reset_keys = cards
+        self._defaults = display_settings({"display": {}})
+        for card, keys in cards:
+            card.set_reset(lambda _=False, k=keys: self._reset_keys(k))
+            self._card_reset_cards.append(card)
+        self.look_box.set_reset(self._reset_look_target)
+        self._card_reset_cards.append(self.look_box)
+
+    def _update_card_resets(self, d=None):
+        """A card's 元に戻す only while something on it differs from the default."""
+        if not getattr(self, "_card_reset_keys", None):
+            return
+        d = d or self.values()
+        for card, keys in self._card_reset_keys:
+            card.reset_button.setEnabled(any(d[k] != self._defaults[k] for k in keys))
+        if self._look_target == "all":
+            changed = any(self._overall[k] != self._defaults[k] for k in LOOK_KEYS)
+        else:
+            changed = bool(self._parts.get(self._look_target))
+        self.look_box.reset_button.setEnabled(changed)
+
+    def _reset_keys(self, keys):
+        """These settings back to their defaults, the rest as they are."""
+        d = self.values()
+        for k in keys:
+            d[k] = copy.deepcopy(DISPLAY_DEFAULTS[k])
+        self._show_values(display_settings({"display": d}))
+        self._changed()
+
+    def _reset_look_target(self):
+        """大きさ・色・背景: for 全体 the overall values back to the defaults,
+        for a part its own values dropped (it follows 全体 again)."""
+        if self._look_target == "all":
+            self._overall = {k: copy.deepcopy(DISPLAY_DEFAULTS[k]) for k in LOOK_KEYS}
+        else:
+            self._parts[self._look_target] = {}
+        self._show_look()
         self._changed()
 
     def _set_settings_on_top(self, enabled):

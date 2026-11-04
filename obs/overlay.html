@@ -20,7 +20,6 @@
   <canvas class="cat hidden" id="cat-left"></canvas>
   <canvas class="cat hidden" id="cat-right"></canvas>
 <script src="../assets/cat/cat.js"></script>
-<script src="../assets/cat2/cat.js"></script>
 
 <script>
 "use strict";
@@ -1059,7 +1058,7 @@ function catImage(folder, file) {
 }
 // The second clip (assets/cat2): one popup in CAT2_EVERY, picked the same way
 // as the HUD (hud/overlay.py pick_cat_clip), so both show the same cat.
-const CAT2_EVERY = 5;
+const CAT2_EVERY = 0;   // 0 = never (held back for now; assets/cat2 isn't loaded)
 function catHash(text) {   // FNV-1a, as hud/overlay.py fnv1a
   let h = 0x811c9dc5;
   for (const b of new TextEncoder().encode(text)) h = Math.imul(h ^ b, 0x01000193) >>> 0;
@@ -1068,7 +1067,7 @@ function catHash(text) {   // FNV-1a, as hud/overlay.py fnv1a
 function pickCatClip(state, side, name) {
   const start = Number((state || {}).match_start_t) || 0;
   const key = `${pyRound(start * 10)}|${side}|${name}`;
-  return window.CAT2 && catHash(key) % CAT2_EVERY === 0 ? "cat2" : "cat";
+  return window.CAT2 && CAT2_EVERY && catHash(key) % CAT2_EVERY === 0 ? "cat2" : "cat";
 }
 const clipOf = (key) => key === "cat2" && window.CAT2 ? window.CAT2 : window.CAT;
 const clipFolder = { cat: "cat", cat2: "cat2" };

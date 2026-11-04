@@ -24,6 +24,8 @@ INCLUDE = ["launch.py", "start.bat", "README.md", "LICENSE", "requirements.txt",
            "scripts", "hud", "obs", "assets",
            "config/attack_table.json"]   # the game's attack table (the settings file next to it is each user's own)
 SKIP_PARTS = {"__pycache__", "user_fonts", ".pytest_cache"}
+# the second cat clip (6 MB) is held back for now (hud/overlay.py CAT2_EVERY)
+SKIP_DIRS = {("assets", "cat2")}
 # Libraries added after the bundled runtime (requirements-vendor.txt), shipped
 # in the zip as vendor/: an update from the settings window brings them, no
 # new full package needed (the runtime is Python 3.12 on 64-bit Windows).
@@ -54,7 +56,8 @@ def files():
         elif p.is_dir():
             for f in sorted(p.rglob("*")):
                 rel = f.relative_to(ROOT)
-                if f.is_file() and not (set(rel.parts) & SKIP_PARTS) and f.suffix not in SKIP_SUFFIXES:
+                if (f.is_file() and not (set(rel.parts) & SKIP_PARTS) and f.suffix not in SKIP_SUFFIXES
+                        and tuple(rel.parts[:2]) not in SKIP_DIRS):
                     yield f
         else:
             raise SystemExit(f"missing from the release: {name}")

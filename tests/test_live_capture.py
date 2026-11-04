@@ -53,3 +53,47 @@ def test_settle_timer_restarts_when_the_pending_size_changes():
     assert not s.update((2560, 1440), 1.4)   # different again: wait from here
     assert not s.update((2560, 1440), 1.8)
     assert s.update((2560, 1440), 1.9)
+
+
+def test_windowed_fullscreen_is_captured_and_the_real_one_refused(monkeypatch):
+    """A borderless window the size of the monitor is read like any window;
+    the exclusive fullscreen (Windows says so, or the capture stays black) is
+    refused with the fullscreen message."""
+    import numpy as np
+    import live_capture as lc
+
+    clock = [100.0]
+    monkeypatch.setattr(lc.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(lc.win32gui, "IsWindow", lambda h: True)
+    monkeypatch.setattr(lc.win32gui, "IsIconic", lambda h: False)
+    monkeypatch.setattr(lc.win32gui, "GetClientRect", lambda h: (0, 0, 1920, 1080))
+    monkeypatch.setattr(lc.win32gui, "ClientToScreen", lambda h, p: (0, 0))
+    monkeypatch.setattr(lc.win32api, "MonitorFromWindow", lambda h: 1)
+    monkeypatch.setattr(lc.win32api, "GetMonitorInfo", lambda m: {"Monitor": (0, 0, 1920, 1080)})
+    exclusive = [False]
+    monkeypatch.setattr(lc, "exclusive_fullscreen_running", lambda: exclusive[0])
+    picture = [np.full((1080, 1920, 4), 120, np.uint8)]
+
+    class FakeShot:
+        def grab(self, monitor):
+            return picture[0]
+
+        def close(self):
+            pass
+
+    cap = lc.GameWindowCapture.__new__(lc.GameWindowCapture)
+    cap.sct, cap.hwnd, cap._sizes = FakeShot(), 1, lc.SizeSettler()
+    cap.last_client_size = cap.last_client_origin = cap._black_since = None
+
+    frame, ok, reason, _ = cap.grab()
+    assert ok and reason is None and frame is not None          # windowed fullscreen: read
+
+    picture[0] = np.zeros((1080, 1920, 4), np.uint8)             # a black loading screen: still read
+    assert cap.grab()[1]
+    clock[0] += lc.FULLSCREEN_BLACK_S + 0.1                      # black for seconds: the real fullscreen
+    assert cap.grab()[2] == lc.FULLSCREEN_REASON
+
+    picture[0] = np.full((1080, 1920, 4), 120, np.uint8)
+    assert cap.grab()[1]                                         # a picture again
+    exclusive[0] = True                                          # Windows: exclusive fullscreen
+    assert cap.grab()[2] == lc.FULLSCREEN_REASON

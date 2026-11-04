@@ -121,3 +121,19 @@ def test_the_winner_is_the_side_the_banner_is_on():
         det = MatchBoundaryDetector()
         det.update(cv2.imread(str(fixtures / name)), 0.0)
         assert det.winner == side, (name, det.last_yatta_side_conf)
+
+
+def test_english_start_seen_to_leave_over_a_brighter_stage(monkeypatch):
+    # The English game's big "Ready?" covers the GO! region during the
+    # countdown, so the background measured then is below the stage's own
+    # orange once play starts. Read from two live misses (debug_frames
+    # go_miss_t270.16 / go_miss_t965.75): START! never read as gone before.
+    ratios = ([0.018] * 12 + [0.088, 0.095, 0.126, 0.240, 0.265, 0.254, 0.244, 0.238, 0.238, 0.182]
+              + [0.104, 0.088, 0.088, 0.088])
+    edges = _go_edges(monkeypatch, ratios)
+    assert edges.index(True) == 22          # as START! slides out
+    assert edges.count(True) == 1
+    ratios = [0.041] * 12 + [0.144, 0.239, 0.100] + [0.096] * 6
+    edges = _go_edges(monkeypatch, ratios)
+    assert edges.index(True) == 14
+    assert edges.count(True) == 1

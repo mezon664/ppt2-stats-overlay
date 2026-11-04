@@ -11,71 +11,114 @@ from PyQt6 import QtCore, QtGui, QtSvg, QtWidgets
 
 ASSETS = (Path(__file__).resolve().parent.parent / "assets" / "ui").as_posix()
 
-NAVY = "#141a2e"
-NAVY_SELECTED = "#2a3558"
-NAV_TEXT = "#c9d1e6"
-PAGE_BG = "#f3f4f8"
-CARD_BORDER = "#e1e4ee"
-TEXT = "#141a2e"
-MUTED = "#4f5670"     # 4.5:1 or more on white and on the page background
-ACCENT = "#2f6fd6"
-ACCENT_SOFT = "#eaf1fd"
-LINE = "#c9cfdd"
+# Color themes (user: the navy looked too much like every AI-made app, other
+# ideas?). Each sets the menu down the left, the page behind the cards and the
+# accent; the cards stay white. Chosen on その他 (ui.theme in the settings).
+THEMES = {
+    # the first design (2026-11-04)
+    "navy": {"nav": "#141a2e", "nav_selected": "#2a3558", "nav_hover": "#1e2742", "nav_text": "#c9d1e6",
+             "nav_selected_text": "#ffffff", "nav_title": "#ffffff", "nav_version": "#8f98b3", "nav_bar": "transparent",
+             "page": "#f3f4f8", "card_border": "#e1e4ee", "text": "#141a2e", "muted": "#4f5670",
+             "accent": "#2f6fd6", "accent_hover": "#255bb4", "accent_soft": "#eaf1fd", "on_accent": "#ffffff",
+             "line": "#c9cfdd", "radius": 12},
+    # like Windows' own settings: a light menu, the selected row marked by a bar
+    "light": {"nav": "#eef0f3", "nav_selected": "#dfe3e8", "nav_hover": "#e6e9ed", "nav_text": "#2b2f36",
+              "nav_selected_text": "#111418", "nav_title": "#111418", "nav_version": "#6b7280", "nav_bar": "#0067c0",
+              "page": "#f7f8fa", "card_border": "#e3e5e8", "text": "#1b1f24", "muted": "#555c66",
+              "accent": "#0067c0", "accent_hover": "#00559e", "accent_soft": "#e6f0fa", "on_accent": "#ffffff",
+              "line": "#cdd1d6", "radius": 8},
+    # the game's own colors: warm charcoal, the orange of START!
+    "game": {"nav": "#2a2420", "nav_selected": "#453a33", "nav_hover": "#352e29", "nav_text": "#e7ddd3",
+             "nav_selected_text": "#ffffff", "nav_title": "#ffffff", "nav_version": "#a8998c", "nav_bar": "#f07c2c",
+             "page": "#f7f3ee", "card_border": "#e9e1d7", "text": "#2a2420", "muted": "#5f554c",
+             "accent": "#d9601a", "accent_hover": "#b94f12", "accent_soft": "#fdeee3", "on_accent": "#ffffff",
+             "line": "#d8cfc4", "radius": 10},
+    # black, white and grays only
+    "mono": {"nav": "#18181b", "nav_selected": "#3a3a40", "nav_hover": "#26262b", "nav_text": "#d4d4d8",
+             "nav_selected_text": "#ffffff", "nav_title": "#ffffff", "nav_version": "#8e8e96", "nav_bar": "transparent",
+             "page": "#f4f4f5", "card_border": "#e4e4e7", "text": "#18181b", "muted": "#52525b",
+             "accent": "#27272a", "accent_hover": "#000000", "accent_soft": "#ececee", "on_accent": "#ffffff",
+             "line": "#d4d4d8", "radius": 6},
+}
+THEME_ORDER = ("navy", "light", "game", "mono")
+DEFAULT_THEME = "mono"
+T = dict(THEMES[DEFAULT_THEME])   # the theme in use (apply_theme)
+ACCENT = T["accent"]              # (read by the rating chart when it paints)
 
-STYLE = f"""
-QWidget#settingsRoot {{ background: {PAGE_BG}; }}
-QWidget#settingsRoot, QWidget#settingsRoot QWidget {{ font-family: "Yu Gothic UI", "Meiryo UI", "Segoe UI"; font-size: 13px; color: {TEXT}; }}
-QScrollArea#page, QScrollArea#page > QWidget > QWidget#pageInner {{ background: {PAGE_BG}; border: none; }}
-QFrame#card {{ background: #ffffff; border: 1px solid {CARD_BORDER}; border-radius: 12px; }}
+
+def apply_theme(name):
+    """Makes `name` the theme in use; returns the style sheet to set."""
+    global ACCENT
+    T.clear()
+    T.update(THEMES.get(name, THEMES[DEFAULT_THEME]))
+    ACCENT = T["accent"]
+    return style_sheet()
+
+
+def style_sheet():
+    c = T
+    r, r2 = c["radius"], max(4, c["radius"] - 4)
+    return f"""
+QWidget#settingsRoot {{ background: {c['page']}; }}
+QWidget#settingsRoot, QWidget#settingsRoot QWidget {{ font-family: "Yu Gothic UI", "Meiryo UI", "Segoe UI"; font-size: 13px; color: {c['text']}; }}
+QScrollArea#page, QScrollArea#page > QWidget > QWidget#pageInner {{ background: {c['page']}; border: none; }}
+QFrame#card {{ background: #ffffff; border: 1px solid {c['card_border']}; border-radius: {r}px; }}
 QFrame#card QLabel {{ background: transparent; }}
 QWidget#settingsRoot QLabel#pageTitle {{ font-size: 20px; font-weight: 700; }}
 QWidget#settingsRoot QLabel#cardTitle {{ font-size: 15px; font-weight: 700; }}
-QWidget#settingsRoot QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
-QPushButton {{ background: #ffffff; border: 1px solid {LINE}; border-radius: 8px; padding: 6px 12px; }}
-QPushButton:hover {{ border-color: {ACCENT}; }}
+QWidget#settingsRoot QLabel#muted {{ color: {c['muted']}; font-size: 12px; }}
+QPushButton {{ background: #ffffff; border: 1px solid {c['line']}; border-radius: {r2}px; padding: 6px 12px; }}
+QPushButton:hover {{ border-color: {c['accent']}; }}
 QPushButton:disabled {{ color: #9aa0b2; border-color: #e1e4ee; }}
-QPushButton#primary {{ background: {ACCENT}; border-color: {ACCENT}; color: #ffffff; font-weight: 700; }}
-QPushButton#primary:hover {{ background: #255bb4; }}
+QPushButton#primary {{ background: {c['accent']}; border-color: {c['accent']}; color: {c['on_accent']}; font-weight: 700; }}
+QPushButton#primary:hover {{ background: {c['accent_hover']}; }}
 QPushButton#primary:checked {{ background: #16a34a; border-color: #16a34a; }}
-QPushButton#seg {{ border: none; border-radius: 7px; padding: 5px 12px; background: transparent; color: {MUTED}; }}
-QPushButton#seg:checked {{ background: #ffffff; color: {TEXT}; font-weight: 700; }}
+QPushButton#cardReset {{ background: transparent; border: 1px solid transparent; border-radius: {r2}px; padding: 3px 8px; color: {c['muted']}; font-size: 12px; }}
+QPushButton#cardReset:hover {{ border-color: {c['line']}; color: {c['text']}; background: {c['page']}; }}
+QPushButton#cardReset:disabled {{ color: #b9bdc6; border-color: transparent; background: transparent; }}
+QPushButton#seg {{ border: none; border-radius: {max(4, r2 - 1)}px; padding: 5px 12px; background: transparent; color: {c['muted']}; }}
+QPushButton#seg:checked {{ background: #ffffff; color: {c['text']}; font-weight: 700; }}
 QPushButton#seg:disabled {{ color: #9aa0b2; }}
-QWidget#segBar {{ background: #e8ebf2; border-radius: 9px; }}
-QComboBox, QSpinBox, QLineEdit {{ background: #ffffff; border: 1px solid {LINE}; border-radius: 7px; padding: 4px 8px; min-height: 20px; }}
-QComboBox:focus, QSpinBox:focus, QLineEdit:focus {{ border-color: {ACCENT}; }}
+QWidget#segBar {{ background: #e8ebf0; border-radius: {r2 + 1}px; }}
+QComboBox, QSpinBox, QLineEdit {{ background: #ffffff; border: 1px solid {c['line']}; border-radius: {max(4, r2 - 1)}px; padding: 4px 8px; min-height: 20px; }}
+QComboBox:focus, QSpinBox:focus, QLineEdit:focus {{ border-color: {c['accent']}; }}
 QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox::down-arrow {{ image: url({ASSETS}/chevron_down.svg); width: 12px; height: 12px; }}
-QComboBox QAbstractItemView {{ background: #ffffff; border: 1px solid {LINE}; selection-background-color: {ACCENT_SOFT}; selection-color: {TEXT}; }}
+QComboBox QAbstractItemView {{ background: #ffffff; border: 1px solid {c['line']}; selection-background-color: {c['accent_soft']}; selection-color: {c['text']}; }}
 QSpinBox {{ padding-right: 22px; }}
 QSpinBox::up-button, QSpinBox::down-button {{ border: none; width: 20px; background: transparent; }}
 QSpinBox::up-arrow {{ image: url({ASSETS}/chevron_up.svg); width: 10px; height: 10px; }}
 QSpinBox::down-arrow {{ image: url({ASSETS}/chevron_down.svg); width: 10px; height: 10px; }}
 QCheckBox::indicator, QListWidget::indicator {{ width: 16px; height: 16px; border: 1.5px solid #9aa3b8; border-radius: 4px; background: #ffffff; }}
-QCheckBox::indicator:checked, QListWidget::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; image: url({ASSETS}/check.svg); }}
+QCheckBox::indicator:checked, QListWidget::indicator:checked {{ background: {c['accent']}; border-color: {c['accent']}; image: url({ASSETS}/check.svg); }}
 QCheckBox::indicator:disabled {{ background: #eef0f5; border-color: #d4d8e2; }}
-QListWidget {{ background: #ffffff; border: 1px solid {CARD_BORDER}; border-radius: 8px; padding: 2px; }}
-QListWidget::item {{ padding: 4px 6px; border-radius: 6px; }}
-QListWidget::item:selected {{ background: {ACCENT_SOFT}; color: {TEXT}; }}
+QListWidget {{ background: #ffffff; border: 1px solid {c['card_border']}; border-radius: {r2}px; padding: 2px; }}
+QListWidget::item {{ padding: 4px 6px; border-radius: {max(3, r2 - 2)}px; }}
+QListWidget::item:selected {{ background: {c['accent_soft']}; color: {c['text']}; }}
 QSlider::groove:horizontal {{ height: 6px; background: #dde1ea; border-radius: 3px; }}
-QSlider::sub-page:horizontal {{ background: {ACCENT}; border-radius: 3px; }}
-QSlider::handle:horizontal {{ background: #ffffff; border: 2px solid {ACCENT}; width: 14px; height: 14px; margin: -6px 0; border-radius: 9px; }}
+QSlider::sub-page:horizontal {{ background: {c['accent']}; border-radius: 3px; }}
+QSlider::handle:horizontal {{ background: #ffffff; border: 2px solid {c['accent']}; width: 14px; height: 14px; margin: -6px 0; border-radius: 9px; }}
 QCheckBox {{ spacing: 8px; background: transparent; }}
-QTableWidget {{ background: #ffffff; border: 1px solid {CARD_BORDER}; border-radius: 8px; gridline-color: #eceef4; }}
+QTableWidget {{ background: #ffffff; border: 1px solid {c['card_border']}; border-radius: {r2}px; gridline-color: #eceef4; }}
 QHeaderView::section {{ background: #f6f7fa; border: none; border-bottom: 1px solid #eceef4; padding: 4px 6px; font-weight: 700; }}
-QToolButton#designCard {{ background: #ffffff; border: 2px solid {CARD_BORDER}; border-radius: 10px; padding: 4px; }}
-QToolButton#designCard:hover {{ border-color: #9dbbec; }}
-QToolButton#designCard:checked {{ background: {ACCENT_SOFT}; border-color: {ACCENT}; font-weight: 700; }}
-QToolButton#pad {{ background: #ffffff; border: 1px solid {LINE}; border-radius: 8px; font-size: 15px; }}
-QToolButton#pad:hover {{ border-color: {ACCENT}; }}
-QListWidget#nav {{ background: {NAVY}; border: none; border-radius: 0; padding: 0; outline: none; }}
-QListWidget#nav::item {{ color: {NAV_TEXT}; padding: 9px 10px; margin: 1px 10px; border-radius: 8px; }}
-QListWidget#nav::item:selected {{ background: {NAVY_SELECTED}; color: #ffffff; }}
-QListWidget#nav::item:hover:!selected {{ background: #1e2742; }}
-QWidget#navPanel {{ background: {NAVY}; }}
-QWidget#navPanel QLabel {{ color: #ffffff; background: transparent; }}
-QWidget#settingsRoot QLabel#navVersion {{ color: #8f98b3; font-size: 11px; }}
-QWidget#settingsRoot QWidget#navPanel QLabel {{ color: #ffffff; }}
+QToolButton#designCard {{ background: #ffffff; border: 2px solid {c['card_border']}; border-radius: {max(4, r - 2)}px; padding: 4px; }}
+QToolButton#designCard:hover {{ border-color: {c['line']}; }}
+QToolButton#designCard:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; font-weight: 700; }}
+QToolButton#pad {{ background: #ffffff; border: 1px solid {c['line']}; border-radius: {r2}px; font-size: 15px; }}
+QToolButton#pad:hover {{ border-color: {c['accent']}; }}
+QListWidget#nav {{ background: {c['nav']}; border: none; border-radius: 0; padding: 0; outline: none; }}
+QListWidget#nav::item {{ color: {c['nav_text']}; padding: 9px 8px; margin: 1px 8px; border-radius: {r2}px; border-left: 3px solid transparent; }}
+QListWidget#nav::item:selected {{ background: {c['nav_selected']}; color: {c['nav_selected_text']}; border-left: 3px solid {c['nav_bar']}; }}
+QListWidget#nav::item:hover:!selected {{ background: {c['nav_hover']}; }}
+QWidget#navPanel {{ background: {c['nav']}; }}
+QWidget#navPanel QLabel {{ color: {c['nav_title']}; background: transparent; }}
+QWidget#settingsRoot QLabel#navVersion {{ color: {c['nav_version']}; font-size: 11px; }}
+QWidget#settingsRoot QWidget#navPanel QLabel {{ color: {c['nav_title']}; }}
 """
+
+
+STYLE = style_sheet()
+
 
 # menu icons: outline drawings, white-ish on the navy menu
 _ICONS = {
@@ -92,7 +135,8 @@ _ICONS = {
 }
 
 
-def icon(name, color=NAV_TEXT, size=18):
+def icon(name, color=None, size=18):
+    color = color or T["nav_text"]
     body = _ICONS[name].replace('"C"', f'"{color}"')
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" '
            f'stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>')
@@ -135,7 +179,7 @@ class Switch(QtWidgets.QCheckBox):
         on = self.isChecked()
         enabled = self.isEnabled()
         y = (self.height() - self.H) / 2
-        track = QtGui.QColor(ACCENT if on else "#c3c9d6")
+        track = QtGui.QColor(T["accent"] if on else "#c3c9d6")
         if not enabled:
             track.setAlphaF(0.45)
         p.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -147,10 +191,10 @@ class Switch(QtWidgets.QCheckBox):
         p.drawEllipse(QtCore.QRectF(x, y + 3, knob, knob))
         if self.hasFocus():
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            p.setPen(QtGui.QPen(QtGui.QColor(ACCENT), 1.5))
+            p.setPen(QtGui.QPen(QtGui.QColor(T["accent"]), 1.5))
             p.drawRoundedRect(QtCore.QRectF(0, y - 1, self.W + 2, self.H + 2), self.H / 2 + 1, self.H / 2 + 1)
         if self.text():
-            p.setPen(QtGui.QColor(TEXT if enabled else "#9aa0b2"))
+            p.setPen(QtGui.QColor(T["text"] if enabled else "#9aa0b2"))
             p.drawText(QtCore.QRectF(self.W + 10, 0, self.width() - self.W - 10, self.height()),
                        QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft, self.text())
 
@@ -233,7 +277,7 @@ class Card(QtWidgets.QFrame):
         super().__init__()
         self.setObjectName("card")
         outer = QtWidgets.QVBoxLayout(self)
-        outer.setContentsMargins(18, 14, 18, 14)
+        outer.setContentsMargins(16, 14, 16, 14)
         outer.setSpacing(10)
         head = QtWidgets.QHBoxLayout()
         head.setSpacing(12)
@@ -247,6 +291,8 @@ class Card(QtWidgets.QFrame):
         titles.addWidget(self.title)
         titles.addWidget(self.desc)
         head.addLayout(titles, 1)
+        self._head = head
+        self.reset_button = None   # set_reset
         self.switch = switch
         if switch is not None:
             head.addWidget(switch, 0, QtCore.Qt.AlignmentFlag.AlignTop)
@@ -268,6 +314,18 @@ class Card(QtWidgets.QFrame):
     def setDescription(self, text):
         self.desc.setText(text)
         self.desc.setVisible(bool(text))
+
+    def set_reset(self, callback):
+        """A small "back to the default" button at the top right (user: one
+        for each item), left of the switch if there is one."""
+        b = QtWidgets.QPushButton()
+        b.setObjectName("cardReset")
+        b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(callback)
+        at = self._head.count() - (1 if self.switch is not None else 0)
+        self._head.insertWidget(at, b, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        self.reset_button = b
+        return b
 
     def add(self, widget_or_layout, stretch=0):
         if isinstance(widget_or_layout, QtWidgets.QLayout):
@@ -302,7 +360,7 @@ def page(title_label, *cards):
     inner = QtWidgets.QWidget()
     inner.setObjectName("pageInner")
     lay = QtWidgets.QVBoxLayout(inner)
-    lay.setContentsMargins(24, 20, 24, 20)
+    lay.setContentsMargins(20, 18, 20, 18)
     lay.setSpacing(14)
     title_label.setObjectName("pageTitle")
     lay.addWidget(title_label)
@@ -327,13 +385,14 @@ class SideNav(QtWidgets.QWidget):
 
     def __init__(self, brand, version_text=""):
         super().__init__()
+        self._icon_names = []
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         panel = QtWidgets.QWidget()
         panel.setObjectName("navPanel")
         panel.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        panel.setFixedWidth(200)
+        panel.setFixedWidth(186)
         pl = QtWidgets.QVBoxLayout(panel)
         pl.setContentsMargins(0, 16, 0, 12)
         pl.setSpacing(8)
@@ -370,11 +429,18 @@ class SideNav(QtWidgets.QWidget):
         """A bar under every page (the note, reset, close)."""
         self._right.addWidget(widget)
 
+    def refresh_icons(self):
+        """Redraws the menu icons in the theme's color (apply_theme)."""
+        for i, name in enumerate(self._icon_names):
+            if name:
+                self.list.item(i).setIcon(icon(name))
+
     def addTab(self, widget, text, icon_name=None):
         it = QtWidgets.QListWidgetItem(text)
+        self._icon_names.append(icon_name)
         if icon_name:
             it.setIcon(icon(icon_name))
-        it.setSizeHint(QtCore.QSize(180, 40))
+        it.setSizeHint(QtCore.QSize(160, 40))
         self.list.addItem(it)
         self.stack.addWidget(widget)
         if self.list.currentRow() < 0:
