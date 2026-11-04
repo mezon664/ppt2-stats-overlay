@@ -132,6 +132,7 @@ def _before_the_t_spin(raw):
 # Only the rows a first bag can reach (the next piece spawns higher up).
 MASK_ROWS = 12
 HOLD_MIN_CELLS = 24   # the hold case: only shapes of 6 pieces or more
+SETTLE_FRAMES = 3     # a cell filled this many frames running has settled (_note_landing)
 
 
 def _mask(rows):
@@ -203,6 +204,8 @@ def load_openers(path=OPENERS_PATH):
     out = []
     for op in data["openers"]:
         name = screen_name(op.get("display") or op["name"])     # shorter on-screen name if given
+        if "%u" in name:   # a name that came through the wiki import broken ("%u30aK3)", page 136): not shown
+            continue
         for f in op["shapes"]:
             raw = _shape_rows(f)
             rows = _cleared(raw)
@@ -370,7 +373,7 @@ class OpenerDetector:
         self.name = None
         self.name_en = None   # the same in English (Japanese where there's no English name)
         self._board = 0       # the board as last seen settled (a mask, see _mask)
-        self._seen = None     # the board on the previous frame
+        self._recent = __import__("collections").deque(maxlen=SETTLE_FRAMES)   # the last few boards
         self.landed = []      # each piece that landed, as a mask (the hold case)
         self._reported = False   # _report_miss: once
         self._last_hold = None
@@ -385,7 +388,7 @@ class OpenerDetector:
             self._report_miss()
             return None
         self._last_hold = hold
-        return self._check(frame, hold)
+        return self._check(frame, hold, placements)
 
     def _report_miss(self):
         """Once per match, when the opening ends with no opener: what was on
@@ -404,18 +407,6 @@ class OpenerDetector:
             "[%s] no opener: board %s | landed %s | hold %s | placements %d", self.side, draw(self._board),
             " ".join(draw(p) for p in self.landed), self._last_hold, self.placements)
 
-    def _note_landing(self, mask):
-        """A board the same two frames running that holds everything the
-        last one did plus one tetromino: that piece landed."""
-        settled = mask == self._seen
-        self._seen = mask
-        if not settled or mask == self._board:
-            return
-        new = mask & ~self._board
-        if self._board & ~mask == 0 and _is_tetromino(new):
-            self.landed.append(new)
-        self._board = mask
-
     def on_placements(self, frame, count):
         """Check only when `count` placements were confirmed on this frame
         (kept for tests / callers without match time)."""
@@ -424,13 +415,37 @@ class OpenerDetector:
         self.placements += count
         return self._check(frame)
 
-    def _check(self, frame, hold=None):
+    def _note_landing(self, mask, placed=0):
+        """The board's settled cells are the ones filled on each of the last
+        SETTLE_FRAMES frames (a falling piece moves on). A tetromino newly
+        settled is a piece that landed; if cells taken as settled empty
+        again, that was a piece only pausing on its way down, and it's
+        dropped from the landed ones. (Taking the board as it stood when the
+        NEXT queue moved on caught 1 of 8 pieces live: by the time the shift
+        is confirmed the next piece is already falling into view.)"""
+        self._recent.append(mask)
+        if len(self._recent) < SETTLE_FRAMES:
+            return
+        settled = mask
+        for m in self._recent:
+            settled &= m
+        if settled == self._board:
+            return
+        lost = self._board & ~settled
+        if lost:
+            self.landed = [p for p in self.landed if not p & lost]
+        new = settled & ~self._board
+        if new and _is_tetromino(new):
+            self.landed.append(new)
+        self._board = settled
+
+    def _check(self, frame, hold=None, placed=0):
         occupancy = read_occupancy(frame, self.box)
         lifted = garbage_rows(frame, self.box)
         if lifted:   # the shape sits on top of the garbage it was pushed up by
             occupancy = occupancy[lifted:] + [[False] * COLS for _ in range(lifted)]
         mask = _mask(occupancy)
-        self._note_landing(mask)
+        self._note_landing(mask, placed)
         names = match_openers(occupancy, openers(), self.placements)
         if not names and self.name is None and self.landed:
             names = openers().match_with_hold(mask, self.landed, hold)
