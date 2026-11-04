@@ -134,7 +134,6 @@ TEXT = {
     "st.side": {"ja": "対象", "en": "Player"},
     "st.side_left": {"ja": "1P", "en": "1P"},
     "st.side_right": {"ja": "2P", "en": "2P"},
-    "st.side_both": {"ja": "1P と 2P の合計", "en": "1P and 2P together"},
     "st.last": {"ja": "直近", "en": "Last"},
     "st.vs": {"ja": "相手", "en": "Against"},
     "st.vs_tetris": {"ja": "対テトリス", "en": "Tetris players"},
@@ -1183,7 +1182,7 @@ class SettingsWindow(QtWidgets.QWidget):
         prefs = self._ui_preferences.get("opener_stats", {}) if isinstance(self._ui_preferences, dict) else {}
         prefs = prefs if isinstance(prefs, dict) else {}
         self.st_side = ui.Segmented()
-        for key in ("left", "right", "both"):
+        for key in ("left", "right"):   # (1P and 2P together: dropped, user's request)
             self.st_side.addItem("", key)
         self.st_side.setCurrentIndex(max(0, self.st_side.findData(prefs.get("side", "left"))))
         # a few fixed choices (user's request: buttons, up to 500)
@@ -1254,7 +1253,7 @@ class SettingsWindow(QtWidgets.QWidget):
         t = self.tr_
         self.st_title.setText(t("st.title"))
         self.st_side_label.setText(t("st.side"))
-        for i, key in enumerate(("st.side_left", "st.side_right", "st.side_both")):
+        for i, key in enumerate(("st.side_left", "st.side_right")):
             self.st_side.setItemText(i, t(key))
         self.st_last_label.setText(t("st.last"))
         self.st_vs_label.setText(t("st.vs"))

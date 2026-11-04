@@ -133,3 +133,14 @@ def test_last_n_buttons_up_to_500(tmp_path, monkeypatch):
     w.st_last.setCurrentIndex(w.st_last.findData(500))
     assert config_store.load_settings()["ui"]["opener_stats"]["last_n"] == 500
     assert opener_stats.KEEP == 500
+
+
+def test_only_1p_or_2p(tmp_path, monkeypatch):
+    """1P and 2P together is gone (user's request); a saved "both" shows 1P."""
+    import config_store
+    monkeypatch.setattr(config_store, "CONFIG_PATH", tmp_path / "s.json")
+    monkeypatch.setattr(opener_stats, "HISTORY_PATH", tmp_path / "h.json")
+    config_store.save_settings({**config_store.DEFAULTS, "ui": {"opener_stats": {"side": "both"}}})
+    import settings_window
+    w = settings_window.SettingsWindow(drag_available=True)
+    assert w.st_side.count() == 2 and w.st_side.currentData() == "left"
