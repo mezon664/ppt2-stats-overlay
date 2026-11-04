@@ -690,6 +690,13 @@ PUYO_LABEL_MISSING_S = 0.5
 # recording), menus and character select stay away far longer.
 MATCH_SCREEN_HIDE_S = 3.0
 TETRIS_LABEL_SEEN_S = 1.0
+# Once a match has been on this long, a Tetris side isn't taken for Puyo any
+# more: nobody switches games mid-match, but a Tetris side's NEXT label goes
+# missing now and then (effects over it; live: a vs-Puyo session flipped the
+# left side to Puyo and back every 2-3 s, and each flip threw its T-SPINs,
+# clears and REN away — users: vs Puyo, things go uncounted). A side taken
+# for Puyo wrongly still becomes Tetris again.
+PUYO_LOCK_AFTER_S = 3.0
 # The board-empty fallback doesn't end a match this soon after it started:
 # both boards are still empty for a moment right after GO!.
 START_GRACE_S = 5.0
@@ -801,6 +808,12 @@ class MatchPipeline:
                               debug_dump_dir=self.debug_dump_dir, clock_start_t=clock_start_t,
                               discard_first_shift=discard_first_shift)
 
+    def _match_underway(self, raw_t):
+        """A match is being played and has been for PUYO_LOCK_AFTER_S."""
+        if self._frozen or self.start_t is None:
+            return False
+        return raw_t - self._paused_offset - self.start_t >= PUYO_LOCK_AFTER_S
+
     def _update_puyo(self, raw_t):
         """Follows which sides are playing Puyo (see PUYO_LABEL_MISSING_S) from
         the NEXT label scores the gate just read on a match-screen frame. A side
@@ -815,6 +828,9 @@ class MatchPipeline:
                 continue
             seen = scores[side] >= ON_SCREEN_THRESHOLD
             if seen != self.puyo[side]:          # agrees with what the side is
+                self._puyo_pending[side] = None
+                continue
+            if not seen and self._match_underway(raw_t):   # Tetris -> Puyo mid-match: no
                 self._puyo_pending[side] = None
                 continue
             since = self._puyo_pending[side]

@@ -174,3 +174,22 @@ def test_no_match_time_against_a_puyo_player():
     win.set_edit_mode(True)                                     # positioning: shown to be dragged
     assert not win.clock.hide_time
     win.set_edit_mode(False)
+
+
+def test_a_tetris_side_stays_tetris_once_the_match_is_underway():
+    """Live, vs Puyo: the Tetris side's NEXT label went missing every few
+    seconds and each time the side was taken for Puyo and started over (its
+    T-SPINs, clears and REN lost). Once a match has run PUYO_LOCK_AFTER_S, a
+    Tetris side stays Tetris; one taken for Puyo by mistake still comes back."""
+    gate = ScoreGate()
+    mp = lp.MatchPipeline(gate=gate)
+    mp._frozen, mp.start_t = False, 0.0                 # a match under way
+    old = mp.right
+    feed(mp, gate, [lp.PUYO_LOCK_AFTER_S + i * 0.2 for i in range(10)], 0.2)
+    assert not mp.puyo["right"] and mp.right is old      # not taken for Puyo, nothing dropped
+    mp._frozen = True                                    # between matches it can change
+    feed(mp, gate, [10 + i * 0.2 for i in range(4)], 0.2)
+    assert mp.puyo["right"]
+    mp._frozen = False
+    feed(mp, gate, [20 + i * 0.2 for i in range(7)], 0.95)
+    assert not mp.puyo["right"]                          # back to Tetris even mid-match
