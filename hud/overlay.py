@@ -32,6 +32,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
+import opener_stats
 from config_store import DISPLAY_DEFAULTS, DISPLAY_RANGES, load_settings, display_settings, part_value, opener_language
 
 log_hud = logging.getLogger("hud")
@@ -1888,6 +1889,7 @@ class HudWindow(QtWidgets.QWidget):
     offset_dragged = QtCore.pyqtSignal(str, int, int, bool)
     part_resized = QtCore.pyqtSignal(str, float)   # the wheel resized a part while positioning (part, size)
     match_screen_changed = QtCore.pyqtSignal(bool)  # the game went to / left the match screen
+    opener_recorded = QtCore.pyqtSignal()           # a finished match was added to opener_stats
     language_changed = QtCore.pyqtSignal(str)
 
     def __init__(self, settings):
@@ -1935,6 +1937,7 @@ class HudWindow(QtWidgets.QWidget):
         self._scale = 1.0
         self._last_state = {}
         self._last_raw_state = None   # the last state as the server sent it (on_state)
+        self._was_frozen = None       # frozen in the last state (a match ending: _record_finished_match)
         self._state_t = time.monotonic()   # when _last_state arrived (opener fade timing)
         self._fade = QtCore.QTimer(self)   # repaints the opener names while they're up
         self._fade.setInterval(16)
@@ -2159,6 +2162,7 @@ class HudWindow(QtWidgets.QWidget):
         if state == self._last_raw_state:
             return
         self._last_raw_state = state
+        self._record_finished_match(state)
         self._last_state = state
         self._state_t = time.monotonic()
         # Follow the server's copy only when IT changes (someone edited the
@@ -2201,6 +2205,21 @@ class HudWindow(QtWidgets.QWidget):
             band.dim = stale
             band.update()
         self._place()
+
+    def _record_finished_match(self, state):
+        """A match just ended (frozen, with a winner): its openers and the
+        winner go to opener_stats, for the settings window's opener stats.
+        (Before display.players hides a side: both are kept.)"""
+        frozen = bool(state.get("frozen"))
+        was, self._was_frozen = self._was_frozen, frozen
+        if not frozen or was is not False:
+            return
+        try:
+            record = opener_stats.match_record(state)
+            if record and opener_stats.add(record):
+                self.opener_recorded.emit()
+        except Exception:
+            log_hud.exception("couldn't keep the finished match for the opener stats")
 
     def _place_openers(self):
         """The opener (開幕テンプレ) names, where display.opener_display says (see
@@ -2516,6 +2535,7 @@ def main():
     win.offset_dragged.connect(settings_win.set_offset_from_hud)
     win.part_resized.connect(settings_win.set_part_scale_from_hud)
     win.match_screen_changed.connect(settings_win.set_match_screen)
+    win.opener_recorded.connect(settings_win.refresh_opener_stats)   # the opener stats follow each match
 
     tray = QtWidgets.QSystemTrayIcon(make_tray_icon(), app)
     tray.setToolTip("PPTetrics")

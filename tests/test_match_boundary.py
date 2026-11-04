@@ -111,3 +111,13 @@ def test_english_game_yeah_ends_the_match():
         frame = cv2.imread(str(fixtures / name))
         victory, _ = det.update(frame, 0.0)
         assert victory is won, (name, det.last_yatta_conf)
+
+
+def test_the_winner_is_the_side_the_banner_is_on():
+    """Which side won (for the opener win rates): the side "Yeah!" is on."""
+    import cv2
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    for name, side in (("en_yeah_left.jpg", "left"), ("en_yeah_right.jpg", "right")):
+        det = MatchBoundaryDetector()
+        det.update(cv2.imread(str(fixtures / name)), 0.0)
+        assert det.winner == side, (name, det.last_yatta_side_conf)

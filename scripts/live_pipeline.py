@@ -839,6 +839,7 @@ class MatchPipeline:
         self._startup_wait = False
         self._go_trace.clear()
         self.start_t = clock_start_t
+        self.winner = None
         self._play_started_t = clock_start_t  # None for a reset with no known start
         self._blackout_handled = False
         self._result_held = False
@@ -946,6 +947,7 @@ class MatchPipeline:
                 self._last_both_empty_t = raw
 
         if victory_edge and not self._frozen:
+            self.winner = self.boundary_detector.winner   # the side "やった!" came up on
             self._frozen = True
             self._fallback_saw_empty_since_freeze = False
             self._result_held = True
@@ -1034,6 +1036,7 @@ class MatchPipeline:
         self._recreate_pipelines()
         self._blackout_handled = True
         self._result_held = False
+        self.winner = None
         self.start_t = None
         self._play_started_t = None
         self.frame_count = 0
@@ -1166,6 +1169,8 @@ class MatchPipeline:
             "recognition": {"fps": round(self.fps, 1), "frame_count": self.frame_count},
             "match_reset_count": self.match_reset_count,
             "frozen": self._frozen and not self._startup_wait,
+            # who won the match just finished ("left" / "right"; None until then)
+            "winner": getattr(self, "winner", None) if self._frozen else None,
             "match_screen": self.match_screen,   # the overlays hide while False (see MATCH_SCREEN_HIDE_S)
             "paused": self._paused and not self._frozen,
             # A possible next match is waiting for GO!. The overlays show

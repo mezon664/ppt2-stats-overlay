@@ -290,3 +290,8 @@
 - 試合中の残りの重さはバナーのテンプレート照合（1 コマ約 17 回）。半分の大きさでのふるい分けは、本物のバナーが 0.32 まで下がるので見送り。
 - ぷよとの対戦中は試合時間を出さない（ユーザー: マージンタイムの進み具合が分かると片側が有利で公平でない）。`puyo_in_match`（本当にぷよの側があるとき。1P/2P のみ表示で隠した側は対象外）、`ClockBlock.set_hide_time`。状態・キャプチャの行は出す（何もなければ時計の箱ごと出さない）。位置調整中は出す。試合結果の見出しの時間は試合後なので残す。OBS も同じ（`clock.hideTime`）。
 - HUD と OBS で別々にオン・オフ（ユーザー）: `display.show_on_hud` / `show_on_obs`（初期値 True）。`enabled` は両方まとめてのスイッチのまま。設定画面の大きなボタンの下にチェック 2 つ（オフ中は灰色）、トレイにも 2 項目（`set_shown_on`、保存済みの値に重ねて 1 項目だけ変える）。HUD は `show_on_hud` オフでも位置調整中は出す。
+- 開幕の統計（ユーザー: 使用率を円グラフで、直近 N 試合の集計で自動更新／テンプレごとの勝率／対テトリス・対ぷよで分けて）:
+  - 勝者: 「やった!/Yeah!」が出た側（`MatchBoundaryDetector.winner`、`last_yatta_side_conf`）→ サーバーの状態 `winner`。13 録画で勝った側 0.83 以上・反対側 0.45 以下、左勝ちを画像で確認。
+  - 記録: HUD が凍結した瞬間（`_record_finished_match`）に `opener_stats.match_record` → `config/opener_history.json`（gitignore、直近 200 試合）。勝者のない終わり（途中でやめた・暗転で消えた）は数えない。
+  - 集計: `opener_stats.tally(matches, N, 1P/2P/両方, 英語名, 相手 tetris/puyo/all)`。相手で絞ってから直近 N 試合。
+  - 設定画面「開幕の統計」タブ: 対象・相手・直近 N（`ui.opener_stats` に保存）、ドーナツ円グラフ（上位 7 色＋その他＋認識なし、ホバーで件数・勝率）、全テンプレの表、記録を消すボタン。HUD の `opener_recorded` で自動更新。

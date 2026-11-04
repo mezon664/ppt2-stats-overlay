@@ -106,21 +106,28 @@ class MatchBoundaryDetector:
         self._yatta_active = False
         self.last_go_conf = 0.0
         self.last_yatta_conf = 0.0
+        self.last_yatta_side_conf = {"left": 0.0, "right": 0.0}
+        # The side "やった!" came up on (the winner) at the last victory edge
+        # (opener win rates in the settings window)
+        self.winner = None
 
     def update(self, frame, t):
         go_conf = _orange_ratio(frame, self.go_region)
-        yatta_conf = max(
-            _match(frame, tmpl, window)
-            for tmpl in (self.yatta_tmpl, self.yeah_tmpl)       # Japanese / English game
-            for window in (self.yatta_window_left, self.yatta_window_right)
-        )
+        by_side = {
+            side: max(_match(frame, tmpl, window)
+                      for tmpl in (self.yatta_tmpl, self.yeah_tmpl))      # Japanese / English game
+            for side, window in (("left", self.yatta_window_left), ("right", self.yatta_window_right))
+        }
+        yatta_conf = max(by_side.values())
         self.last_go_conf = go_conf
         self.last_yatta_conf = yatta_conf
+        self.last_yatta_side_conf = by_side
 
         victory_edge = False
         if not self._yatta_active and yatta_conf >= YATTA_ENTER:
             self._yatta_active = True
             victory_edge = True
+            self.winner = max(by_side, key=by_side.get)
         elif self._yatta_active and yatta_conf < YATTA_EXIT:
             self._yatta_active = False
 

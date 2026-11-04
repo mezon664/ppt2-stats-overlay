@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from config_store import (load_settings, save_settings, display_settings, preset_of, preset_file,
                           read_preset_file, part_value, DISPLAY_DEFAULTS, DISPLAY_RANGES, STAT_ITEMS, PARTS,
                           SUMMARY_ITEMS, OPENER_LANGUAGES)
+import opener_stats
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -88,6 +89,36 @@ TEXT = {
     "tab.place": {"ja": "位置", "en": "Position"},
     "tab.obs": {"ja": "OBSに映す", "en": "Show in OBS"},
     "tab.update": {"ja": "アップデート", "en": "Updates"},
+    "tab.stats": {"ja": "開幕の統計", "en": "Opener stats"},
+    "st.title": {"ja": "開幕テンプレの使用率と勝率", "en": "Opener use and win rate"},
+    "st.side": {"ja": "対象", "en": "Player"},
+    "st.side_left": {"ja": "1P", "en": "1P"},
+    "st.side_right": {"ja": "2P", "en": "2P"},
+    "st.side_both": {"ja": "1P と 2P の合計", "en": "1P and 2P together"},
+    "st.last": {"ja": "直近", "en": "Last"},
+    "st.vs": {"ja": "相手", "en": "Against"},
+    "st.vs_tetris": {"ja": "対テトリス", "en": "Tetris players"},
+    "st.vs_puyo": {"ja": "対ぷよぷよ", "en": "Puyo Puyo players"},
+    "st.vs_all": {"ja": "すべて", "en": "Anyone"},
+    "st.matches": {"ja": "試合", "en": "matches"},
+    "st.summary": {"ja": "直近 {n} 試合　勝率 {rate}（{won} 勝 {lost} 敗）",
+                   "en": "The last {n} matches  Win rate {rate} ({won}W {lost}L)"},
+    "st.empty": {"ja": "まだ記録がありません。勝敗がついた試合から自動で集計されます。",
+                 "en": "Nothing yet. Matches are counted automatically once they end with a winner."},
+    "st.col_name": {"ja": "開幕テンプレ", "en": "Opener"},
+    "st.col_used": {"ja": "試合", "en": "Matches"},
+    "st.col_share": {"ja": "使用率", "en": "Share"},
+    "st.col_win": {"ja": "勝率", "en": "Win rate"},
+    "st.none": {"ja": "認識なし", "en": "Not recognized"},
+    "st.other": {"ja": "その他", "en": "Other"},
+    "st.note": {"ja": "勝敗がついた試合だけを、終わるたびに自動で記録します（途中でやめた試合・やり直した試合は数えません）。"
+                      "ぷよぷよの側は数えません。記録は直近 200 試合まで残ります。",
+                "en": "Matches that end with a winner are recorded automatically as they end (not ones left or "
+                      "restarted midway). A Puyo Puyo side isn't counted. The last 200 matches are kept."},
+    "st.clear": {"ja": "記録を消す", "en": "Clear the record"},
+    "st.clear_confirm": {"ja": "開幕の統計の記録をすべて消しますか？", "en": "Clear every match from the opener stats?"},
+    "st.tip": {"ja": "{name}: {used} 試合（{share}）　勝率 {rate}",
+               "en": "{name}: {used} matches ({share})  win rate {rate}"},
     "enabled_on": {"ja": "● 表示オン（クリックでオフ）", "en": "● Overlay ON (click to turn off)"},
     "enabled_off": {"ja": "○ 表示オフ（クリックでオン）", "en": "○ Overlay OFF (click to turn on)"},
     "enabled_away": {"ja": "◐ 表示オン：試合画面ではないので隠れています（クリックで表示）",
@@ -347,6 +378,100 @@ def _form():
     return f
 
 
+# The opener pie's colors: the most used openers in this fixed order, the
+# rest folded into その他 (gray), not recognized in a lighter gray. (The
+# dataviz reference palette's categorical order, light mode.)
+PIE_COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6")
+PIE_OTHER, PIE_NONE = "#8a8a93", "#d4d4d8"
+
+
+class OpenerPie(QtWidgets.QWidget):
+    """A ring chart of the openers' shares; the number of matches in the
+    middle, a slice's name / count / win rate on hover."""
+
+    SIZE = 220
+    RING = 0.29   # ring width, share of the diameter
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setMouseTracking(True)
+        self.slices, self.total, self.unit, self.tip = [], 0, "", "{name}"
+
+    def set_slices(self, slices, total, unit, tip):
+        """slices: (name, used, won, QColor), largest first (その他 / 認識なし last)."""
+        self.slices, self.total, self.unit, self.tip = slices, total, unit, tip
+        self.update()
+
+    def _ring(self):
+        m = 6
+        return QtCore.QRectF(m, m, self.SIZE - 2 * m, self.SIZE - 2 * m)
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        r = self._ring()
+        ring = r.width() * self.RING
+        inner = r.adjusted(ring, ring, -ring, -ring)
+        if not self.total:
+            p.setBrush(QtGui.QColor("#e4e4e7"))
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            path = QtGui.QPainterPath()
+            path.addEllipse(r)
+            path.addEllipse(inner)
+            p.drawPath(path)
+        else:
+            start = 90.0   # from the top, clockwise
+            gap = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Window), 2)   # 2 px between slices
+            for name, used, won, color in self.slices:
+                span = -360.0 * used / self.total
+                path = QtGui.QPainterPath()
+                path.arcMoveTo(r, start)
+                path.arcTo(r, start, span)
+                path.arcTo(inner, start + span, -span)
+                path.closeSubpath()
+                p.setBrush(color)
+                p.setPen(gap if len(self.slices) > 1 else QtCore.Qt.PenStyle.NoPen)
+                p.drawPath(path)
+                start += span
+        p.setPen(self.palette().color(QtGui.QPalette.ColorRole.WindowText))
+        f = p.font()
+        f.setPixelSize(30)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QtCore.QRectF(0, self.SIZE / 2 - 30, self.SIZE, 36), QtCore.Qt.AlignmentFlag.AlignCenter,
+                   str(self.total))
+        f.setPixelSize(13)
+        f.setBold(False)
+        p.setFont(f)
+        p.drawText(QtCore.QRectF(0, self.SIZE / 2 + 6, self.SIZE, 20), QtCore.Qt.AlignmentFlag.AlignCenter,
+                   self.unit)
+
+    def slice_at(self, pos):
+        r = self._ring()
+        c = r.center()
+        dx, dy = pos.x() - c.x(), pos.y() - c.y()
+        dist = math.hypot(dx, dy)
+        if not self.total or dist > r.width() / 2 or dist < r.width() / 2 - r.width() * self.RING:
+            return None
+        angle = (math.degrees(math.atan2(dx, -dy)) + 360) % 360   # clockwise from the top
+        acc = 0.0
+        for s in self.slices:
+            acc += 360 * s[1] / self.total
+            if angle <= acc:
+                return s
+        return self.slices[-1] if self.slices else None
+
+    def mouseMoveEvent(self, event):
+        s = self.slice_at(event.position())
+        if s is None:
+            QtWidgets.QToolTip.hideText()
+            return
+        name, used, won, _ = s
+        QtWidgets.QToolTip.showText(event.globalPosition().toPoint(), self.tip.format(
+            name=name, used=used, share=f"{used / self.total * 100:.0f}%", rate=f"{won / used * 100:.0f}%"), self)
+
+
 def _hbox(*widgets, stretch=True):
     holder = QtWidgets.QWidget()
     box = QtWidgets.QHBoxLayout(holder)
@@ -422,6 +547,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.tabs.addTab(self._scrolling(self._build_show_tab()), "")
         self.tabs.addTab(self._build_place_tab(drag_available), "")
         self.tabs.addTab(self._build_obs_tab(), "")
+        self.tabs.addTab(self._build_stats_tab(), "")
         self.tabs.addTab(self._build_update_tab(), "")
         self._update_info = None
         self._update_silent = False
@@ -950,6 +1076,144 @@ class SettingsWindow(QtWidgets.QWidget):
         lay.addStretch(1)
         return page
 
+    # --- 開幕の統計: opener use (pie) and win rate over the last N matches ---
+    def _build_stats_tab(self):
+        page = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(page)
+        self.st_title = QtWidgets.QLabel()
+        self.st_title.setStyleSheet("font-weight:bold; font-size:14px;")
+        lay.addWidget(self.st_title)
+        prefs = self._ui_preferences.get("opener_stats", {}) if isinstance(self._ui_preferences, dict) else {}
+        prefs = prefs if isinstance(prefs, dict) else {}
+        self.st_side = QtWidgets.QComboBox()
+        for key in ("left", "right", "both"):
+            self.st_side.addItem("", key)
+        self.st_side.setCurrentIndex(max(0, self.st_side.findData(prefs.get("side", "left"))))
+        self.st_last = QtWidgets.QSpinBox()
+        self.st_last.setRange(5, opener_stats.KEEP)
+        self.st_last.setSingleStep(5)
+        last = prefs.get("last_n", 20)
+        self.st_last.setValue(last if isinstance(last, int) else 20)
+        # against a Tetris player / a Puyo player, apart (user's request)
+        self.st_vs = QtWidgets.QComboBox()
+        for key in opener_stats.OPPONENTS:
+            self.st_vs.addItem("", key)
+        self.st_vs.setCurrentIndex(max(0, self.st_vs.findData(prefs.get("opponent", "tetris"))))
+        self.st_side_label, self.st_last_label, self.st_matches_label, self.st_vs_label =             (QtWidgets.QLabel() for _ in range(4))
+        lay.addWidget(_hbox(self.st_side_label, self.st_side, QtWidgets.QLabel("  "),
+                            self.st_vs_label, self.st_vs, QtWidgets.QLabel("  "),
+                            self.st_last_label, self.st_last, self.st_matches_label))
+        self.st_summary = QtWidgets.QLabel()
+        self.st_summary.setWordWrap(True)
+        self.st_summary.setStyleSheet("font-size:13px;")
+        lay.addWidget(self.st_summary)
+        self.st_pie = OpenerPie()
+        lay.addWidget(self.st_pie, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
+        self.st_table = QtWidgets.QTableWidget(0, 4)
+        self.st_table.verticalHeader().setVisible(False)
+        self.st_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.st_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.st_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.st_table.setMinimumHeight(160)
+        head = self.st_table.horizontalHeader()
+        head.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        for c in (1, 2, 3):
+            head.setSectionResizeMode(c, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        lay.addWidget(self.st_table, 1)
+        self.st_note = QtWidgets.QLabel()
+        self.st_note.setWordWrap(True)
+        self.st_note.setStyleSheet("color:#71717a;")
+        lay.addWidget(self.st_note)
+        self.st_clear = QtWidgets.QPushButton()
+        self.st_clear.clicked.connect(self._clear_opener_stats)
+        lay.addWidget(_hbox(self.st_clear))
+        self.st_side.currentIndexChanged.connect(self._opener_stats_options_changed)
+        self.st_last.valueChanged.connect(self._opener_stats_options_changed)
+        self.st_vs.currentIndexChanged.connect(self._opener_stats_options_changed)
+        return page
+
+    def _retranslate_stats(self):
+        t = self.tr_
+        self.st_title.setText(t("st.title"))
+        self.st_side_label.setText(t("st.side"))
+        for i, key in enumerate(("st.side_left", "st.side_right", "st.side_both")):
+            self.st_side.setItemText(i, t(key))
+        self.st_last_label.setText(t("st.last"))
+        self.st_vs_label.setText(t("st.vs"))
+        for i, key in enumerate(opener_stats.OPPONENTS):
+            self.st_vs.setItemText(i, t("st.vs_" + key))
+        self.st_matches_label.setText(t("st.matches"))
+        self.st_table.setHorizontalHeaderLabels([t("st.col_name"), t("st.col_used"), t("st.col_share"),
+                                                 t("st.col_win")])
+        self.st_note.setText(t("st.note"))
+        self.st_clear.setText(t("st.clear"))
+        self.refresh_opener_stats()
+
+    def _opener_stats_options_changed(self, *_):
+        settings = load_settings()
+        preferences = settings.get("ui", {})
+        preferences["opener_stats"] = {"side": self.st_side.currentData(), "last_n": self.st_last.value(),
+                                       "opponent": self.st_vs.currentData()}
+        settings["ui"] = preferences
+        save_settings(settings)
+        self.refresh_opener_stats()
+
+    def _clear_opener_stats(self):
+        answer = QtWidgets.QMessageBox.question(
+            self, self.tr_("tab.stats"), self.tr_("st.clear_confirm"),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+            opener_stats.clear()
+            self.refresh_opener_stats()
+
+    def _stats_english(self):
+        """The opener names in the opener-name language (auto = the overlay's)."""
+        box = getattr(self, "opener_language", None)
+        lang = box.currentData() if box is not None else "auto"
+        return (self.lang if lang in (None, "auto") else lang) == "en"
+
+    def refresh_opener_stats(self):
+        """Reads the record again (the HUD adds each match as it ends)."""
+        t = self.tr_
+        n, side = self.st_last.value(), self.st_side.currentData()
+        matches = opener_stats.load()
+        rows, total, picked = opener_stats.tally(matches, n, side, self._stats_english(), self.st_vs.currentData())
+        won = sum(w for _, _, w in rows)
+        if total:
+            self.st_summary.setText(t("st.summary").format(
+                n=picked, rate=f"{won / total * 100:.0f}%", won=won, lost=total - won))
+        else:
+            self.st_summary.setText(t("st.empty"))
+        named = [row for row in rows if row[0] is not None]
+        colors = {}
+        slices = []
+        for i, (name, used, w) in enumerate(named[:len(PIE_COLORS)]):
+            colors[name] = PIE_COLORS[i]
+            slices.append((name, used, w, QtGui.QColor(PIE_COLORS[i])))
+        rest = named[len(PIE_COLORS):]
+        if rest:
+            slices.append((t("st.other"), sum(u for _, u, _ in rest), sum(w for _, _, w in rest),
+                           QtGui.QColor(PIE_OTHER)))
+        for name, used, w in rows:
+            if name is None:
+                slices.append((t("st.none"), used, w, QtGui.QColor(PIE_NONE)))
+        self.st_pie.set_slices(slices, total, t("st.matches"), t("st.tip"))
+        # the table lists every opener (the pie folds the small ones into その他)
+        self.st_table.setRowCount(len(rows))
+        for r, (name, used, w) in enumerate(rows):
+            color = PIE_NONE if name is None else colors.get(name, PIE_OTHER)
+            swatch = QtGui.QPixmap(12, 12)
+            swatch.fill(QtGui.QColor(color))
+            cells = [QtWidgets.QTableWidgetItem(QtGui.QIcon(swatch), name if name is not None else t("st.none")),
+                     QtWidgets.QTableWidgetItem(str(used)),
+                     QtWidgets.QTableWidgetItem(f"{used / total * 100:.0f}%"),
+                     QtWidgets.QTableWidgetItem(f"{w / used * 100:.0f}%  ({w}/{used})")]
+            for c, item in enumerate(cells):
+                if c:
+                    item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                self.st_table.setItem(r, c, item)
+
     def _copy_obs_path(self):
         QtWidgets.QApplication.clipboard().setText(str(OBS_PAGE))
         self.obs_copy.setText(self.tr_("obs_copied"))
@@ -967,8 +1231,9 @@ class SettingsWindow(QtWidgets.QWidget):
         for key, e in self.label_edits.items():
             e.setPlaceholderText(names[key])
             self.label_names[key].setText(names[key])
-        for i, key in enumerate(("tab.look", "tab.show", "tab.place", "tab.obs", "tab.update")):
+        for i, key in enumerate(("tab.look", "tab.show", "tab.place", "tab.obs", "tab.stats", "tab.update")):
             self.tabs.setTabText(i, t(key))
+        self._retranslate_stats()
         self.obs_title.setText(t("obs_title"))
         self.up_current.setText(t("up.current").format(self._version))
         self.up_check_on_start.setText(t("up.check_on_start"))
