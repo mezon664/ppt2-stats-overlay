@@ -38,6 +38,11 @@ from image_io import read_image
 
 log = logging.getLogger("rating")
 ROOT = Path(__file__).resolve().parent.parent
+# Windows text recognition's Python parts ship in vendor/ (tools/make_release.py);
+# a development copy has them in its .venv. Added last: an installed one wins.
+_VENDOR = ROOT / "vendor"
+if _VENDOR.is_dir() and str(_VENDOR) not in __import__("sys").path:
+    __import__("sys").path.append(str(_VENDOR))
 HISTORY_PATH = ROOT / "config" / "rating_history.json"
 TEMPLATES = ROOT / "assets" / "templates"
 KEEP = 1000

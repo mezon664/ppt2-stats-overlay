@@ -30,3 +30,6 @@ build/
 tools/opener_import/wiki_tags.json
 tools/opener_import/wiki_heads.json
 tools/opener_import/harddrop.json
+
+# tools/make_release.py: the libraries shipped in the zip as vendor/
+vendor/
