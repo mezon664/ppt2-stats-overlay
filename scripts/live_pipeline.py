@@ -355,6 +355,14 @@ class PlayerPipeline:
             self._emit_attack_event(pf["flash_t"], ev, result["total"], result)
         self._pending_flashes = still_pending
 
+    # how long after a clear flash its banners are looked for: the longest a
+    # banner may follow it (BANNER_FLASH_WINDOW_S) and PERFECT CLEAR (PC_AFTER_S)
+    CLEARS_LATELY_S = 2.0
+
+    def _clears_lately(self, t):
+        last = getattr(self, "_last_flash_t", None)
+        return last is not None and t - last <= self.CLEARS_LATELY_S
+
     def settle(self, frame, t):
         """Right after the match ended (victory banner): only the clears that
         were still waiting are finished — the T-SPIN / TETRIS banner of one may
@@ -365,7 +373,7 @@ class PlayerPipeline:
         streak = self.tracker.streak
         streak_before = (streak.consecutive_clears, streak.b2b_streak)
         before = len(self.tracker.attack_events)
-        self.tracker.update(frame, t)
+        self.tracker.update(frame, t, clears=self._clears_lately(t))
         new_events = self._keep_flash_backed_banners(self.tracker.attack_events[before:], t, streak_before)
         self._emit_banner_events(new_events, t)
         self._resolve_pending_flashes(t)
@@ -403,7 +411,12 @@ class PlayerPipeline:
         before = len(self.tracker.attack_events)
         minis_before = len(self.tracker.mini_no_line_events)
         zeros_before = len(self.tracker.tspin_no_line_events)
-        self.tracker.update(frame, t)
+        # the flash first: a banner can show on the very frame its flash is
+        # first seen, and it's only looked for after one (_clears_lately)
+        flash_edge = self.flash_detector.update(frame, t)
+        if flash_edge:
+            self._last_flash_t = t
+        self.tracker.update(frame, t, clears=self._clears_lately(t))
         self.last_frame_ok_t = t
         new_events = self.tracker.attack_events[before:]
         # T-SPINs that cleared no line: not clears (no attack), but counted
@@ -426,7 +439,6 @@ class PlayerPipeline:
             self._on_pc_edge(t)
         self._pc_active = pc_on
 
-        flash_edge = self.flash_detector.update(frame, t)
         if flash_edge:
             n_lines = self.flash_detector.last_edge_row_count
             if n_lines == 4 and not any(1 <= pf["n_lines"] <= MAX_LINES_PER_EVENT for pf in self._pending_flashes):
@@ -942,6 +954,7 @@ class MatchPipeline:
         on screen for well under a second. The board-empty check below runs as a
         throttled FALLBACK for match endings that don't show these banners (e.g. a
         draw), not as the primary trigger."""
+        self.boundary_detector.watch_victory = not self._frozen   # (see MatchBoundaryDetector.update)
         victory_edge, go_disappeared_edge = self.boundary_detector.update(frame, t)
         # The "boards were empty just before GO!" look-back runs on capture
         # time, not game time: the between-match empty boards are often seen

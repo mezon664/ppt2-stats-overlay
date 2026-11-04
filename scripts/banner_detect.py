@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
+from collections import deque
 import numpy as np
 from image_io import read_image, write_image
 
@@ -203,6 +204,15 @@ TSPIN_WORDS = ("tspin_single", "tspin_double", "tspin_triple", "tspin_mini")
 # were detected as False). 45 frames (~3s at 15fps) bridges the measured gaps.
 EXIT_GRACE_FRAMES_OVERRIDES = {"back_to_back": 45}
 
+# Banners that only come right after a clear flash (and only count with one:
+# live_pipeline._keep_flash_backed_banners): matched only while a flash was
+# seen lately (update(clears=True)), not on every frame — most of the work of
+# reading a frame, on a slow PC so much that too few frames a second were read
+# (users: PPS stuck near 0). The no-line T-SPIN and Mini come with no flash
+# and are always matched.
+CLEAR_GATED = {"tetris", "tspin_single", "tspin_double", "tspin_triple", "tspin_mini_single",
+               "perfect_clear", "back_to_back"}
+
 RAW_CLEAR_LABELS = {"tetris", "tspin_double", "tspin_single", "tspin_triple", "tspin_mini"}  # mutually-exclusive clear-type banners
 CLEAR_TYPE_MAP = {"tetris": "clear_4", "tspin_double": "tspin_double", "tspin_single": "tspin_single",
                   "tspin_triple": "tspin_triple", "tspin_mini": "tspin_mini"}
@@ -292,7 +302,9 @@ class BannerTracker:
         # window instead of staying pinned to the 1232x692 reference coordinates.
         self.profile = profile or REFERENCE_PROFILE
         self.states = {label: LabelState() for label in templates}
-        self.match_log = []     # every raw per-frame match: (t, label, conf, pos)
+        # recent raw per-frame matches: (t, label, conf, pos) — only the last
+        # few seconds are read (data_server._debug_tspin_peak); it grew all match
+        self.match_log = deque(maxlen=2000)
         self.banner_events = []  # deduped single events: (start_t, end_t, label, best_conf)
         self.attack_events = []  # resolved, in order
         self.mini_no_line_events = []  # times of a T-SPIN Mini that cleared no line (not attacks)
@@ -330,10 +342,14 @@ class BannerTracker:
                 return int(label.split("_")[1])
         return None
 
-    def update(self, frame, t):
+    def update(self, frame, t, clears=True):
+        """clears: a clear flash was seen lately (CLEAR_GATED)."""
         raw_scores = {}
         raw_pos = {}
         for label, cfg in self.templates.items():
+            if not clears and (label in CLEAR_GATED or label in REN_LABELS):
+                raw_scores[label], raw_pos[label] = 0.0, None
+                continue
             window = scale_box(window_for_side(label, cfg["window"], self.side), self.profile)
             tmpl_img = scale_template(template_for_side(cfg, self.side), self.profile)
             conf, pos = match_one(frame, tmpl_img, window)

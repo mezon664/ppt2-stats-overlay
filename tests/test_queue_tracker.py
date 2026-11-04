@@ -97,3 +97,26 @@ def test_every_hue_is_a_piece():
     assert all(_hue_letter(h) != "?" for h in range(180))
     assert _hue_letter(36) == "O" and _hue_letter(39) == "S"
     assert _hue_letter(25) == "O" and _hue_letter(100) == "I"
+
+
+def test_a_fast_player_on_a_slow_pc_is_counted():
+    """Read only a few times a second, a fast player's queue changes between
+    every reading: each clean shift counts from one reading (it used to need
+    two identical readings in a row, and nearly nothing counted: PPS 0.1)."""
+    q = NextQueueTracker("left")
+    reads = iter(["IOTSZ", "IOTSZ", "OTSZJ", "TSZJL", "ZJLIO", "JLIOT"])
+    q._read = lambda frame: next(reads)
+    placed = [q.update(None, float(i)) for i in range(6)]
+    assert q.pieces_placed == 5
+    assert placed[3] == [3.0] and placed[4] == [4.0, 4.0]
+
+
+def test_a_misread_new_tail_is_corrected_not_counted():
+    """The letters a one-reading shift brings in aren't trusted until read
+    again: a corrected tail is the same queue, not another placement."""
+    q = NextQueueTracker("left")
+    reads = iter(["IOTSZ", "IOTSZ", "OTSZL", "OTSZJ", "OTSZJ", "TSZJI"])
+    q._read = lambda frame: next(reads)
+    for i in range(6):
+        q.update(None, float(i))
+    assert q.pieces_placed == 2 and q.stable == "TSZJI"

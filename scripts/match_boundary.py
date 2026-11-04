@@ -120,13 +120,21 @@ class MatchBoundaryDetector:
         # (opener win rates in the settings window)
         self.winner = None
 
+    watch_victory = True
+
     def update(self, frame, t):
+        """watch_victory False (set by the caller once the match has ended):
+        "やった!" isn't looked for — its two large templates on both sides
+        were a quarter of the work of reading a frame."""
         go_conf = _orange_ratio(frame, self.go_region)
-        by_side = {
-            side: max(_match(frame, tmpl, window)
-                      for tmpl in (self.yatta_tmpl, self.yeah_tmpl))      # Japanese / English game
-            for side, window in (("left", self.yatta_window_left), ("right", self.yatta_window_right))
-        }
+        if self.watch_victory:
+            by_side = {
+                side: max(_match(frame, tmpl, window)
+                          for tmpl in (self.yatta_tmpl, self.yeah_tmpl))      # Japanese / English game
+                for side, window in (("left", self.yatta_window_left), ("right", self.yatta_window_right))
+            }
+        else:
+            by_side = {"left": 0.0, "right": 0.0}
         yatta_conf = max(by_side.values())
         self.last_go_conf = go_conf
         self.last_yatta_conf = yatta_conf

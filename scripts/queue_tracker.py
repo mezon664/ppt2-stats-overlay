@@ -64,13 +64,18 @@ def _hue_letter(h):
     return best
 
 
-def count_advances(old, new):
+def count_advances(old, new, trusted=None):
     """How many places `new` is `old` shifted up by (0 if unchanged), or None
-    if it isn't a shift at all (misread, or a different queue entirely)."""
+    if it isn't a shift at all (misread, or a different queue entirely).
+    trusted: how many of old's first letters are sure (the rest came in with a
+    shift taken from one reading, and may be a misread); only those are
+    compared, so a corrected tail reads as 0 (no move) rather than None."""
+    trusted = len(old) if trusted is None else trusted
     if new == old:
         return 0
-    for k in range(1, MAX_SHIFT + 1):
-        if new[:len(new) - k] == old[k:]:
+    for k in range(0, MAX_SHIFT + 1):
+        n = trusted - k
+        if n >= 2 and new[:n] == old[k:trusted]:
             return k
     return None
 
@@ -88,6 +93,7 @@ class NextQueueTracker:
         self._candidate_reads = 0
         self.pieces_placed = 0
         self.last_reading = None
+        self._trusted = 0   # how many of stable's first letters are sure (count_advances)
         # The match's first confirmed shift is the first piece spawning, not
         # a lock — see the module docstring. Only set when the caller knows
         # this tracker was created right at a confirmed match start (not at
@@ -133,22 +139,33 @@ class NextQueueTracker:
             self._candidate_reads += 1
         else:
             self._candidate, self._candidate_t, self._candidate_reads = seq, t, 1
-        if self._candidate_reads < STABLE_READS:
-            return []
+        confirmed = self._candidate_reads >= STABLE_READS
         if self.stable is None:
-            self.stable = seq
+            if confirmed:
+                self.stable, self._trusted = seq, len(seq)
             return []
-        k = count_advances(self.stable, seq)
+        k = count_advances(self.stable, seq, self._trusted)
         if k is None:
             if self._candidate_reads >= REBASELINE_READS:
                 log.info("[%s] queue %s -> %s isn't a shift; re-baselining", self.side, self.stable, seq)
-                self.stable = seq
+                self.stable, self._trusted = seq, len(seq)
             return []
-        if k:
+        if k == 0:
+            # the same queue (its new tail read again, maybe corrected)
             self.stable = seq
-            if self._first_shift_pending:
-                self._first_shift_pending = False
-                k -= 1  # that shift was the first piece spawning, not a placement
-            if k:
-                self.pieces_placed += k
+            if confirmed:
+                self._trusted = len(seq)
+            return []
+        # A clean shift counts from ONE reading. Waiting for two identical
+        # readings in a row lost nearly every placement of a fast player on a
+        # PC that reads few frames a second (the queue changed between every
+        # reading: users saw PPS 0.1; on the recordings read at 3-4 a second,
+        # 149 placements came out as 2-50). The letters that came in with it
+        # are only trusted once read twice.
+        self.stable = seq
+        self._trusted = len(seq) if confirmed else len(seq) - k
+        if self._first_shift_pending:
+            self._first_shift_pending = False
+            k -= 1  # that shift was the first piece spawning, not a placement
+        self.pieces_placed += k
         return [self._candidate_t] * k
