@@ -1014,9 +1014,10 @@ function paint() {
   const ctx = hudCtx;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
-  const order = [[stats.left, statPaint], [stats.right, statPaint], [versus, versusPaint], [summary, summaryPaint],
+  // the summary last: over every other part where they overlap (as the HUD)
+  const order = [[stats.left, statPaint], [stats.right, statPaint], [versus, versusPaint],
                  [badges.left, badgePaint], [badges.right, badgePaint], [badges.both, badgePaint],
-                 [events.left, eventsPaint], [events.right, eventsPaint], [clock, clockPaint]];
+                 [events.left, eventsPaint], [events.right, eventsPaint], [clock, clockPaint], [summary, summaryPaint]];
   for (const [part, fn] of order) {
     if (!part.visible || part.w <= 0 || part.h <= 0) continue;
     // Each part drawn at SUPERSAMPLE x the size on its own small canvas, then

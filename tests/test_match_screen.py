@@ -109,3 +109,14 @@ def test_shown_in_obs_only_hides_the_hud():
     win.set_edit_mode(False)
     win.apply_display({**d, "show_on_hud": True}, local=True)
     assert not win.clock.isHidden() and not win.stats["left"].isHidden()
+
+
+def test_the_summary_is_drawn_over_the_other_parts():
+    """User: where the match summary and the numbers (or other parts) overlap,
+    the summary is on top. Qt draws later siblings over earlier ones."""
+    win = hud_with({})
+    import overlay
+    order = [c for c in win.children() if isinstance(c, overlay.QtWidgets.QWidget)]
+    above = order[order.index(win.summary) + 1:]
+    others = [*win.stats.values(), *win.events.values(), win.versus, win.clock, *win.badges.values()]
+    assert not any(w in above for w in others)

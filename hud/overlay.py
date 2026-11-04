@@ -1967,6 +1967,10 @@ class HudWindow(QtWidgets.QWidget):
         self.edit_hint.setStyleSheet(
             "color:#111; background:#fde047; padding:4px 10px; border-radius:4px; font-weight:700;")
         self.edit_hint.setVisible(False)
+        # the summary over every other part where they overlap (user's request;
+        # only a cat popup, raised when it shows, goes over it)
+        self.summary.raise_()
+        self.edit_hint.raise_()
         self._hwnd = None
         self._last_geom = None
         self._size = (REFERENCE_W, REFERENCE_H)
