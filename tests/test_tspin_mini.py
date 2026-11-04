@@ -82,6 +82,13 @@ def test_pipeline_logs_both_kinds():
     assert [e["label"] for e in none.event_log] == ["T-SPIN Mini"]
     assert none.apm.total_lines == 0
     assert none.tracker.streak.consecutive_clears == 0
+    # both count in the summary's T-SPIN rows (no line or not)
+    for pp in (single, none):
+        assert pp.tspin_count == 1 and pp.tspin_counts["tspin_mini"] == 1
+
+    zero = run("tspin_zero_left.jpg", 0)
+    assert [e["label"] for e in zero.event_log] == ["T-SPIN"]
+    assert zero.tspin_count == 1 and zero.apm.total_lines == 0
 
 
 @pytest.mark.parametrize("fixture,zero", [("tspin_zero_left.jpg", True), ("tspin_triple_after_zero_left.jpg", False)])

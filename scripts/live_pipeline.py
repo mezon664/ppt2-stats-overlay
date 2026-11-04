@@ -369,11 +369,17 @@ class PlayerPipeline:
         self.tracker.update(frame, t)
         self.last_frame_ok_t = t
         new_events = self.tracker.attack_events[before:]
+        # T-SPINs that cleared no line: not clears (no attack), but counted
+        # in the summary's T-SPIN rows — they're in the event log, and the
+        # summary said 0 beside them (a user's report)
         for mini_t in self.tracker.mini_no_line_events[minis_before:]:
+            self.tspin_count += 1
+            self.tspin_counts["tspin_mini"] += 1
             self.event_log.insert(0, format_mini_no_line_entry(mini_t))
             del self.event_log[EVENT_LOG_MAX:]
             log.info("[%s] t=%.2f T-SPIN Mini (no line)", self.side, mini_t)
         for zero_t in self.tracker.tspin_no_line_events[zeros_before:]:
+            self.tspin_count += 1
             self.event_log.insert(0, format_tspin_no_line_entry(zero_t))
             del self.event_log[EVENT_LOG_MAX:]
             log.info("[%s] t=%.2f T-SPIN (no line)", self.side, zero_t)
