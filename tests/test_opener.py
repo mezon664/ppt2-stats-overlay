@@ -77,10 +77,25 @@ def test_shown_name_keeps_it_short():
     assert shown_name(["A", "B", "C", "D"]) == "A / B ほか"
 
 
+def settle(det, frame):
+    """The name for this board: a shape smaller than a bag is shown once
+    WAIT_PIECES more pieces have landed with no bigger match (here: the same
+    board, placements counted on)."""
+    name = det.on_placements(frame, 1)
+    for _ in range(od_wait()):
+        name = name or det.on_placements(frame, 1)
+    return name
+
+
+def od_wait():
+    import opener_detect
+    return opener_detect.WAIT_PIECES
+
+
 def detect(fixture, side="left"):
     frame = cv2.imread(str(FIXTURES / fixture))
     det = OpenerDetector(side, compute_profile(frame.shape[1], frame.shape[0]))
-    return det.on_placements(frame, 1)
+    return settle(det, frame)
 
 
 @pytest.mark.parametrize("fixture,name", [
@@ -135,7 +150,7 @@ def with_garbage(frame, rows, holes=(3, 6, 0, 8), color=(205, 205, 205)):
 
 
 def detect_frame(frame, side="left"):
-    return OpenerDetector(side, compute_profile(frame.shape[1], frame.shape[0])).on_placements(frame, 1)
+    return settle(OpenerDetector(side, compute_profile(frame.shape[1], frame.shape[0])), frame)
 
 
 @pytest.mark.parametrize("rows", [1, 2, 4])
@@ -188,7 +203,7 @@ def test_english_names():
 def test_detector_gives_both_languages():
     frame = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))
     det = OpenerDetector("left", compute_profile(frame.shape[1], frame.shape[0]))
-    assert det.on_placements(frame, 1) == "迷走砲"
+    assert settle(det, frame) == "迷走砲"
     assert det.name_en == "Stray Cannon"
 
 
@@ -224,8 +239,26 @@ def test_landed_pieces_are_noted():
     d = od.OpenerDetector("left")
     i_piece = 0b1111                       # bottom row, columns 0-3
     o_piece = (0b11 << 4) | (0b11 << 14)   # columns 4-5, rows 0-1
-    for mask in (0, 0, i_piece, i_piece, i_piece | o_piece, i_piece | o_piece):
+    falling = [1 << 70, 1 << 60, 1 << 50]   # a piece on its way down: a new place each frame
+    boards = [0, 0, 0] + [i_piece | f for f in falling] + [i_piece | o_piece] * 3
+    for mask in boards:
         d._note_landing(mask)
     assert d.landed == [i_piece, o_piece]
-    d._note_landing(i_piece | o_piece | (1 << 60))   # one frame of something else: not settled
-    assert len(d.landed) == 2
+    hover = 0b1111 << 40                    # a piece pausing three frames, then going on down
+    for mask in [i_piece | o_piece | hover] * 3 + [i_piece | o_piece] * 3:
+        d._note_landing(mask)
+    assert d.landed == [i_piece, o_piece]
+
+
+
+def test_a_small_shape_waits_for_a_bigger_one():
+    """User: an unrelated name (2BX砲) came up while building 合掌TSD — the
+    board passes through a 5-6 piece shape of another opener on the way. A
+    shape smaller than a bag is kept back for WAIT_PIECES pieces, and a whole
+    bag's shape matching meanwhile is shown instead."""
+    meisou = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))     # a 6-piece shape
+    gassho = cv2.imread(str(FIXTURES / "opener_gassho_left.jpg"))     # 合掌TSD
+    gassho = cv2.resize(gassho, (meisou.shape[1], meisou.shape[0]), interpolation=cv2.INTER_AREA)
+    det = OpenerDetector("left", compute_profile(meisou.shape[1], meisou.shape[0]))
+    assert det.on_placements(meisou, 1) is None                        # kept back
+    assert det.on_placements(gassho, 1) == "合掌TSD"                   # the bigger one, at once

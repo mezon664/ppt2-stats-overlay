@@ -22,6 +22,8 @@ matches exactly each landed piece is taken out in turn: what's left must be
 a whole shape, or a shape once a piece of the kind in HOLD (its color) is put
 back somewhere. (Indexing every shape without each of its pieces instead
 took 1.5 million entries and 527 MB.)
+Not used for now: it named the CPU's boards (burst_boundary). Only
+exact matches are shown.
 
 Garbage (お邪魔) received during the opening pushes the shape up: whole
 garbage rows at the bottom are set aside first (user's request), and the
@@ -133,6 +135,8 @@ def _before_the_t_spin(raw):
 MASK_ROWS = 12
 HOLD_MIN_CELLS = 24   # the hold case: only shapes of 6 pieces or more
 SETTLE_FRAMES = 3     # a cell filled this many frames running has settled (_note_landing)
+FULL_BAG_CELLS = 28   # a shape of a whole bag (7 pieces) is shown as soon as it matches
+WAIT_PIECES = 2       # a smaller one only after this many more pieces with no bigger match
 
 
 def _mask(rows):
@@ -376,6 +380,7 @@ class OpenerDetector:
         self._recent = __import__("collections").deque(maxlen=SETTLE_FRAMES)   # the last few boards
         self.landed = []      # each piece that landed, as a mask (the hold case)
         self._reported = False   # _report_miss: once
+        self._pending = None     # (names, placements then): a small shape kept back (see _check)
         self._last_hold = None
 
     def on_frame(self, frame, t_in_match, placements=0, hold=None):
@@ -385,6 +390,8 @@ class OpenerDetector:
         the opener name when it becomes known or changes, else None."""
         self.placements += placements
         if t_in_match > OPENING_S or self.placements > MAX_PLACEMENTS:
+            if self._pending is not None:   # the opening is over: a shape kept back is the one
+                return self._announce(self._pending[0])
             self._report_miss()
             return None
         self._last_hold = hold
@@ -447,10 +454,25 @@ class OpenerDetector:
         mask = _mask(occupancy)
         self._note_landing(mask, placed)
         names = match_openers(occupancy, openers(), self.placements)
-        if not names and self.name is None and self.landed:
-            names = openers().match_with_hold(mask, self.landed, hold)
-        if not names:
-            return None
+        if names:
+            if bin(mask).count("1") >= FULL_BAG_CELLS:
+                return self._announce(names)
+            # Fewer pieces than a bag: many openers pass through such a shape
+            # on the way to their own (2BX砲 alone has 840 five- and six-piece
+            # ones; user: an unrelated name came up while building 合掌TSD).
+            # Kept back until WAIT_PIECES more pieces land with no bigger
+            # shape matching, then shown.
+            if self._pending is None or self._pending[0] != names:
+                self._pending = (names, self.placements)
+        # The hold case (OpenerIndex.match_with_hold) is not used for now: it
+        # named the CPU's boards. The landed pieces are still noted for
+        # _report_miss.
+        if self._pending is not None and self.placements - self._pending[1] >= WAIT_PIECES:
+            return self._announce(self._pending[0])
+        return None
+
+    def _announce(self, names):
+        self._pending = None
         name = shown_name(names)      # shapes shared by several openers: up to MAX_NAMES of them
         index = openers()
         # dict.fromkeys: two Japanese names can share one English name once its (…) is gone
