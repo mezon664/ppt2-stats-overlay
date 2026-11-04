@@ -365,8 +365,8 @@ TEXT = {
 }
 
 
-PREVIEW_W, PREVIEW_H = 128, 80   # the design cards on ホーム
-DESIGN_COLUMNS = 4
+PREVIEW_W, PREVIEW_H = 100, 62   # the design cards on 見た目 (smaller, five a row: user's request)
+DESIGN_COLUMNS = 5
 LOOK_PREVIEW_W, LOOK_PREVIEW_H = 560, 150   # the preview on 見た目
 SAMPLE_LEFT = {"apm": {"apm": 77.8}, "pps": 2.09, "app": 0.62, "attack": 112, "pieces": 181, "ren": 3, "b2b": 2}
 SAMPLE_RIGHT = {"apm": {"apm": 43.2}, "pps": 1.74, "app": 0.41, "attack": 62, "pieces": 151, "ren": 0, "b2b": 0}
@@ -690,7 +690,8 @@ class SettingsWindow(QtWidgets.QWidget):
             card.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             card.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             card.setIconSize(QtCore.QSize(PREVIEW_W, PREVIEW_H))
-            card.setMinimumSize(PREVIEW_W + 12, PREVIEW_H + 30)   # sized before the pictures arrive
+            card.setMinimumSize(PREVIEW_W + 12, PREVIEW_H + 28)   # sized before the pictures arrive
+            card.setStyleSheet("font-size: 12px;")
             card.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
             self.style_group.addButton(card, i)
             self.style_cards[key] = card
