@@ -48,10 +48,20 @@ MAX_SHIFT = 3          # placements that can land between two confirmed readings
 
 
 def _hue_letter(h):
+    """The piece for a hue: its bucket, or else the nearest one. A slot is
+    always a piece: the buckets leave a gap (35-40, between yellow and green)
+    and a yellow O read in it made a "?", which threw away the whole reading
+    — on a PC whose colors come out a little different, every reading with an
+    O in the queue (most of them), so PPS hardly moved (a user's report). Only
+    the order of the letters matters here, not that they're the right pieces."""
+    best, best_d = "?", None
     for label, lo, hi in HUE_BUCKETS:
         if lo <= h < hi:
             return label
-    return "?"
+        d = min(abs(h - lo), abs(h - (hi - 1)), 180 - abs(h - lo), 180 - abs(h - (hi - 1)))
+        if best_d is None or d < best_d:
+            best, best_d = label, d
+    return best
 
 
 def count_advances(old, new):

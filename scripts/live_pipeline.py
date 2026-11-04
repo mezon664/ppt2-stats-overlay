@@ -50,6 +50,9 @@ EVENT_LOG_MAX = 15  # recent entries kept per side, for on-screen verification o
 HOLD_ADJUST_WINDOW_S = 1.0
 
 # Lines each banner type clears, checked against the clear flash's lit rows.
+# After the victory banner, the clears still waiting are finished for this
+# long: the longest a banner can follow its flash (FLASH_GRACE_BY_LINES_S, 1.1)
+SETTLE_AFTER_END_S = 1.2
 BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3, "tspin_mini": 1}
 
 
@@ -352,6 +355,40 @@ class PlayerPipeline:
             self._emit_attack_event(pf["flash_t"], ev, result["total"], result)
         self._pending_flashes = still_pending
 
+    def settle(self, frame, t):
+        """Right after the match ended (victory banner): only the clears that
+        were still waiting are finished — the T-SPIN / TETRIS banner of one may
+        still come. Nothing new is read (no flashes, placements or openers).
+        Before, the frame that ended the match stopped everything, and the
+        clear that won it, still waiting out its banner time, was lost: max
+        REN one short and its lines missing (users' reports)."""
+        streak = self.tracker.streak
+        streak_before = (streak.consecutive_clears, streak.b2b_streak)
+        before = len(self.tracker.attack_events)
+        self.tracker.update(frame, t)
+        new_events = self._keep_flash_backed_banners(self.tracker.attack_events[before:], t, streak_before)
+        self._emit_banner_events(new_events, t)
+        self._resolve_pending_flashes(t)
+
+    def flush(self):
+        """Settling is over: every clear still waiting counts as it was measured."""
+        self._resolve_pending_flashes(float("inf"))
+
+    def _emit_banner_events(self, new_events, t):
+        """Banner-confirmed clears: each takes its own pending flash (so it
+        isn't also counted as a plain clear) and is emitted."""
+        for i in range(min(len(new_events), len(self._pending_flashes))):
+            if self._pending_flashes.pop(0).get("perfect_clear"):
+                new_events[i]["perfect_clear"] = True  # PC banner came before this clear's own banner
+        self._resolve_pending_flashes(t)
+        for ev in new_events:
+            # compute_attack takes b2b_streak (an int), not the already-resolved
+            # btb bool: a streak value that reproduces exactly that bool
+            min_streak = self.table["back_to_back"]["min_consecutive_for_bonus"]
+            b2b_streak = min_streak if ev["btb"] else 0
+            result = compute_attack(self.table, ev["clear_type"], ev["ren_count"], b2b_streak)
+            self._emit_attack_event(t, ev, result["total"], result)
+
     def process_frame(self, frame, t):
         """Flash-based clear detection (flash_clear_detector.py) supplements —
         never replaces — banner detection below. Fixes two things banner-only
@@ -447,24 +484,7 @@ class PlayerPipeline:
         # flash (oldest first — a burst of several real clears shouldn't let a
         # later banner steal an earlier flash's slot) so it isn't ALSO
         # resolved as a plain clear_N and double-counted.
-        for i in range(min(len(new_events), len(self._pending_flashes))):
-            if self._pending_flashes.pop(0).get("perfect_clear"):
-                new_events[i]["perfect_clear"] = True  # PC banner came before this clear's own banner
-
-        self._resolve_pending_flashes(t)
-
-        for ev in new_events:
-            # compute_attack takes b2b_streak (an int), not the already-resolved
-            # btb bool. Synthesize a streak value that reproduces exactly that bool
-            # through compute_attack's own threshold check, rather than reading
-            # self.tracker.streak.b2b_streak after the fact — that reflects
-            # whatever the LAST event in this frame's batch left it at, which is
-            # only correct here because in practice at most one clear event fires
-            # per processed frame; this sidesteps that assumption entirely.
-            min_streak = self.table["back_to_back"]["min_consecutive_for_bonus"]
-            b2b_streak = min_streak if ev["btb"] else 0
-            result = compute_attack(self.table, ev["clear_type"], ev["ren_count"], b2b_streak)
-            self._emit_attack_event(t, ev, result["total"], result)
+        self._emit_banner_events(new_events, t)
 
         self._apply_ready_breaks()
 
@@ -956,6 +976,7 @@ class MatchPipeline:
         if victory_edge and not self._frozen:
             self.winner = self.boundary_detector.winner   # the side "やった!" came up on
             self._frozen = True
+            self._settle_until = t + SETTLE_AFTER_END_S   # (see PlayerPipeline.settle)
             self._fallback_saw_empty_since_freeze = False
             self._result_held = True
             log.info("match concluded (victory banner) — freezing numbers")
@@ -1027,6 +1048,19 @@ class MatchPipeline:
                 # still showing its final state" period; do nothing and wait.
 
         return self._frozen
+
+    def _settle(self, frame, t):
+        until = getattr(self, "_settle_until", None)
+        if until is None:
+            return
+        sides = [getattr(self, sd) for sd in ("left", "right") if not self.puyo[sd]]
+        if t <= until:
+            for side in sides:
+                side.settle(frame, t)
+        else:
+            for side in sides:
+                side.flush()
+            self._settle_until = None
 
     def _blackout_reset(self):
         """The screen went black (see BLACK_MEAN): clear every number, the
@@ -1140,6 +1174,8 @@ class MatchPipeline:
             # Hold every derived number at its value from the instant the match
             # concluded: don't feed this frame into the trackers, and don't let
             # self._last_t (the "now" used for the APM/elapsed-time ratio) advance.
+            # Only the clears still waiting then are finished (settle / flush).
+            self._settle(frame, t)
             return
         if self.start_t is None:
             self.start_t = t

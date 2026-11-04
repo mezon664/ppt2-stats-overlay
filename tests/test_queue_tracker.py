@@ -87,3 +87,13 @@ def test_discard_first_shift_only_applies_once():
                         "ISOLZ", "ISOLZ", "SOLZT", "SOLZT"])
     assert placed == [0.5, 0.7]
     assert tr.pieces_placed == 2
+
+
+def test_every_hue_is_a_piece():
+    """No hue reads as "?": one in the gap between yellow and green (an O on a
+    PC with slightly different colors) used to throw the reading away, and PPS
+    stood still. It goes to the nearest piece instead."""
+    from queue_tracker import _hue_letter
+    assert all(_hue_letter(h) != "?" for h in range(180))
+    assert _hue_letter(36) == "O" and _hue_letter(39) == "S"
+    assert _hue_letter(25) == "O" and _hue_letter(100) == "I"

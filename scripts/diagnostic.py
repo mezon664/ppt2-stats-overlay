@@ -52,6 +52,14 @@ class Diagnostic:
                        + "  NEXT label " + " ".join(f"{k}={v:.2f}" for k, v in scores.items()))
             out.append(f"frozen={getattr(pipeline, '_frozen', '?')}  puyo={getattr(pipeline, 'puyo', '?')}"
                        f"  matches={getattr(pipeline, 'match_reset_count', '?')}")
+            # the NEXT queues as read (PPS comes from them moving up)
+            queues = []
+            for side in ("left", "right"):
+                q = getattr(getattr(pipeline, side, None), "queue_tracker", None)
+                if q is not None:
+                    queues.append(f"{side}={q.last_reading} placed={q.pieces_placed}")
+            if queues:
+                out.append("NEXT read: " + "  ".join(queues))
         return out
 
     def write(self, frame, lines):

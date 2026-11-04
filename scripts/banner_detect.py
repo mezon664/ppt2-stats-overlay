@@ -180,7 +180,15 @@ EXIT_GRACE_FRAMES = 2  # consecutive below-exit frames before declaring "ended" 
 #  - tetris: best achievable match on a confirmed-genuine instance was only 0.679
 #    (position/scale varies with stack height — see phase2d notes), while background
 #    frames stayed under ~0.47, so 0.70 was too strict and caused a confirmed miss.
-ENTER_THRESHOLDS = {"back_to_back": 0.90, "tetris": 0.60, "tspin_zero": 0.85}
+#  - T-SPIN Single / Double / Triple: measured on every banner in the 15
+#    recordings, read at window widths 960-2560, the weakest peak was 0.69
+#    (Single, English game at 1920+) and 0.72 (Double): 0.70 missed some (users
+#    reported T-SPINs not counted). Frames with no T-SPIN banner stay at about
+#    0.50 or below, and a banner still needs a clear flash of its own line
+#    count just before it (live_pipeline._keep_flash_backed_banners).
+TSPIN_ENTER = 0.62
+ENTER_THRESHOLDS = {"back_to_back": 0.90, "tetris": 0.60, "tspin_zero": 0.85,
+                    "tspin_single": TSPIN_ENTER, "tspin_double": TSPIN_ENTER, "tspin_triple": TSPIN_ENTER}
 EXIT_THRESHOLDS = {"back_to_back": 0.85, "tetris": 0.50, "tspin_zero": 0.70}
 # tspin_zero only counts when none of the line-clearing T-SPIN words is there
 # (they peaked at 0.33-0.41 on the real no-line badges; a real word is 0.7+).
