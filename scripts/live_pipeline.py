@@ -613,7 +613,11 @@ GO_TRACE_FRAMES = 150
 # recording: 0.0-0.4 mean brightness on a 64x36 shrink, 1-4 frames) and when
 # leaving a match for the menus; the match screen itself never comes close.
 # User's request: on that black, clear the numbers and the summary.
-BLACK_MEAN = 2.0
+# It's only 1-2 frames of 0-0.4, with a fade of 2-12 around it: a slow
+# reader (a big window) could step over it (user: the reset on black was
+# sometimes missed). The match / menu screens never go below 18 in any
+# recording, so the fade counts too.
+BLACK_MEAN = 8.0
 # A real GO! only disappears right after a countdown that began on two empty
 # boards: in every recorded match start (8 of 8, five stages) both boards last
 # read empty 2.22-2.30s before the GO! edge. The set-end "WINNER!" cut-scene
@@ -1016,21 +1020,21 @@ class MatchPipeline:
         return self._frozen
 
     def _blackout_reset(self):
-        """Reset live tracking on black, but preserve a concluded match summary."""
-        was_frozen = self._frozen
-        log.info("screen went black — %s", "preserving the concluded match" if was_frozen
-                 else "clearing in-progress numbers")
-        if not was_frozen:
+        """The screen went black (see BLACK_MEAN): clear every number, the
+        clock and so the summary (user's spec). Between matches the
+        match-start detection carries on as it was (frozen, waiting for GO!);
+        after leaving a match midway (e.g. quitting from the pause menu) it
+        waits like at startup. (v0.2.2 kept a finished match's result through
+        the black; the user wants it cleared there, as before.)"""
+        log.info("screen went black — clearing the numbers and the summary")
+        if not self._frozen:
             self._frozen = True
             self._startup_wait = True
             self._fallback_saw_empty_since_freeze = False
-            self._recreate_pipelines()
-        # A victory banner freezes a valid result. The brief black transition
-        # before the set-end screen must not rebuild its trackers and erase it;
-        # the next confirmed match calls reset_match() and creates fresh ones.
+        self._recreate_pipelines()
         self._blackout_handled = True
-        if not was_frozen:
-            self.start_t = None
+        self._result_held = False
+        self.start_t = None
         self._play_started_t = None
         self.frame_count = 0
         self.match_reset_count += 1

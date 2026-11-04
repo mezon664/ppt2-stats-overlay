@@ -1406,11 +1406,16 @@ class OpenerBadge(Band):
         self._resize()
 
     def set_names(self, names, alpha=1.0):
-        if names != self.names:
+        """Called every frame while a name is up (the fade timer): repaints
+        only when something changed — the name or the fade (it repainted 60
+        times a second while nothing moved)."""
+        changed = names != self.names
+        if changed:
             self.names = dict(names)
             self._resize()
-        self.alpha = alpha
-        self.update()
+        if changed or abs(alpha - self.alpha) > 0.002:
+            self.alpha = alpha
+            self.update()
 
     def _label(self):
         return UI_TEXT[self.language]["s_opener"]
@@ -1531,18 +1536,28 @@ CAT_SCALE = 0.625         # clip px -> reference px: the clip is 1280 wide (shar
 # a bigger clip just starts its walk further off the screen's edge.
 CAT_CENTER_X = {"left": 320, "right": 912}
 CAT_MIN_STILL_S = 0.5     # the standing-still part is never squeezed below this
+CAT_PREPARE_PER_TICK = 2  # frames read and scaled ahead of time every 15 ms (CatPopup.prepare): 130 a second, ahead of the 24 a second it shows
 CAT_PAPER_MIN_PX = 30     # smallest one-line name on the paper (200x140 box); longer names run off its sides
 
 
 def load_cat():
-    """The cat clip (cat.json + frame images), or None if it isn't there."""
+    """The cat clip (cat.json), or None if it isn't there. The frame images
+    are read when first needed (cat_image): reading all 225 up front froze the
+    app for half a second the first time the cat display was chosen."""
     try:
         data = json.loads((CAT_DIR / "cat.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    for f in data["frames"]:
-        f["img"] = QtGui.QImage(str(CAT_DIR / f["file"])) if f.get("file") else None
     return data
+
+
+def cat_image(frame):
+    """A frame's image (read once, kept), or None for a frame without the cat."""
+    if not frame.get("file"):
+        return None
+    if "img" not in frame:
+        frame["img"] = QtGui.QImage(str(CAT_DIR / frame["file"]))
+    return frame["img"]
 
 
 def cat_pos(cat, age, seconds):
@@ -1646,6 +1661,11 @@ class CatPopup(QtWidgets.QWidget):
         self.u = 1.0
         self._ready = {}          # frame index -> (QImage at self.u, its top-left)
         self._ready_u = None
+        self._dirty = None        # the area painted last (show_frame repaints only that and the new one)
+        self._todo = []           # frames still to scale (prepare)
+        self._prep_timer = QtCore.QTimer(self)
+        self._prep_timer.setInterval(15)
+        self._prep_timer.timeout.connect(self._prepare_some)
         self.editing = False      # position-adjust mode: outlined, and dragged like the other parts
         self._paper, self._paper_for = None, None   # paper_layout of the name, kept
         self.drag_target = "opener"   # set_drag_targets: or just this player's
@@ -1659,26 +1679,61 @@ class CatPopup(QtWidgets.QWidget):
         size = QtCore.QSize(int(w * u), int(h * u))
         if self.size() != size:
             self.setFixedSize(size)
-        self.update()
+            self._dirty = None
+        # Only the cat and its paper are repainted, not the whole clip-sized
+        # widget (mostly empty): on a big game window repainting all of it
+        # every frame went past 16 ms (user: the popup got heavy on a big window)
+        area = self._area(pos)
+        if self.editing or area is None or self._dirty is None:
+            self.update()
+        else:
+            self.update(area.united(self._dirty))
+        self._dirty = area
+
+    def _area(self, pos):
+        """Where frames pos[0] / pos[1] and the name on the paper are drawn."""
+        rect = QtCore.QRect()
+        for index in (pos[0], pos[1]):
+            f = self._frame(index)
+            if f is not None:
+                img, x, y = f
+                rect = rect.united(QtCore.QRect(x, y, img.width(), img.height()))
+            quad = self._quad(index)
+            if quad:   # a long name runs off the paper's sides
+                poly = QtGui.QPolygonF([QtCore.QPointF(q.x() * self.u, q.y() * self.u) for q in quad])
+                b = poly.boundingRect().toAlignedRect()
+                rect = rect.united(b.adjusted(-b.width(), -8, b.width(), 8))
+        return None if rect.isNull() else rect.adjusted(-2, -2, 2, 2)
 
     def prepare(self, cat, u):
-        """Scale every frame now (about a third of a second), so none is
-        scaled while the cat is walking — that made it hitch."""
+        """Scale every frame ahead of time, so none is scaled while the cat is
+        walking (that made it hitch) — a few at a time in the order they're
+        shown, between other work: all at once froze the app for about a
+        second the first time the cat display was chosen (user: it flickered)."""
         self.cat = cat
         if self._ready_u != u:
             self.u, self._ready, self._ready_u = u, {}, u
-        for index in range(len(cat["frames"])):
-            self._frame(index)
+        self._todo = [i for i in range(len(cat["frames"])) if i not in self._ready]
+        if self._todo and not self._prep_timer.isActive():
+            self._prep_timer.start()
+
+    def _prepare_some(self):
+        for _ in range(CAT_PREPARE_PER_TICK):
+            if not self._todo or self.cat is None:
+                self._prep_timer.stop()
+                return
+            self._frame(self._todo.pop(0))
 
     def _frame(self, index):
         """Frame `index` scaled to self.u (mirrored for 1P), and where it goes."""
         if index not in self._ready:
             f = self.cat["frames"][index]
-            if f.get("img") is None:
+            src = cat_image(f)
+            if src is None or src.isNull():
                 self._ready[index] = None
             else:
-                img = f["img"].scaled(max(1, round(f["img"].width() * self.u)),
-                                      max(1, round(f["img"].height() * self.u)),
+                img = src.scaled(max(1, round(src.width() * self.u)),
+                                 max(1, round(src.height() * self.u)),
                                       QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
                                       QtCore.Qt.TransformationMode.SmoothTransformation)
                 img = img.convertToFormat(QtGui.QImage.Format.Format_ARGB32_Premultiplied)
@@ -1686,10 +1741,7 @@ class CatPopup(QtWidgets.QWidget):
                 if self.side == "left":   # 1P: comes in from the left
                     img = img.mirrored(True, False)
                     x = self.cat["size"][0] * self.u - x - img.width()
-                ptr = img.constBits()
-                ptr.setsize(img.sizeInBytes())
-                arr = np.frombuffer(ptr, np.uint8).reshape(img.height(), img.bytesPerLine() // 4, 4)[:, :img.width()]
-                self._ready[index] = (arr.astype(np.uint16), int(round(x)), int(round(f["y"] * self.u)))
+                self._ready[index] = (img, int(round(x)), int(round(f["y"] * self.u)))
         return self._ready[index]
 
     def _quad(self, index):
@@ -1736,27 +1788,21 @@ class CatPopup(QtWidgets.QWidget):
         if not self.cat or self.pos is None:
             return
         i, j, frac = self.pos
-        a, b = self._frame(i), self._frame(j)
+        frac = min(max(frac, 0.0), 1.0)
+        a, b = self._frame(i), self._frame(j) if j != i else None
         if a is None and b is None:
             return
-        # the two frames blended: their (premultiplied) pixels added up with
-        # weights (1 - frac, frac), so where both are solid it stays solid. (Qt's
-        # additive mode ignores the opacity and drew one over the other: the
-        # cat went pale and see-through halfway between frames.)
-        wb = int(round(min(max(frac, 0.0), 1.0) * 256))
-        parts = [(f, wt) for f, wt in ((a, 256 - wb), (b, wb)) if f is not None and wt]
-        # only the area the two frames cover (the cat is a small part of the clip)
-        X1 = min(x for (arr, x, y), _ in parts)
-        Y1 = min(y for (arr, x, y), _ in parts)
-        X2 = max(x + arr.shape[1] for (arr, x, y), _ in parts)
-        Y2 = max(y + arr.shape[0] for (arr, x, y), _ in parts)
-        layer = np.zeros((Y2 - Y1, X2 - X1, 4), np.uint16)
-        for (arr, x, y), weight in parts:
-            layer[y - Y1:y - Y1 + arr.shape[0], x - X1:x - X1 + arr.shape[1]] += arr * weight
-        out = np.ascontiguousarray((layer >> 8).astype(np.uint8))
+        # Between two of the clip's frames (24 a second, shown at 60): the
+        # first drawn solid, the next over it at the in-between opacity —
+        # where both are solid it stays solid. Qt does this itself; a numpy
+        # blend of every pixel each repaint was the heavy part on big windows.
         p = QtGui.QPainter(self)
-        p.drawImage(X1, Y1, QtGui.QImage(out.data, X2 - X1, Y2 - Y1, (X2 - X1) * 4,
-                                         QtGui.QImage.Format.Format_ARGB32_Premultiplied))
+        if a is not None:
+            p.drawImage(a[1], a[2], a[0])
+        if b is not None and frac > 0:
+            p.setOpacity(frac)
+            p.drawImage(b[1], b[2], b[0])
+            p.setOpacity(1.0)
         qa, qb = self._quad(i), self._quad(j)
         quad = qa if qb is None else qb if qa is None else \
             [QtCore.QPointF(pa.x() + (pb.x() - pa.x()) * frac, pa.y() + (pb.y() - pa.y()) * frac) for pa, pb in zip(qa, qb)]
