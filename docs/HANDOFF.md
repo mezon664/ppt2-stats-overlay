@@ -367,3 +367,4 @@
 - 自分の側: まちうけ画面の「You」の左右（`RatingReader.you_side`）を、90 秒以内に始まった試合に割り当てる（`data_server.follow_session`）→ state["you_side"] → HUD が試合の記録（opener_history.json）に "you" として保存。まちうけがない試合（オフライン）は 1P。
 - 集計はサーバー（`scripts/session_stats.py`、`data_server.session_state`、記録ファイルの更新時刻が変わったときだけ計算し直す）→ state["session"]（数値と日英の行）→ HUD `SessionBlock`（ClockBlock の描き方をそのまま使う、見た目の設定は「試合時間」と共通）/ OBS `session`（clockPaint）。HUD と OBS の差 0.1〜0.3%。
 - 設定 `display.show_session`（初期オフ）、`session_offset_x/y`、位置調整の対象「今日の成績」。上中央 y=22（`SESSION_TOP_Y`）、NEXT と HOLD の間に収まる。
+- 設定画面「試合の統計」の上に「今日の成績」のカード（タイル 7 つ）。HUD が state["session"] の変化で `session_changed` を出し、`SettingsWindow.set_today` が受け取る。

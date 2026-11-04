@@ -362,6 +362,18 @@ TEXT = {
     "target.event": {"ja": "イベント履歴", "en": "Event history"},
     "target.summary": {"ja": "試合結果", "en": "Summary"},
     "target.session": {"ja": "今日の成績", "en": "Today's results"},
+    "today.title": {"ja": "今日の成績", "en": "Today's results"},
+    "today.desc": {"ja": "ぷよテト2を起動してからの成績です（ゲームを閉じるとリセット）。「表示する項目」でゲーム画面や OBS にも出せます。",
+                   "en": "Since Puyo Puyo Tetris 2 was started (reset when it's closed). It can also show on the game screen and in OBS (What's shown)."},
+    "today.none": {"ja": "まだ試合がありません（ゲームを起動してからの試合を数えます）",
+                   "en": "No matches yet (the ones since the game was started count)"},
+    "today.record": {"ja": "勝敗", "en": "Record"},
+    "today.rate": {"ja": "勝率", "en": "Win rate"},
+    "today.streak": {"ja": "連勝", "en": "Win streak"},
+    "today.rating": {"ja": "レートの増減", "en": "Rating change"},
+    "today.apm": {"ja": "平均 APM", "en": "Avg APM"},
+    "today.pps": {"ja": "平均 PPS", "en": "Avg PPS"},
+    "today.app": {"ja": "平均 APP", "en": "Avg APP"},
     "card.session": {"ja": "今日の成績", "en": "Today's results"},
     "card.session_desc": {"ja": "ぷよテト2を起動してからの勝敗・連勝数・レートの増減・平均 APM / PPS / APP を、盤面のあいだの上に出します（ゲームを閉じるとリセット）",
                           "en": "Wins and losses, win streak, rating change and average APM / PPS / APP since the game was started, top center (reset when the game is closed)"},
@@ -1520,7 +1532,66 @@ class SettingsWindow(QtWidgets.QWidget):
         self.st_side.currentIndexChanged.connect(self._opener_stats_options_changed)
         self.st_last.currentIndexChanged.connect(self._opener_stats_options_changed)
         self.st_vs.currentIndexChanged.connect(self._opener_stats_options_changed)
-        return self._page("page.stats", self.stats_card)
+        self._build_today_card()
+        return self._page("page.stats", self.today_card, self.stats_card)
+
+    # --- 今日の成績 (scripts/session_stats.py; the server works it out, the HUD passes it on) ---
+    TODAY_TILES = (("record", "rate", "streak", "rating"), ("apm", "pps", "app"))
+
+    def _build_today_card(self):
+        self.today_card = ui.Card()
+        self._today = None
+        self.today_tiles = {}
+        for keys in self.TODAY_TILES:
+            row = QtWidgets.QHBoxLayout()
+            for key in keys:
+                box = QtWidgets.QFrame()
+                box.setStyleSheet("QFrame { background:#f3f6fc; border-radius:8px; }")
+                v = QtWidgets.QVBoxLayout(box)
+                v.setContentsMargins(8, 4, 8, 6)
+                v.setSpacing(0)
+                name, value = QtWidgets.QLabel(), QtWidgets.QLabel()
+                name.setStyleSheet("color:#4f5670; font-size:11px; background:transparent;")
+                value.setStyleSheet("font-size:20px; font-weight:bold; background:transparent;")
+                v.addWidget(name)
+                v.addWidget(value)
+                row.addWidget(box)
+                self.today_tiles[key] = (box, name, value)
+            self.today_card.add(row)
+        self.today_none = ui.muted()
+        self.today_card.add(self.today_none)
+
+    def set_today(self, session):
+        """The server's state["session"] (or None), from the HUD."""
+        self._today = session
+        self._show_today()
+
+    def _show_today(self):
+        t = self.tr_
+        self.today_card.setTitle(t("today.title"))
+        self.today_card.setDescription(t("today.desc"))
+        s = (self._today or {}).get("summary") if isinstance(self._today, dict) else None
+        has = bool(s and s.get("matches"))
+        en = self.lang == "en"
+        r = (s or {}).get("rating")
+        values = {
+            "record": (f"{s['wins']}W {s['losses']}L" if en else f"{s['wins']}勝 {s['losses']}敗") if has else "--",
+            "rate": f"{s['win_rate']}%" if has else "--",
+            "streak": str(s["streak"]) if has else "--",
+            "rating": (f"{'+' if r['delta'] > 0 else ('±' if r['delta'] == 0 else '')}{r['delta']}  ({r['now']})"
+                       if r else "--"),
+            "apm": f"{s['apm']:.1f}" if has and s.get("apm") is not None else "--",
+            "pps": f"{s['pps']:.2f}" if has and s.get("pps") is not None else "--",
+            "app": f"{s['app']:.2f}" if has and s.get("app") is not None else "--",
+        }
+        for key, (box, name, value) in self.today_tiles.items():
+            name.setText(t("today." + key))
+            value.setText(values[key])
+            if key == "rating":
+                color = "#15803d" if r and r["delta"] > 0 else "#b91c1c" if r and r["delta"] < 0 else "#18181b"
+                value.setStyleSheet(f"font-size:20px; font-weight:bold; background:transparent; color:{color};")
+        self.today_none.setText("" if has or r else t("today.none"))
+        self.today_none.setVisible(not (has or r))
 
     def _retranslate_stats(self):
         t = self.tr_
@@ -1635,6 +1706,7 @@ class SettingsWindow(QtWidgets.QWidget):
             e.setPlaceholderText(names[key])
             self.label_names[key].setText(names[key])
         self._retranslate_stats()
+        self._show_today()
         # ホーム
         self.power_card.setTitle(t("card.power"))
         self.show_on_hud.setText(t("show_on_hud"))

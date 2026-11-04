@@ -1955,6 +1955,7 @@ class HudWindow(QtWidgets.QWidget):
     part_resized = QtCore.pyqtSignal(str, float)   # the wheel resized a part while positioning (part, size)
     match_screen_changed = QtCore.pyqtSignal(bool)  # the game went to / left the match screen
     opener_recorded = QtCore.pyqtSignal()           # a finished match was added to opener_stats
+    session_changed = QtCore.pyqtSignal(object)     # 今日の成績 from the server changed (state["session"])
     language_changed = QtCore.pyqtSignal(str)
 
     def __init__(self, settings):
@@ -2368,6 +2369,9 @@ class HudWindow(QtWidgets.QWidget):
             return
         self._last_raw_state = state
         self._record_finished_match(state)
+        if state.get("session") != getattr(self, "_last_session", None):
+            self._last_session = state.get("session")
+            self.session_changed.emit(self._last_session)
         self._last_state = state
         self._state_t = time.monotonic()
         # Follow the server's copy only when IT changes (someone edited the
@@ -2804,6 +2808,7 @@ def main():
     win.part_resized.connect(settings_win.set_part_scale_from_hud)
     win.match_screen_changed.connect(settings_win.set_match_screen)
     win.opener_recorded.connect(settings_win.refresh_opener_stats)   # the opener stats follow each match
+    win.session_changed.connect(settings_win.set_today)              # 今日の成績 on the stats page
 
     tray = QtWidgets.QSystemTrayIcon(make_tray_icon(), app)
     tray.setToolTip("PPTetrics")
