@@ -64,7 +64,7 @@ def _hue_letter(h):
     return best
 
 
-def count_advances(old, new, trusted=None):
+def count_advances(old, new, trusted=None, overlap=2):
     """How many places `new` is `old` shifted up by (0 if unchanged), or None
     if it isn't a shift at all (misread, or a different queue entirely).
     trusted: how many of old's first letters are sure (the rest came in with a
@@ -75,7 +75,7 @@ def count_advances(old, new, trusted=None):
         return 0
     for k in range(0, MAX_SHIFT + 1):
         n = trusted - k
-        if n >= 2 and new[:n] == old[k:trusted]:
+        if n >= overlap and new[:n] == old[k:trusted]:
             return k
     return None
 
@@ -94,6 +94,7 @@ class NextQueueTracker:
         self.pieces_placed = 0
         self.last_reading = None
         self._trusted = 0   # how many of stable's first letters are sure (count_advances)
+        self._prev = None   # the last reading (whatever it was)
         # The match's first confirmed shift is the first piece spawning, not
         # a lock — see the module docstring. Only set when the caller knows
         # this tracker was created right at a confirmed match start (not at
@@ -139,12 +140,26 @@ class NextQueueTracker:
             self._candidate_reads += 1
         else:
             self._candidate, self._candidate_t, self._candidate_reads = seq, t, 1
+        prev, self._prev = self._prev, seq
         confirmed = self._candidate_reads >= STABLE_READS
         if self.stable is None:
-            if confirmed:
-                self.stable, self._trusted = seq, len(seq)
+            # the starting queue from one reading: waiting for two identical
+            # ones never ended for a player placing fast from the very start
+            # on a slow PC (users: PPS fine only if they waited for it to show
+            # 0 before placing). A misread start is caught up with below.
+            self.stable, self._trusted = seq, len(seq)
             return []
         k = count_advances(self.stable, seq, self._trusted)
+        if k is None and prev is not None and prev != self.stable:
+            # not a shift of what we hold, but a clean one of the reading just
+            # before: what we held was a misread, and the queue is moving on
+            # (3 letters in common at least: with 2, flickering readings like
+            # OLSOL -> OLSJL passed for a 3-place shift)
+            k2 = count_advances(prev, seq, overlap=3)
+            if k2:
+                log.info("[%s] queue %s -> %s -> %s: following the queue", self.side, self.stable, prev, seq)
+                self.stable, self._trusted = seq, len(seq) - k2
+                return self._count(k2)
         if k is None:
             if self._candidate_reads >= REBASELINE_READS:
                 log.info("[%s] queue %s -> %s isn't a shift; re-baselining", self.side, self.stable, seq)
@@ -164,6 +179,9 @@ class NextQueueTracker:
         # are only trusted once read twice.
         self.stable = seq
         self._trusted = len(seq) if confirmed else len(seq) - k
+        return self._count(k)
+
+    def _count(self, k):
         if self._first_shift_pending:
             self._first_shift_pending = False
             k -= 1  # that shift was the first piece spawning, not a placement

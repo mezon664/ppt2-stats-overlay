@@ -120,3 +120,26 @@ def test_a_misread_new_tail_is_corrected_not_counted():
     for i in range(6):
         q.update(None, float(i))
     assert q.pieces_placed == 2 and q.stable == "TSZJI"
+
+
+def test_placing_fast_from_the_very_start_is_counted():
+    """Users: PPS only worked if they waited for it to show 0 before placing.
+    The starting queue came from two identical readings, which a fast player
+    on a slow PC never gave. It's taken from one now."""
+    q = NextQueueTracker("left")
+    reads = iter(["IOTSZ", "OTSZJ", "TSZJL", "SZJLI"])
+    q._read = lambda frame: next(reads)
+    for i in range(4):
+        q.update(None, float(i))
+    assert q.pieces_placed == 3
+
+
+def test_a_misread_start_is_caught_up_with():
+    """A misread first reading isn't a dead end: once two readings in a row
+    are a clean shift of each other, the queue is followed from there."""
+    q = NextQueueTracker("left")
+    reads = iter(["IOJZZ", "OTSZJ", "TSZJL", "SZJLI"])
+    q._read = lambda frame: next(reads)
+    for i in range(4):
+        q.update(None, float(i))
+    assert q.pieces_placed == 2 and q.stable == "SZJLI"
