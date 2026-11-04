@@ -142,3 +142,27 @@ def test_the_hud_goes_to_the_game_on_any_monitor():
     screens = [_Screen(0, 0, 2560, 1440, 1.0), _Screen(2560, 0, 1280, 720, 1.5)]   # 1920x1080 at 150%
     assert overlay.native_to_logical(100, 50, 1320, 742, screens) == (100, 50, 1.0)
     assert overlay.native_to_logical(2560 + 300, 90, 1320, 742, screens) == (2560 + 200, 60, 1.5)
+
+
+def test_nothing_shows_until_the_hud_is_over_the_game():
+    """A report: just after start the HUD showed over a Discord window. While
+    following the game, nothing shows before the HUD has been put over the
+    game's window, nor after the window is gone."""
+    import overlay
+    if not overlay.HAS_WIN32:
+        return
+    settings = overlay.load_settings()
+    settings["hud"]["follow_game"] = True
+    overlay.WsClient.start = lambda self: None
+    win = overlay.HudWindow(settings)
+    win._follow.stop()                      # placed by hand below, not from a real window
+    d = overlay.display_settings({"display": {"show_clock": True}})
+    win.apply_display(d, local=True)
+    win.on_state({"match_elapsed_s": 10.0, "frozen": False, "display": d, "capture": {"ok": True},
+                  "match_screen": True, "left": {"apm": {"apm": 50.0}}, "right": {"apm": {"apm": 40.0}}})
+    assert win.clock.isHidden()
+    win._last_geom = (0, 0, 1232, 693, 1.0)  # over the game
+    win._place()
+    assert not win.clock.isHidden()
+    win._lost_game()                         # the game's window went away
+    assert win.clock.isHidden()

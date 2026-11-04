@@ -1973,6 +1973,10 @@ class HudWindow(QtWidgets.QWidget):
         self.edit_hint.raise_()
         self._hwnd = None
         self._last_geom = None
+        # following the game's window: nothing is shown until it has been
+        # found and the HUD put over it (a report: just after start the HUD
+        # showed over a Discord window, until the app was restarted)
+        self._follows = bool(settings["hud"]["follow_game"]) and HAS_WIN32
         self._size = (REFERENCE_W, REFERENCE_H)
         self._scale = 1.0
         self._last_state = {}
@@ -2103,6 +2107,8 @@ class HudWindow(QtWidgets.QWidget):
             return True
         if not self.display["show_on_hud"] and not self.edit_mode:   # shown in OBS only
             return True
+        if self._follows and self._last_geom is None:   # not over the game (yet)
+            return True
         return (not self.display["always_show"] and not self.display["force_show"] and not self.edit_mode
                 and self._last_state.get("match_screen") is False)
 
@@ -2112,6 +2118,8 @@ class HudWindow(QtWidgets.QWidget):
             return "switched off"
         if not self.display["show_on_hud"] and not self.edit_mode:
             return "OBS only (show_on_hud off)"
+        if self._follows and self._last_geom is None:
+            return "not over the game window (not found / minimized)"
         if self._away_from_match():
             return "not the match screen"
         return ""
@@ -2161,6 +2169,13 @@ class HudWindow(QtWidgets.QWidget):
         sg = self.screen().geometry() if self.screen() else QtCore.QRect()
         hud_rect = (round(sg.x() + (g.x() - sg.x()) * dpr), round(sg.y() + (g.y() - sg.y()) * dpr),
                     round(g.width() * dpr), round(g.height() * dpr))
+        if (self._follows and game_rect is not None and self._last_geom is not None
+                and any(abs(a - b) > 2 for a, b in zip(game_rect, hud_rect))):
+            # not over the game (moved by Windows, a monitor change...): placed again
+            _hud_note(f"HUD at {hud_rect} but the game at {game_rect}: placing it again")
+            self._last_geom = None
+            self._follow_game_window()
+            raised = True
         parts = [name for name, w in (("stats_left", self.stats["left"]), ("stats_right", self.stats["right"]),
                                       ("clock", self.clock), ("summary", self.summary),
                                       ("events_left", self.events["left"]), ("events_right", self.events["right"]),
@@ -2272,13 +2287,16 @@ class HudWindow(QtWidgets.QWidget):
             if self._hwnd is None or not win32gui.IsWindow(self._hwnd):
                 self._hwnd = find_game_hwnd()
             if self._hwnd is None or win32gui.IsIconic(self._hwnd):
+                self._lost_game()
                 return
             _, _, cw, ch = win32gui.GetClientRect(self._hwnd)
             left, top = win32gui.ClientToScreen(self._hwnd, (0, 0))
         except Exception:
             self._hwnd = None
+            self._lost_game()
             return
         if cw <= 0 or ch <= 0:
+            self._lost_game()
             return
         x, y, dpr = native_to_logical(left, top, cw, ch)
         geom = (left, top, cw, ch, dpr)
@@ -2289,6 +2307,12 @@ class HudWindow(QtWidgets.QWidget):
         self._size = (cw / dpr, ch / dpr)
         self._scale = cw / (REFERENCE_W * dpr)
         self._layout()
+
+    def _lost_game(self):
+        """No game window to sit on: show nothing until it's back."""
+        if self._last_geom is not None:
+            self._last_geom = None
+            self._place()
 
     # --- data ---
     def on_state(self, state):
