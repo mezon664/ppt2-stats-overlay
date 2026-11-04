@@ -40,7 +40,7 @@ ASSET_PREFIXES = ("PPTetrics", "ppt2-stats-overlay")
 ALLOWED_HOSTS = {"github.com", "api.github.com", "objects.githubusercontent.com",
                  "release-assets.githubusercontent.com", "codeload.github.com"}
 # never replaced by an update, even if a zip had them
-PRESERVE = ("config/overlay_settings.json", "assets/user_fonts", "debug_frames", "logs", ".venv", "samples", ".git",
+PRESERVE = ("config/overlay_settings.json", "config/opener_history.json", "config/rating_history.json", "assets/user_fonts", "debug_frames", "logs", ".venv", "samples", ".git",
             "runtime")   # the full package's bundled Python (tools/build_full.py)
 TIMEOUT_S = 10
 log = logging.getLogger("pptetrics.updater")
