@@ -68,6 +68,13 @@ MENU = {"tmpl": "rating_menu_label.png", "near": (1040, 268, 1145, 322), "box": 
 LEAGUES = ("puzzle", "tetris", "puyo", "skill")
 LEAGUE_TITLES = {league: f"rating_league_{league}.png" for league in LEAGUES}
 TITLE_NEAR = (20, 40, 340, 150)
+# A club room ("ルーム" top left, like the league menus' titles; also on
+# ルームをつくる / ルームセレクト): no league is being played, so the league
+# is forgotten — a club match's pre-match card shows the パズルリーグ rating
+# (2633 in debug_frames/burst_club), which must not go down as the league
+# whose menu was seen before (user: club matches shouldn't move the history).
+# 0.998 on the club room, 0.33 at most on burst_rating / burst_leagues.
+CLUB_TITLE = "rating_title_club.png"
 MATCH_MIN = 0.80
 
 
@@ -87,6 +94,7 @@ class RatingReader:
             img = read_image(TEMPLATES / name)
             if img is not None:
                 self._titles[league] = img
+        self._club = read_image(TEMPLATES / CLUB_TITLE)
         self._engine = None
         self._engine_tried = False
         self._last_t = 0.0
@@ -125,6 +133,18 @@ class RatingReader:
             if score >= best_score:
                 best, best_score = league, score
         return best
+
+    def in_club(self, frame):
+        """A club room is on screen (CLUB_TITLE)."""
+        if self._club is None:
+            return False
+        k = frame.shape[1] / BASE_W
+        tmpl = cv2.resize(self._club, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k != 1.0 else self._club
+        x1, y1, x2, y2 = _scale(TITLE_NEAR, k)
+        region = frame[max(0, y1):y2, max(0, x1):x2]
+        if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
+            return False
+        return cv2.minMaxLoc(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED))[1] >= MATCH_MIN
 
     def own_box(self, frame):
         """The box holding your rating on this frame, or None (another screen)."""
@@ -220,6 +240,11 @@ class RatingReader:
         if now - self._last_t < READ_EVERY_S:
             return None
         self._last_t = now
+        if self.in_club(frame):
+            if self.league is not None:
+                log.info("club room: the league is forgotten until a league menu shows again")
+            self.league, self._pending = None, None
+            return None
         found = self.find(frame)
         if found is not None and found[0] == "menu":
             # a league's menu: this league from now on — None for one whose

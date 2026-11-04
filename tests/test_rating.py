@@ -168,3 +168,22 @@ def test_a_big_jump_in_this_run_needs_many_reads_but_not_after_a_restart(monkeyp
     assert fresh.update(wait, now=10) is None and fresh.update(wait, now=11) == ("puzzle", 2733)
     monkeypatch.setattr(fresh, "read_number", lambda crop: 2760)   # +27 after a match: as usual
     assert fresh.update(wait, now=12) is None and fresh.update(wait, now=13) == ("puzzle", 2760)
+
+
+def test_a_club_room_forgets_the_league(monkeypatch):
+    """A club room's card shows the パズルリーグ rating; a club match's
+    pre-match card must not go down as the league whose menu was seen last
+    (user: club matches shouldn't move the history). Seeing the room forgets
+    the league until a league menu shows again."""
+    r = rating.RatingReader()
+    monkeypatch.setattr(r, "read_number", lambda crop: 2633)
+    menu, wait, club = frame("rating_menu.jpg"), frame("rating_wait_2p.jpg"), frame("rating_club_room.jpg")
+    assert r.in_club(club) and r.in_club(shrink_for_recognition(club)[0])
+    assert not any(r.in_club(frame(n)) for n in ("rating_menu.jpg", "rating_wait_2p.jpg", "rating_wait_1p.jpg"))
+    r.update(menu, now=10)
+    assert r.league == "puzzle"
+    r.update(club, now=11)
+    assert r.league is None
+    assert r.update(wait, now=12) is None and r.update(wait, now=13) is None   # not kept
+    r.update(menu, now=14)
+    assert r.league == "puzzle"                                                  # back in a league
