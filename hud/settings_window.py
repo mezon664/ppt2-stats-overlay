@@ -19,6 +19,7 @@ then the HUD and OBS follow through the server.
 """
 import json
 import math
+import time
 import re
 import shutil
 import sys
@@ -29,6 +30,7 @@ from config_store import (load_settings, save_settings, display_settings, preset
                           read_preset_file, part_value, DISPLAY_DEFAULTS, DISPLAY_RANGES, STAT_ITEMS, PARTS,
                           SUMMARY_ITEMS, OPENER_LANGUAGES)
 import opener_stats
+import rating
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -93,6 +95,28 @@ TEXT = {
     "tab.update": {"ja": "アップデート", "en": "Updates"},
     "tab.stats": {"ja": "試合の統計", "en": "Match stats"},
     "tab.home": {"ja": "ホーム", "en": "Home"},
+    "tab.rating": {"ja": "レートの推移", "en": "Rating"},
+    "page.rating": {"ja": "レートの推移", "en": "Rating history"},
+    "rt.league": {"ja": "リーグ", "en": "League"},
+    "rt.puzzle": {"ja": "パズルリーグ", "en": "Puzzle League"},
+    "rt.tetris": {"ja": "テトリスリーグ", "en": "Tetris League"},
+    "rt.puyo": {"ja": "ぷよぷよリーグ", "en": "Puyo Puyo League"},
+    "rt.skill": {"ja": "スキルバトル", "en": "Skill Battle"},
+    "rt.range": {"ja": "期間", "en": "Range"},
+    "rt.all": {"ja": "すべて", "en": "All"},
+    "rt.points": {"ja": "直近 {} 回", "en": "Last {}"},
+    "rt.now": {"ja": "今のレート", "en": "Now"},
+    "rt.change": {"ja": "この期間の変化", "en": "Change"},
+    "rt.best": {"ja": "最高", "en": "Best"},
+    "rt.worst": {"ja": "最低", "en": "Lowest"},
+    "rt.empty": {"ja": "まだ記録がありません。オンライン対戦の「まちうけ」画面やリーグのメニューでレートが映ると、自動で記録されます。",
+                 "en": "Nothing yet. Your rating is recorded by itself whenever the online waiting screen or the league menu shows it."},
+    "rt.unknown_league": {"ja": "このリーグの画面はまだ見分けられません（画面の録画があれば対応できます）。今はパズルリーグだけ記録されます。",
+                          "en": "This league's screens can't be told apart yet (a recording of them would let it). Only Puzzle League is recorded for now."},
+    "rt.note": {"ja": "レートは、対戦前の「まちうけ」画面とリーグのメニュー画面から読み取ります。変わったときだけ記録し、リーグごとに直近 1000 回まで残ります。",
+                "en": "The rating is read off the waiting screen before a match and the league menu. A new point is kept only when it changes; the last 1000 are kept per league."},
+    "rt.clear": {"ja": "このリーグの記録を消す", "en": "Clear this league's record"},
+    "rt.clear_confirm": {"ja": "{} のレートの記録をすべて消しますか？", "en": "Clear every rating kept for {}?"},
     "tab.items": {"ja": "表示する項目", "en": "What's shown"},
     "tab.other": {"ja": "その他（言語・更新）", "en": "Other (language, updates)"},
     "page.home": {"ja": "ホーム", "en": "Home"},
@@ -524,6 +548,92 @@ class OpenerPie(QtWidgets.QWidget):
             name=name, used=used, share=f"{used / self.total * 100:.0f}%", rate=f"{won / used * 100:.0f}%"), self)
 
 
+class RatingChart(QtWidgets.QWidget):
+    """The rating over time, one point per change, oldest left: a 2 px line,
+    a faint grid with the rating on the left, the newest point marked; on
+    hover, that point's rating and date."""
+
+    def __init__(self):
+        super().__init__()
+        self.setMinimumHeight(240)
+        self.setMouseTracking(True)
+        self.points = []
+
+    def set_points(self, points):
+        self.points = list(points)
+        self.update()
+
+    def _plot(self):
+        return QtCore.QRectF(52, 12, self.width() - 52 - 14, self.height() - 12 - 22)
+
+    def _scale(self):
+        values = [p["rating"] for p in self.points]
+        lo, hi = min(values), max(values)
+        pad = max(10, (hi - lo) * 0.12)
+        lo, hi = lo - pad, hi + pad
+        step = next(s for s in (5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000) if (hi - lo) / s <= 5)
+        return math.floor(lo / step) * step, math.ceil(hi / step) * step, step
+
+    def _xy(self, i, v, r, lo, hi):
+        n = len(self.points)
+        x = r.left() + (r.width() * i / (n - 1) if n > 1 else r.width() / 2)
+        y = r.bottom() - r.height() * (v - lo) / (hi - lo)
+        return QtCore.QPointF(x, y)
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        r = self._plot()
+        muted = QtGui.QColor("#4f5670")
+        if not self.points:
+            p.setPen(QtGui.QPen(QtGui.QColor("#e1e4ee"), 1, QtCore.Qt.PenStyle.DashLine))
+            p.drawRect(r)
+            return
+        lo, hi, step = self._scale()
+        f = p.font()
+        f.setPixelSize(11)
+        p.setFont(f)
+        v = lo
+        while v <= hi + 1e-9:   # the grid, recessive
+            y = r.bottom() - r.height() * (v - lo) / (hi - lo)
+            p.setPen(QtGui.QPen(QtGui.QColor("#eceef4"), 1))
+            p.drawLine(QtCore.QPointF(r.left(), y), QtCore.QPointF(r.right(), y))
+            p.setPen(muted)
+            p.drawText(QtCore.QRectF(0, y - 8, r.left() - 8, 16),
+                       QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter, str(int(v)))
+            v += step
+        pts = [self._xy(i, q["rating"], r, lo, hi) for i, q in enumerate(self.points)]
+        path = QtGui.QPainterPath(pts[0])
+        for q in pts[1:]:
+            path.lineTo(q)
+        pen = QtGui.QPen(QtGui.QColor(ui.ACCENT), 2)
+        pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.drawPath(path)
+        p.setBrush(QtGui.QColor(ui.ACCENT))   # the newest, ringed with the surface
+        p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 2))
+        p.drawEllipse(pts[-1], 5, 5)
+        # first and last date under the chart
+        p.setPen(muted)
+        when = lambda q: time.strftime("%m/%d %H:%M", time.localtime(q["t"]))
+        p.drawText(QtCore.QRectF(r.left(), r.bottom() + 4, 120, 16), QtCore.Qt.AlignmentFlag.AlignLeft,
+                   when(self.points[0]))
+        p.drawText(QtCore.QRectF(r.right() - 120, r.bottom() + 4, 120, 16), QtCore.Qt.AlignmentFlag.AlignRight,
+                   when(self.points[-1]))
+
+    def mouseMoveEvent(self, event):
+        if not self.points:
+            return
+        r = self._plot()
+        n = len(self.points)
+        i = 0 if n == 1 else round((event.position().x() - r.left()) / r.width() * (n - 1))
+        i = min(max(i, 0), n - 1)
+        q = self.points[i]
+        QtWidgets.QToolTip.showText(event.globalPosition().toPoint(),
+                                    f"{q['rating']}　{time.strftime('%Y/%m/%d %H:%M', time.localtime(q['t']))}", self)
+
+
 def _hbox(*widgets, stretch=True):
     holder = QtWidgets.QWidget()
     box = QtWidgets.QHBoxLayout(holder)
@@ -595,6 +705,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.tabs.addTab(self._build_look_page(), "", "look")
         self.tabs.addTab(self._build_place_page(drag_available), "", "place")
         self.tabs.addTab(self._build_stats_tab(), "", "stats")
+        self.tabs.addTab(self._build_rating_page(), "", "rating")
         self.tabs.addTab(self._build_obs_tab(), "", "obs")
         self.tabs.addTab(self._build_other_page(), "", "other")
         self._update_info = None
@@ -1178,6 +1289,125 @@ class SettingsWindow(QtWidgets.QWidget):
         card.add(self.obs_note)
         return self._page("page.obs", card)
 
+    # --- レートの推移: the online rating, per league (scripts/rating.py) ---
+    RATING_RANGES = (20, 50, 100, 200, 0)   # 0 = all
+
+    def _build_rating_page(self):
+        prefs = self._ui_preferences.get("rating", {}) if isinstance(self._ui_preferences, dict) else {}
+        prefs = prefs if isinstance(prefs, dict) else {}
+        self.rating_card = ui.Card()
+        self.rt_league = ui.Segmented()
+        for league in rating.LEAGUES:
+            self.rt_league.addItem("", league)
+        self.rt_league.setCurrentIndex(max(0, self.rt_league.findData(prefs.get("league", "puzzle"))))
+        self.rt_range = ui.Segmented()
+        for n in self.RATING_RANGES:
+            self.rt_range.addItem("", n)
+        self.rt_range.setCurrentIndex(max(0, self.rt_range.findData(prefs.get("range", 50))))
+        self.rt_league_label, self.rt_range_label = QtWidgets.QLabel(), QtWidgets.QLabel()
+        self.rating_card.add(ui.row(self.rt_league_label, _hbox(self.rt_league), 60))
+        self.rating_card.add(ui.row(self.rt_range_label, _hbox(self.rt_range), 60))
+        tiles = QtWidgets.QHBoxLayout()
+        self.rt_tiles = {}
+        for key in ("now", "change", "best", "worst"):
+            box = QtWidgets.QFrame()
+            box.setStyleSheet("QFrame { background:#f3f6fc; border-radius:8px; }")
+            v = QtWidgets.QVBoxLayout(box)
+            v.setContentsMargins(10, 6, 10, 8)
+            v.setSpacing(0)
+            name, value = QtWidgets.QLabel(), QtWidgets.QLabel()
+            name.setStyleSheet("color:#4f5670; font-size:11px; background:transparent;")
+            value.setStyleSheet("font-size:22px; font-weight:bold; background:transparent;")
+            v.addWidget(name)
+            v.addWidget(value)
+            tiles.addWidget(box)
+            self.rt_tiles[key] = (name, value)
+        self.rating_card.add(tiles)
+        self.rt_chart = RatingChart()
+        self.rating_card.add(self.rt_chart)
+        self.rt_status = ui.muted()
+        self.rating_card.add(self.rt_status)
+        self.rt_note = ui.muted()
+        self.rating_card.add(self.rt_note)
+        self.rt_clear = QtWidgets.QPushButton()
+        self.rt_clear.clicked.connect(self._clear_rating)
+        self.rating_card.add(_hbox(self.rt_clear))
+        self.rt_league.currentIndexChanged.connect(self._rating_options_changed)
+        self.rt_range.currentIndexChanged.connect(self._rating_options_changed)
+        # new points come from the recognition server: look again while this page is open
+        self._rating_timer = QtCore.QTimer(self)
+        self._rating_timer.setInterval(3000)
+        self._rating_timer.timeout.connect(self._rating_tick)
+        self._rating_timer.start()
+        return self._page("page.rating", self.rating_card)
+
+    def _retranslate_rating(self):
+        t = self.tr_
+        self.rt_league_label.setText(t("rt.league"))
+        self.rt_range_label.setText(t("rt.range"))
+        for i, league in enumerate(rating.LEAGUES):
+            self.rt_league.setItemText(i, t("rt." + league))
+        for i, n in enumerate(self.RATING_RANGES):
+            self.rt_range.setItemText(i, t("rt.all") if n == 0 else t("rt.points").format(n))
+        for key, (name, _) in self.rt_tiles.items():
+            name.setText(t("rt." + key))
+        self.rt_note.setText(t("rt.note"))
+        self.rt_clear.setText(t("rt.clear"))
+        self.refresh_rating()
+
+    def _rating_options_changed(self, *_):
+        settings = load_settings()
+        preferences = settings.get("ui", {})
+        preferences["rating"] = {"league": self.rt_league.currentData(), "range": self.rt_range.currentData()}
+        settings["ui"] = preferences
+        save_settings(settings)
+        self.refresh_rating()
+
+    def _rating_tick(self):
+        if self.isVisible() and self.tabs.widget(self.tabs.currentIndex()) is self._rating_page_widget():
+            self.refresh_rating()
+
+    def _rating_page_widget(self):
+        return self.tabs.widget(5)
+
+    def _clear_rating(self):
+        league = self.rt_league.currentData()
+        name = self.tr_("rt." + league)
+        answer = QtWidgets.QMessageBox.question(
+            self, self.tr_("tab.rating"), self.tr_("rt.clear_confirm").format(name),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+            keep = [p for p in rating.load() if p["league"] != league]
+            rating.clear()
+            for p in keep:
+                rating.add(p["league"], p["rating"], now=p["t"])
+            self.refresh_rating()
+
+    def refresh_rating(self):
+        t = self.tr_
+        league, n = self.rt_league.currentData(), self.rt_range.currentData()
+        points = rating.load(league=league)
+        shown = points[-n:] if n else points
+        values = [p["rating"] for p in shown]
+        fmt = lambda v: "--" if v is None else str(v)
+        self.rt_tiles["now"][1].setText(fmt(values[-1] if values else None))
+        if len(values) >= 2:
+            d = values[-1] - values[0]
+            self.rt_tiles["change"][1].setText(f"+{d}" if d > 0 else str(d))
+            self.rt_tiles["change"][1].setStyleSheet(
+                "font-size:22px; font-weight:bold; background:transparent; color:"
+                + ("#15803d;" if d > 0 else "#b91c1c;" if d < 0 else "#141a2e;"))
+        else:
+            self.rt_tiles["change"][1].setText("--")
+            self.rt_tiles["change"][1].setStyleSheet("font-size:22px; font-weight:bold; background:transparent;")
+        self.rt_tiles["best"][1].setText(fmt(max(values) if values else None))
+        self.rt_tiles["worst"][1].setText(fmt(min(values) if values else None))
+        self.rt_chart.set_points(shown)
+        known = rating.has_league_template(league)
+        self.rt_status.setText("" if values else (t("rt.empty") if known else t("rt.unknown_league")))
+        self.rt_status.setVisible(not values)
+
     # --- 開幕の統計: opener use (pie) and win rate over the last N matches ---
     def _build_stats_tab(self):
         self.stats_card = ui.Card()
@@ -1356,8 +1586,8 @@ class SettingsWindow(QtWidgets.QWidget):
         t = self.tr_
         self.setWindowTitle(t("title"))
         self._paint_enabled()
-        for i, key in enumerate(("tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.obs",
-                                 "tab.other")):
+        for i, key in enumerate(("tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.rating",
+                                 "tab.obs", "tab.other")):
             self.tabs.setTabText(i, t(key))
         for key, lab in self._page_titles.items():
             lab.setText(t(key))
@@ -1463,6 +1693,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.obs_copy.setText(t("obs_copy"))
         self.obs_open.setText(t("obs_open"))
         self.obs_note.setText(t("obs_note"))
+        # レートの推移
+        self._retranslate_rating()
         # その他
         self.language_card.setTitle(t("card.language"))
         self.window_card.setTitle(t("card.window"))

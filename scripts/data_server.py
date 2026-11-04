@@ -114,6 +114,33 @@ def idle_period(reason, since, now, period):
     return period
 
 
+_RATING = {"reader": None, "failed": False}
+
+
+def read_rating(frame):
+    """Off the match screen, your online rating (パズルリーグ etc.) is read
+    off the まちうけ / league menu screens and kept per league (scripts/rating.py,
+    user: see how the rating moves). Never stops recognition."""
+    if _RATING["failed"]:
+        return
+    gate = getattr(PIPELINE, "gameplay_gate", None)
+    if getattr(gate, "last_reason", None) != "no_match_ui":
+        return
+    try:
+        if _RATING["reader"] is None:
+            import rating
+            _RATING["reader"] = rating.RatingReader()
+        import rating
+        read = _RATING["reader"].update(frame)
+        if read is not None:
+            league, value = read
+            if rating.add(league, value):
+                log.info("rating read: %s %d", league, value)
+    except Exception:
+        log.exception("reading the rating failed; not trying again this run")
+        _RATING["failed"] = True
+
+
 def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     """Live game-window capture. See live_capture.py for the window-finding /
     minimized-window handling; kept separate so this module stays testable without
@@ -139,6 +166,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
             if ok:
                 PIPELINE.rebuild_for_profile(profile)
                 PIPELINE.process_frame(frame, time.monotonic() - t0)
+                read_rating(frame)
                 CAPTURE_STATUS = {
                     "ok": True, "message": "capturing",
                     "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),

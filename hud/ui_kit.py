@@ -241,6 +241,7 @@ class Card(QtWidgets.QFrame):
         titles.setSpacing(2)
         self.title = QtWidgets.QLabel()
         self.title.setObjectName("cardTitle")
+        self.title.setVisible(False)   # until it gets a title
         self.desc = muted()
         self.desc.setVisible(False)
         titles.addWidget(self.title)
@@ -262,6 +263,7 @@ class Card(QtWidgets.QFrame):
 
     def setTitle(self, text):      # (named as a QGroupBox's, which these cards replace)
         self.title.setText(text)
+        self.title.setVisible(bool(text))
 
     def setDescription(self, text):
         self.desc.setText(text)

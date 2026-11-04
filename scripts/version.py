@@ -5,4 +5,4 @@ VERSION = "0.2.6"
 # The bundled Python + libraries of the full package (tools/build_full.py).
 # Raise it when requirements.txt changes: copies whose runtime/RUNTIME_VERSION
 # is older are told to download the full package again instead of updating.
-RUNTIME = 1
+RUNTIME = 2   # 2: Windows text recognition (winrt) for the rating
