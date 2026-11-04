@@ -620,7 +620,10 @@ class SettingsWindow(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.tabs)
-        self.resize(900, 760)
+        # taller than wide (user's request), but never past the screen
+        screen = QtGui.QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry().height() if screen is not None else 1000
+        self.resize(880, max(600, min(980, int(avail * 0.9))))
         self.retranslate()
         self._loading = False
         # The mouse wheel only scrolls: over a dropdown, number box or slider it
