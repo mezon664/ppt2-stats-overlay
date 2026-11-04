@@ -63,6 +63,7 @@ TARGET_KEYS = {
     "clock": ("clock_offset_x", "clock_offset_y"),
     "event": ("event_offset_x", "event_offset_y"),
     "summary": ("summary_offset_x", "summary_offset_y"),
+    "session": ("session_offset_x", "session_offset_y"),
     "stats_left": ("stats_left_offset_x", "stats_left_offset_y"),
     "stats_right": ("stats_right_offset_x", "stats_right_offset_y"),
     "opener": ("opener_offset_x", "opener_offset_y"),
@@ -70,7 +71,7 @@ TARGET_KEYS = {
     "opener_right": ("opener_right_offset_x", "opener_right_offset_y"),
 }
 TARGET_ORDER = ("stats", "stats_left", "stats_right", "opener", "opener_left", "opener_right",
-                "clock", "event", "summary")
+                "clock", "event", "summary", "session")
 # simplest first (user's request)
 STYLE_ORDER = ("text", "minimal", "simple", "band", "frame", "slash", "pop",
                "gauge", "trend", "tower", "meter", "hex", "versus")
@@ -360,6 +361,10 @@ TEXT = {
     "target.clock": {"ja": "試合時間", "en": "Match time"},
     "target.event": {"ja": "イベント履歴", "en": "Event history"},
     "target.summary": {"ja": "試合結果", "en": "Summary"},
+    "target.session": {"ja": "今日の成績", "en": "Today's results"},
+    "card.session": {"ja": "今日の成績", "en": "Today's results"},
+    "card.session_desc": {"ja": "ぷよテト2を起動してからの勝敗・連勝数・レートの増減・平均 APM / PPS / APP を、盤面のあいだの上に出します（ゲームを閉じるとリセット）",
+                          "en": "Wins and losses, win streak, rating change and average APM / PPS / APP since the game was started, top center (reset when the game is closed)"},
     "target.opener_left": {"ja": "1P のテンプレ名", "en": "1P opener"},
     "target.opener_right": {"ja": "2P のテンプレ名", "en": "2P opener"},
     "up": {"ja": "上へ", "en": "Up"}, "down": {"ja": "下へ", "en": "Down"},
@@ -926,6 +931,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.event_log_count = self._spin(lo, hi, "")
         self.events_card.add(self._row("event_log_count", _hbox(self.event_log_count)))
 
+        self.show_session = ui.Switch()
+        self.session_card = ui.Card(self.show_session)
+
         self.show_summary = ui.Switch()
         self.summary_card = ui.Card(self.show_summary)
         # which rows the summary shows (fixed order; tick to show)
@@ -964,12 +972,12 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_language.currentIndexChanged.connect(self._changed)
         self.opener_card.add(self._row("opener_language", _hbox(self.opener_language)))
 
-        for cb in (self.show_clock, self.show_event_log, self.show_summary, self.show_opener):
+        for cb in (self.show_clock, self.show_event_log, self.show_summary, self.show_opener, self.show_session):
             cb.toggled.connect(self._changed)
         self.event_log_count.valueChanged.connect(self._changed)
         self.opener_display.currentIndexChanged.connect(self._changed)
-        return self._page("page.items", self.players_card, self.items_box, self.clock_card, self.events_card,
-                          self.summary_card, self.opener_card)
+        return self._page("page.items", self.players_card, self.items_box, self.clock_card, self.session_card,
+                          self.events_card, self.summary_card, self.opener_card)
 
     def _move_item(self, step):
         row = self.items.currentRow()
@@ -1662,6 +1670,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.item_up.setText(t("move_up"))
         self.item_down.setText(t("move_down"))
         self.labels_title.setText(t("labels"))
+        self.session_card.setTitle(t("card.session"))
+        self.session_card.setDescription(t("card.session_desc"))
         self.clock_card.setTitle(t("card.clock"))
         self.clock_card.setDescription(t("card.clock_desc"))
         self.events_card.setTitle(t("card.events"))
@@ -2142,6 +2152,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_seconds.setValue(d["opener_seconds"])
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
+        self.show_session.setChecked(d["show_session"])
         for i in range(self.summary_items.count()):
             it = self.summary_items.item(i)
             it.setCheckState(QtCore.Qt.CheckState.Checked if it.data(QtCore.Qt.ItemDataRole.UserRole)
@@ -2186,6 +2197,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "opener_language": self.opener_language.currentData(),
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
+            "show_session": self.show_session.isChecked(),
             "summary_items": [self.summary_items.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
                               for i in range(self.summary_items.count())
                               if self.summary_items.item(i).checkState() == QtCore.Qt.CheckState.Checked],
@@ -2285,6 +2297,7 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.players_card, ("players", "always_show")),
             (self.items_box, ("stat_items", "labels")),
             (self.clock_card, ("show_clock",)),
+            (self.session_card, ("show_session",)),
             (self.events_card, ("show_event_log", "event_log_count")),
             (self.summary_card, ("show_summary", "summary_items")),
             (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),

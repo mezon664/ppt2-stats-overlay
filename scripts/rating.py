@@ -123,6 +123,8 @@ class RatingReader:
         self.league = None     # the league whose menu was last on screen
         self.last_value = {}   # league -> the last value kept (from the history too: not kept twice)
         self.session_value = {}   # league -> the last value read in this run (UNLIKELY_STEP)
+        self.you_side = None   # the side your "You" card was on, last time the まちうけ screen showed
+        self.you_seen_t = None
 
     # --- where's my rating on this screen? ---
     def _found(self, frame, key, spec, k):
@@ -153,6 +155,7 @@ class RatingReader:
         k = frame.shape[1] / BASE_W
         for side in ("left", "right"):
             if self._found(frame, side, YOU[side], k):
+                self.you_side, self.you_seen_t = side, time.monotonic()   # (data_server: 今日の成績)
                 return "wait", _scale(YOU[side]["box"], k)
         if self._found(frame, "menu", MENU, k):
             return "menu", _scale(MENU["box"], k)

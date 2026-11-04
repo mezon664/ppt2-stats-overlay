@@ -72,10 +72,11 @@ const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enable
   opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, text_outline_width: 10, bg_color: "#000000", text_color: "#ffffff",
   line_color: "#ffffff", font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0,
   offset_x: 0, offset_y: 0, clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
-  summary_offset_x: 0, summary_offset_y: 0, stats_left_offset_x: 0, stats_left_offset_y: 0,
+  summary_offset_x: 0, summary_offset_y: 0, session_offset_x: 0, session_offset_y: 0,
+  stats_left_offset_x: 0, stats_left_offset_y: 0,
   stats_right_offset_x: 0, stats_right_offset_y: 0, opener_offset_x: 0, opener_offset_y: 0,
   opener_left_offset_x: 0, opener_left_offset_y: 0, opener_right_offset_x: 0, opener_right_offset_y: 0,
-  show_on_hud: true, show_on_obs: true, show_summary: true, show_opener: true, opener_display: "board", background_opacity: 0.85,
+  show_on_hud: true, show_on_obs: true, show_summary: true, show_session: false, show_opener: true, opener_display: "board", background_opacity: 0.85,
   stat_items: ["apm", "pps", "app"], labels: {}, player_color_left: "#3b8eea", player_color_right: "#e5484d",
   parts: {}, show_clock: true, show_event_log: false, event_log_count: 3,
   summary_items: ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear"] };
@@ -672,7 +673,14 @@ function eventsPaint(ctx, e) {
 
 // --- ClockBlock ---
 const clock = newPart({ style: "band", clockText: "0:00", stateText: "", statusText: "" });
+// 今日の成績 (scripts/session_stats.py): the server's lines, drawn like the match time (hud SessionBlock)
+const session = newPart({ style: "band", kind: "session", rows: [] });
+const SESSION_SIZES = { title: [9, SEMI, 12], main: [15, BOLD, 18], sub: [10, SEMI, 13] };
+const SESSION_TOP_Y = 22;
 function clockLines(c) {
+  if (c.kind === "session")
+    return c.rows.map(([text, kind]) => { const [px, w, lh] = SESSION_SIZES[kind] || SESSION_SIZES.sub;
+                                          return [String(text), px, w, kind === "title" ? STATE_RGB : WHITE, lh]; });
   // no time against a Puyo player (hud/overlay.py puyo_in_match): it tells how far into margin time it is
   const lines = c.hideTime ? [] : [[c.clockText, 18, BOLD, WHITE, 20]];
   if (c.stateText) lines.push([c.stateText, 10, SEMI, STATE_RGB, 13]);
@@ -900,6 +908,7 @@ function layout() {
   look(versus, "stats");
   if (shown.length && d.style === "versus") versusConfigure(versus, shown, pu("stats"));
   look(clock, "clock"); clock.style = d.style; clock.u = pu("clock"); clockResize(clock);
+  look(session, "clock"); session.style = d.style; session.u = pu("clock"); clockResize(session);
   look(summary, "summary"); summary.openerLanguage = openerLanguage();
   summaryConfigure(summary, d.style, d.language, pu("summary"), d.summary_items);
   for (const b of Object.values(badges)) {
@@ -917,7 +926,7 @@ function awayFromMatch() {
 
 function place() {
   const s = scale, d = display, st = lastState;
-  const all = [stats.left, stats.right, events.left, events.right, versus, clock, summary, ...Object.values(badges)];
+  const all = [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)];
   if (awayFromMatch()) { all.forEach((p) => { p.visible = false; }); hideCats(); paint(); return; }
   const u = s * partValue("stats", "scale");   // the gaps next to the stat block go with its size
   const mode = d.stats_position === "right" ? "right" : "left";
@@ -946,6 +955,12 @@ function place() {
   }
   const hideTime = ["left", "right"].some((sd) => (st[sd] || {}).puyo);
   if (hideTime !== !!clock.hideTime) { clock.hideTime = hideTime; clockResize(clock); }
+  const lang = d.language === "en" ? "en" : "ja";
+  session.rows = (((st.session || {}).lines || {})[lang]) || [];
+  clockResize(session);
+  session.visible = !!d.show_session && session.rows.length > 0;
+  session.x = int((CLOCK_CENTER_X + (d.session_offset_x || 0)) * s - session.w / 2);
+  session.y = int((SESSION_TOP_Y + (d.session_offset_y || 0)) * s);
   clock.visible = !!d.show_clock && clockLines(clock).length > 0;
   const clockTop = CLOCK_BOTTOM_Y * s - clock.h;
   clock.x = int((CLOCK_CENTER_X + d.clock_offset_x) * s - clock.w / 2);
@@ -1017,7 +1032,8 @@ function paint() {
   // the summary last: over every other part where they overlap (as the HUD)
   const order = [[stats.left, statPaint], [stats.right, statPaint], [versus, versusPaint],
                  [badges.left, badgePaint], [badges.right, badgePaint], [badges.both, badgePaint],
-                 [events.left, eventsPaint], [events.right, eventsPaint], [clock, clockPaint], [summary, summaryPaint]];
+                 [events.left, eventsPaint], [events.right, eventsPaint], [clock, clockPaint], [session, clockPaint],
+                 [summary, summaryPaint]];
   for (const [part, fn] of order) {
     if (!part.visible || part.w <= 0 || part.h <= 0) continue;
     // Each part drawn at SUPERSAMPLE x the size on its own small canvas, then
@@ -1211,7 +1227,7 @@ function render(state) {
   summary.duration = state.match_elapsed_s || 0;
   summary.sides = { left: summarySide(state.left), right: summarySide(state.right) };
   // dim rather than hide when capture is down: the numbers are the last real measurement
-  for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, summary, ...Object.values(badges)]) p.dim = stale;
+  for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)]) p.dim = stale;
   layout();
 }
 

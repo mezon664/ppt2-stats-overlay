@@ -53,6 +53,8 @@ DISPLAY_DEFAULTS = {
     "event_offset_y": 0,
     "summary_offset_x": 0,       # move the end-of-match summary
     "summary_offset_y": 0,
+    "session_offset_x": 0,       # move 今日の成績
+    "session_offset_y": 0,
     # Each player's numbers on their own, on top of offset_x/y (which moves both)
     "stats_left_offset_x": 0,
     "stats_left_offset_y": 0,
@@ -104,6 +106,9 @@ DISPLAY_DEFAULTS = {
     "show_clock": True,          # match time, above the マッチポイント banner
     "show_event_log": False,     # recent clears / REN breaks above the stats
     "show_summary": True,        # both players' totals between the boards when a match ends
+    # 今日の成績 (user's request): your results since the game was started,
+    # top center (scripts/session_stats.py). Off until switched on.
+    "show_session": False,
     # which rows the summary shows (any of SUMMARY_ITEMS, always in that order)
     "summary_items": ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin",
                       "perfect_clear"],
@@ -135,6 +140,8 @@ DISPLAY_RANGES = {
     "event_offset_y": (-692, 692),
     "summary_offset_x": (-1232, 1232),
     "summary_offset_y": (-692, 692),
+    "session_offset_x": (-1232, 1232),
+    "session_offset_y": (-692, 692),
     "stats_left_offset_x": (-1232, 1232),
     "stats_left_offset_y": (-692, 692),
     "stats_right_offset_x": (-1232, 1232),

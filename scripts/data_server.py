@@ -119,6 +119,63 @@ def idle_period(reason, since, now, period):
 
 _RATING = {"reader": None, "failed": False}
 
+# 今日の成績 (scripts/session_stats.py): since the game process started, and
+# which side was you in the match under way
+SESSION = {"since": None, "pid": None, "match_you": None, "resets": None, "key": None, "out": None}
+# the "You" card on the まちうけ screen counts for a match starting this soon after
+YOU_SEEN_S = 90.0
+
+
+def game_started_at(cap):
+    """When the game's process started (a timestamp), or None (no game)."""
+    hwnd = getattr(cap, "hwnd", None)
+    try:
+        import win32gui
+        import win32process
+        import psutil
+        if not hwnd or not win32gui.IsWindow(hwnd):
+            return None
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if pid != SESSION["pid"]:
+            SESSION["pid"], SESSION["started"] = pid, psutil.Process(pid).create_time()
+        return SESSION["started"]
+    except Exception:
+        return None
+
+
+def follow_session(cap):
+    """The game's start time, and at each new match which side is you."""
+    SESSION["since"] = game_started_at(cap)
+    resets = getattr(PIPELINE, "match_reset_count", None)
+    if resets != SESSION["resets"]:
+        SESSION["resets"] = resets
+        reader = _RATING.get("reader")
+        seen = getattr(reader, "you_seen_t", None)
+        recent = seen is not None and time.monotonic() - seen <= YOU_SEEN_S
+        SESSION["match_you"] = getattr(reader, "you_side", None) if recent else None
+
+
+def session_state():
+    """state["session"]: the summary and its lines in both languages, or None.
+    Worked out again only when the game session or a kept file changes."""
+    import opener_stats
+    import rating
+    import session_stats
+
+    def mtime(p):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return None
+    key = (SESSION["since"], mtime(opener_stats.HISTORY_PATH), mtime(rating.HISTORY_PATH))
+    if key != SESSION["key"]:
+        SESSION["key"] = key
+        summary = session_stats.summarize(opener_stats.load(), rating.load(), SESSION["since"])
+        SESSION["out"] = None if summary is None else {
+            "summary": summary,
+            "lines": {lang: session_stats.lines(summary, lang) for lang in ("ja", "en")}}
+    return SESSION["out"]
+
 
 def read_rating(frame, cap=None):
     """Off the match screen, your online rating (パズルリーグ etc.) is read
@@ -173,6 +230,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
             if cap is None:
                 cap = make_capture()
             frame, ok, reason, profile = cap.grab()
+            follow_session(cap)   # (also when the game is gone: the session ends)
             if ok:
                 PIPELINE.rebuild_for_profile(profile)
                 PIPELINE.process_frame(frame, time.monotonic() - t0)
@@ -285,6 +343,12 @@ async def broadcaster():
         state["capture"] = CAPTURE_STATUS
         state["display"] = display
         state["page_rev"] = PAGE_REV
+        state["you_side"] = SESSION["match_you"] or "left"   # kept with the match (opener_stats.match_record)
+        try:
+            state["session"] = session_state()
+        except Exception:
+            log.exception("working out the session's results failed")
+            state["session"] = None
         payload = json.dumps(state, ensure_ascii=False)
         dead = set()
         # A copy: each send awaits, and a client disconnecting meanwhile is

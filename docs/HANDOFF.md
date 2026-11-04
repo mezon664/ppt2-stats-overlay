@@ -360,3 +360,10 @@
 - 見本を日英両方で持つ（`MENU["tmpl"]`、`LEAGUE_TITLES` は (日本語, 英語)、`CLUB_TITLES` に FREE PLAY / GAME LOBBY）。`_best` が複数の見本の最高点。
 - 英語版メニューの数字（太字・明るい箱）は Windows の文字認識が半分しか読めず、テトリスリーグの 2504 は一度も読めなかった → 普通の 3 サイズで一致しないときだけ、5x5 で白を広げて（字を細くして）読み直す（16/16）。日本語の録画の結果は変わらず。
 - 英語の録画: パズル 2633・ぷよぷよ 984・テトリス 2504・スキル 985 を記録、クラブ画面でリーグを忘れる。
+
+### 2026-11-05 今日の成績（v0.2.11 予定）
+- 範囲 = ゲームのプロセスが起動してから（`psutil` の create_time、ユーザーが選択）。アプリを再起動しても続く、ゲームを閉じるとリセット。手動リセットは未実装。
+- 中身（ユーザーが選択）: 勝敗と勝率・連勝数（今の連勝）・レートの増減（セッション中に最後に読んだリーグ、セッション前の最後の値から）・平均 APM / PPS / APP（自分の側）。
+- 自分の側: まちうけ画面の「You」の左右（`RatingReader.you_side`）を、90 秒以内に始まった試合に割り当てる（`data_server.follow_session`）→ state["you_side"] → HUD が試合の記録（opener_history.json）に "you" として保存。まちうけがない試合（オフライン）は 1P。
+- 集計はサーバー（`scripts/session_stats.py`、`data_server.session_state`、記録ファイルの更新時刻が変わったときだけ計算し直す）→ state["session"]（数値と日英の行）→ HUD `SessionBlock`（ClockBlock の描き方をそのまま使う、見た目の設定は「試合時間」と共通）/ OBS `session`（clockPaint）。HUD と OBS の差 0.1〜0.3%。
+- 設定 `display.show_session`（初期オフ）、`session_offset_x/y`、位置調整の対象「今日の成績」。上中央 y=22（`SESSION_TOP_Y`）、NEXT と HOLD の間に収まる。

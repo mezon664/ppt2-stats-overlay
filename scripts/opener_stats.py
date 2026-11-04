@@ -27,6 +27,8 @@ def match_record(state, now=None):
         return None
     out = {"t": round(now if now is not None else time.time()), "winner": winner,
            "match_start_t": state.get("match_start_t")}
+    if state.get("you_side") in SIDES:   # which side was you (今日の成績: scripts/session_stats.py)
+        out["you"] = state["you_side"]
     for side in SIDES:
         data = state.get(side) or {}
         if data.get("puyo"):

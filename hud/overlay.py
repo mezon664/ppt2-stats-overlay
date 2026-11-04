@@ -79,6 +79,7 @@ OFFSET_KEYS = {"stats": ("offset_x", "offset_y"),
                "clock": ("clock_offset_x", "clock_offset_y"),
                "event": ("event_offset_x", "event_offset_y"),
                "summary": ("summary_offset_x", "summary_offset_y"),
+               "session": ("session_offset_x", "session_offset_y"),
                "stats_left": ("stats_left_offset_x", "stats_left_offset_y"),        # each player's
                "stats_right": ("stats_right_offset_x", "stats_right_offset_y"),     # numbers on their own
                "opener": ("opener_offset_x", "opener_offset_y"),                    # opener names, both
@@ -86,12 +87,13 @@ OFFSET_KEYS = {"stats": ("offset_x", "offset_y"),
                "opener_right": ("opener_right_offset_x", "opener_right_offset_y")}
 # the part (display.parts, its size) each drag target belongs to
 TARGET_PART = {"stats": "stats", "stats_left": "stats", "stats_right": "stats", "clock": "clock",
-               "event": "events", "summary": "summary", "opener": "opener", "opener_left": "opener",
+               "event": "events", "summary": "summary", "session": "clock", "opener": "opener", "opener_left": "opener",
                "opener_right": "opener"}
 WHEEL_SCALE_STEP = 0.05   # one wheel notch over a part while positioning: its size by this
 # End-of-match summary: centered between the boards, top edge at this y.
 SUMMARY_TOP_Y = 120
 # Match time: centered above the マッチポイント banner (x 542-693, y 579-604).
+SESSION_TOP_Y = 22   # 今日の成績: centered between the boards, top edge here
 CLOCK_CENTER_X, CLOCK_BOTTOM_Y = 615.6, 576   # midway between the boards (white lines at 185.9 / 439.9 and 791.3 / 1045.4; was 617)
 
 
@@ -1268,6 +1270,35 @@ class ClockBlock(Band):
                       color, "center", outline, a)
 
 
+class SessionBlock(ClockBlock):
+    """今日の成績 (scripts/session_stats.py): the server's lines in a box
+    drawn like the match time's, in the chosen style."""
+    SIZES = {"title": (9, SEMI, 12), "main": (15, BOLD, 18), "sub": (10, SEMI, 13)}
+    SAMPLE = {"ja": [["今日の成績", "title"], ["12勝 8敗  60%", "main"], ["3連勝中", "sub"],
+                     ["レート +35（2633）", "sub"], ["APM 54.0  PPS 1.83  APP 0.55", "sub"]],
+              "en": [["Today", "title"], ["12W 8L  60%", "main"], ["3 wins in a row", "sub"],
+                     ["Rating +35 (2633)", "sub"], ["APM 54.0  PPS 1.83  APP 0.55", "sub"]]}
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.drag_target = "session"
+        self.rows = []
+
+    def set_rows(self, rows):
+        rows = [list(r) for r in rows or [] if isinstance(r, (list, tuple)) and len(r) == 2]
+        if rows != self.rows:
+            self.rows = rows
+            self._resize()
+            self.update()
+
+    def _lines(self):
+        out = []
+        for text, kind in self.rows:
+            px, weight, lh = self.SIZES.get(kind, self.SIZES["sub"])
+            out.append((str(text), px, weight, STATE_RGB if kind == "title" else WHITE, lh))
+        return out
+
+
 SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format; None = text)
     ("opener", "s_opener", None),
     ("apm", "s_apm", "{:.1f}"),
@@ -1962,6 +1993,7 @@ class HudWindow(QtWidgets.QWidget):
         self._cat_name = {"left": None, "right": None}
         self.events = {"left": EventBlock(self, "left"), "right": EventBlock(self, "right")}
         self.clock = ClockBlock(self)
+        self.session = SessionBlock(self)
         self.edit_hint = QtWidgets.QLabel(
             "位置調整中：黄色い枠をドラッグして動かせます（設定画面の「完了」で終了）", self)
         self.edit_hint.setStyleSheet(
@@ -2072,6 +2104,8 @@ class HudWindow(QtWidgets.QWidget):
             self.versus.configure(shown, pu("stats"))
         look(self.clock, "clock")
         self.clock.configure(d["style"], pu("clock"))
+        look(self.session, "clock")   # (drawn like the match time, its size and colors too)
+        self.session.configure(d["style"], pu("clock"))
         look(self.summary, "summary")
         self.summary.opener_language = opener_language(d)
         self.summary.configure(d["style"], d["language"], pu("summary"), d["summary_items"])
@@ -2216,7 +2250,7 @@ class HudWindow(QtWidgets.QWidget):
         the clock (bottom-anchored above the マッチポイント banner)."""
         s, d = self._scale, self.display
         away = self._away_from_match()
-        for w in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
+        for w in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.session, self.summary,
                   *self.badges.values(), *self.cats.values()):
             if away:
                 w.setVisible(False)
@@ -2256,6 +2290,16 @@ class HudWindow(QtWidgets.QWidget):
         # Against a Puyo player the match time is never shown: it tells how
         # far into margin time the match is, which helps one side (user's
         # request, for fairness). The state / capture lines still show.
+        # 今日の成績: the server's lines (a sample while positioning, to drag)
+        lang = d["language"] if d["language"] in ("ja", "en") else "ja"
+        rows = ((self._last_state.get("session") or {}).get("lines") or {}).get(lang) or []
+        self.session.set_rows(rows or (SessionBlock.SAMPLE[lang] if self.edit_mode else []))
+        show_session = d["show_session"] and bool(self.session.rows)
+        self.session.setVisible(show_session)
+        if show_session:
+            self.session.adjustSize()
+            self.session.move(int((CLOCK_CENTER_X + d["session_offset_x"]) * s - self.session.width() / 2),
+                              int((SESSION_TOP_Y + d["session_offset_y"]) * s))
         self.clock.set_hide_time(puyo_in_match(self._last_state) and not self.edit_mode)
         self.clock.setVisible(d["show_clock"] and bool(self.clock._lines()))
         self.clock.adjustSize()
@@ -2361,7 +2405,7 @@ class HudWindow(QtWidgets.QWidget):
         self.summary.update_match(state)
         # Dim rather than hide when capture is down: the numbers shown are the
         # last real measurement, not a fabricated live one.
-        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
+        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.session, self.summary,
                      *self.badges.values()):
             band.dim = stale
             band.update()
@@ -2523,7 +2567,7 @@ class HudWindow(QtWidgets.QWidget):
         self._drag = None
         for c in self.cats.values():
             c.set_editing(on)
-        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.summary,
+        for band in (*self.stats.values(), *self.events.values(), self.versus, self.clock, self.session, self.summary,
                      *self.badges.values()):
             band.editing = on
             band.setCursor(QtCore.Qt.CursorShape.SizeAllCursor if on else QtCore.Qt.CursorShape.ArrowCursor)
