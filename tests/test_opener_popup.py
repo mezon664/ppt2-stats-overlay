@@ -232,3 +232,51 @@ def test_cat_at_a_negative_age_starts_at_the_first_frame():
     w = overlay.CatPopup(None, "right")
     w.show_frame(cat, overlay.cat_pos(cat, -0.01, 4), "開幕TSD", 1.0)
     w.grab()   # no exception
+
+
+def test_both_cats_share_one_set_of_frames_and_let_go_of_it():
+    """The two cats share one set of scaled frames (1P's mirrored as it's
+    drawn), and the set is let go once another display is chosen: two
+    mirrored sets plus the read files took +380 MB on a 1756-wide window and
+    stayed taken (user: make the app lighter)."""
+    cat = overlay.load_cat()
+    index = (cat["still_start"] + cat["still_end"]) // 2
+    left, right = overlay.CatPopup(None, "left"), overlay.CatPopup(None, "right")
+    for c in (left, right):
+        c.show_frame(cat, (index, index, 0.0), "TSD", 0.5)
+    a, b = left._frame(index), right._frame(index)
+    assert a[0] is b[0]                                            # the same image
+    assert a[1] == round(cat["size"][0] * 0.5) - b[1] - b[0].width() or \
+        abs(a[1] - (cat["size"][0] * 0.5 - b[1] - b[0].width())) <= 1   # 1P's spot is mirrored
+    # 1P's cat is drawn mirrored: its pixels are 2P's, flipped
+    ia, ib = left.grab().toImage(), right.grab().toImage()
+    w = ia.width()
+    y = b[2] + b[0].height() // 2
+    row_a = [ia.pixelColor(x, y).alpha() for x in range(w)]
+    row_b = [ib.pixelColor(w - 1 - x, y).alpha() for x in range(w)]
+    assert sum(abs(p - q) > 40 for p, q in zip(row_a, row_b)) < w * 0.02
+    assert "img" not in cat["frames"][index]                       # the read file isn't kept
+    left.release()
+    assert overlay.CAT_FRAMES.frames == {}
+
+
+def test_choosing_another_display_lets_go_of_the_cat():
+    win = window("cat", 2.0)
+    win._prepare_cats()
+    APP.processEvents()
+    assert win._cat
+    win.apply_display(overlay.display_settings({"display": {"opener_display": "board"}}), local=True)
+    assert win._cat is None and overlay.CAT_FRAMES.frames == {}
+
+
+def test_an_unchanged_state_is_skipped():
+    """The server sends 10 states a second even when nothing changes: an
+    identical one isn't laid out and repainted again."""
+    win = window("board", 2.0)
+    calls = []
+    win._place = lambda: calls.append(1)
+    state = dict(win._last_raw_state)
+    win.on_state(state)
+    assert calls == []
+    win.on_state({**state, "match_elapsed_s": 11.0})
+    assert calls == [1]

@@ -5,398 +5,1025 @@
 <title>PPTetrics (OBS)</title>
 <style>
   /* Size this browser source to cover the game capture exactly (16:9).
-     Same layout, styles and settings as the desktop HUD (hud/overlay.py): the
-     server sends the "display" settings with every update, so changes made in
-     the HUD's settings window (or config/overlay_settings.json) apply here too.
-     --u = one reference px (1232-wide game) x display.scale, set by script
-     (not rem: a ~1px root font size would be raised by browser minimums). */
-  html, body {
-    margin: 0; padding: 0;
-    background: transparent;
-    font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
-    color: var(--fg);
-    overflow: hidden;
-  }
-  :root {
-    /* display.bg_color / text_color and the colors made from them (setColors(),
-       same as hud/overlay.py set_colors); these are the defaults */
-    --bg-rgb: 0,0,0; --fg: #fff; --soft-rgb: 226,226,232; --event-rgb: 230,231,236;
-    --pop-rgb: 31,40,76; --outline-rgb: 27,36,72; --to: #000;
-    --u: 1px; --band: rgba(var(--bg-rgb),0.85); --clear: rgba(var(--bg-rgb),0);
-    /* display.text_weight, set by script (weightStyle). The fonts stop at Bold,
-       so past that text is thickened with a stroke in its own color. */
-    --fw-bold: 700; --fw-semi: 700; --fw-stroke: 0.05;
-    --p-left: rgb(59,142,234); --p-right: rgb(229,72,77);
-    --t-left: rgb(140,200,255); --t-right: rgb(255,154,158);
-  }
-  * { -webkit-text-stroke: calc(var(--fw-stroke) * 1em) currentColor; }
-  /* display.text_outline: black outline around ALL text (0.10 x font size, as
-     the HUD). Black, since navy vanished on the band/clock/summary boxes;
-     !important so the "text" style's own navy outlines give way to it too. */
-  body.outlined * {
-    text-shadow: 0.1em 0 0 var(--to), -0.1em 0 0 var(--to), 0 0.1em 0 var(--to), 0 -0.1em 0 var(--to),
-      0.071em 0.071em 0 var(--to), -0.071em 0.071em 0 var(--to), 0.071em -0.071em 0 var(--to), -0.071em -0.071em 0 var(--to) !important;
-  }
-  .abs { position: absolute; }
-  /* each part takes its own text color (display.parts), not the page's */
-  .stat, .events, .clockbox, .summary, .ob, .versus { color: var(--fg); }
-  .num { font-variant-numeric: tabular-nums; }
-  .state:empty, .status:empty, .hidden { display: none !important; }
-
-  /* --- per-player stat blocks; .hug-r = placed left of the board, so the
-     content hugs the block's right edge (the board side) --- */
-  .stat { box-sizing: border-box; }
-  .stat .row { display: flex; align-items: baseline; gap: calc(4 * var(--u)); }
-  .stat.hug-r .row { justify-content: flex-end; }
-  .lab { font-weight: var(--fw-bold); }
-  /* Room for the widest value (APM 888.8, PPS/APP 8.88) so labels don't shift
-     as numbers change — same idea as hud/overlay.py VALUE_TEMPLATES. */
-  .stat:not(.st-gauge) .val { display: inline-block; }
-  /* One value width for every row (the widest shown: APM's when it's on) and
-     labels sized to the widest label by alignStatColumns(), so APM / PPS / APP
-     line up as a table — labels start in one column, values end in one. */
-  .stat:not(.st-gauge) .val { min-width: var(--slot, 4ch); text-align: right; }
-  .stat:not(.st-gauge) .lab { display: inline-block; text-align: left; }
-
-  .st-band { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); }
-  .st-band .row { height: calc(21 * var(--u)); }
-  .st-band .lab { font-size: calc(12 * var(--u)); }
-  .st-band .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
-  .st-band.hug-r, .st-gauge.hug-r { background: linear-gradient(to right, var(--clear) 0%, var(--band) 55%, var(--band) 100%); }
-  .st-band.hug-l, .st-gauge.hug-l { background: linear-gradient(to right, var(--band) 0%, var(--band) 45%, var(--clear) 100%); }
-
-  .st-pop { min-width: calc(104 * var(--u)); padding: calc(1 * var(--u)) 0; }
-  .st-pop .row { height: calc(26 * var(--u)); align-items: center; }
-  .st-pop .pill {
-    display: inline-flex; align-items: baseline; gap: calc(5 * var(--u));
-    height: calc(22 * var(--u)); line-height: calc(22 * var(--u)); box-sizing: border-box;
-    padding: 0 calc(11 * var(--u)); border-radius: 999px;
-    border: calc(2.5 * var(--u)) solid #fff; margin: 0 calc(2 * var(--u));
-  }
-  .st-pop.p-left .pill { background: var(--p-left); }
-  .st-pop.p-right .pill { background: var(--p-right); }
-  .st-pop .lab { font-size: calc(11 * var(--u)); color: rgb(225,236,255); }
-  .st-pop .val { font-size: calc(16 * var(--u)); font-weight: var(--fw-bold); }
-
-  .st-gauge { min-width: calc(104 * var(--u)); padding: calc(3 * var(--u)) calc(6 * var(--u)); }
-  .st-gauge .row { height: calc(27 * var(--u)); flex-wrap: wrap; justify-content: space-between !important; align-content: flex-start; }
-  .st-gauge .lab { font-size: calc(11 * var(--u)); color: rgb(var(--soft-rgb)); }
-  /* label + value in the 86 nearest the board (about where the band style's
-     text starts), the bar keeps the full 104 — hud/overlay.py GAUGE_TEXT_W */
-  .st-gauge.hug-r .lab { margin-left: calc(18 * var(--u)); }
-  .st-gauge.hug-l .val { margin-right: calc(18 * var(--u)); }
-  .st-gauge .val { font-size: calc(15 * var(--u)); font-weight: var(--fw-semi); }
-  .st-gauge .bar { flex-basis: 100%; height: calc(4.5 * var(--u)); border-radius: 999px;
-    background: rgba(255,255,255,0.24); display: flex; overflow: hidden; margin-top: calc(1 * var(--u)); }
-  .st-gauge.hug-r .bar { justify-content: flex-end; }   /* grows from the board side */
-  .st-gauge .bar i { display: block; height: 100%; border-radius: 999px; }
-  .st-gauge.p-left .bar i { background: var(--p-left); }
-  .st-gauge.p-right .bar i { background: var(--p-right); }
-
-  /* "simple": plain square boxes in one color */
-  .st-simple { min-width: calc(92 * var(--u)); padding: calc(3 * var(--u)) calc(5 * var(--u)); background: var(--band); }
-  .st-simple .row { height: calc(21 * var(--u)); }
-  .st-simple .lab { font-size: calc(12 * var(--u)); }
-  .st-simple .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
-  body.style-simple .events, body.style-simple .clockbox, body.style-simple .summary, body.style-simple .ob {
-    background: var(--band) !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
-
-  .st-text { min-width: calc(104 * var(--u)); padding: calc(1 * var(--u)) calc(5 * var(--u)); }
-  .st-text .row { height: calc(23 * var(--u)); }
-  .st-text .lab { font-size: calc(12 * var(--u)); }
-  .st-text .val { font-size: calc(20 * var(--u)); font-weight: var(--fw-semi); }
-  .st-text .lab, .st-text .val, .st-minimal .lab, .st-minimal .val {
-    text-shadow:
-      calc(-1.6 * var(--u)) calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)),
-      calc(-1.6 * var(--u)) calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)),
-      0 calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)),
-      calc(-1.6 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) 0 0 rgb(var(--outline-rgb));
-  }
-
-  /* --- opener (開幕テンプレ), display.opener_display: om-board (A, a few
-     seconds over the board), om-hold (B), om-namebar (C), om-top (D) --- */
-  /* opacity comes ~10 times a second with the server state; the transition
-     fills the steps in between so the fade is smooth */
-  .ob { transition: opacity 0.12s linear; }
-  .ob { box-sizing: border-box; white-space: nowrap; font-weight: var(--fw-bold); color: var(--fg);
-    background: rgba(var(--bg-rgb),max(0.78, var(--band-a))); border-radius: calc(6 * var(--u)); }
-  #ob-left { --acc: var(--p-left); --lab: var(--t-left); }
-  #ob-right { --acc: var(--p-right); --lab: var(--t-right); }
-  .ob .olab { color: var(--lab, rgb(var(--soft-rgb))); }
-  .ob:not(#ob-both) { box-shadow: inset 0 calc(-3 * var(--u)) 0 var(--acc); }
-  body.om-board .ob { padding: calc(4 * var(--u)) calc(22 * var(--u)) calc(8 * var(--u)); border-radius: calc(10 * var(--u)); text-align: center; }
-  body.om-board .olab { font-size: calc(13 * var(--u)); line-height: calc(22 * var(--u)); }
-  body.om-board .oname { font-size: calc(28 * var(--u)); line-height: calc(36 * var(--u)); }
-  body.om-hold .ob { padding: calc(3 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u)); }
-  body.om-hold .olab { font-size: calc(10 * var(--u)); line-height: calc(14 * var(--u)); }
-  body.om-hold .oname { font-size: calc(15 * var(--u)); line-height: calc(20 * var(--u)); }
-  body.om-namebar .ob { height: calc(20 * var(--u)); line-height: calc(17 * var(--u)); padding: 0 calc(10 * var(--u));
-    font-size: calc(12 * var(--u)); border-radius: 999px; box-shadow: none; border: calc(2 * var(--u)) solid var(--acc); }
-  #ob-both { padding: calc(4 * var(--u)) calc(14 * var(--u)) calc(8 * var(--u)); min-width: calc(200 * var(--u));
-    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) bottom / 100% calc(3 * var(--u)) no-repeat,
-                rgba(var(--bg-rgb),max(0.78, var(--band-a))); }
-  #ob-both .olab { text-align: center; font-size: calc(11 * var(--u)); line-height: calc(16 * var(--u)); }
-  #ob-both .orow { display: flex; align-items: baseline; justify-content: space-between; gap: calc(10 * var(--u)); font-size: calc(18 * var(--u)); }
-  #ob-both .ol { color: var(--t-left); } #ob-both .or { color: var(--t-right); }
-  #ob-both .ovs { font-size: calc(13 * var(--u)); color: rgb(var(--soft-rgb)); }
-  /* the opener names: thickened less than the rest (0.4 of it, as the HUD's OPENER_NAME_THICKEN) */
-  .ob .oname, #ob-both .ol, #ob-both .or { -webkit-text-stroke: calc(var(--fw-stroke) * 0.4 * 1em) currentColor; }
-  body.style-gauge .ob { border-radius: 0 !important; }
-  body.style-pop .ob:not(#ob-both) { background: var(--acc); box-shadow: none; border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(14 * var(--u)); }
-  body.style-pop .ob .olab { color: rgb(235,242,255); }
-  body.style-text .ob { background: none !important; box-shadow: none; border-color: transparent; }
-  body.style-text .ob div, body.style-text .ob span {
-    text-shadow: calc(-1.6 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.6 * var(--u)) 0 0 rgb(var(--outline-rgb)),
-      0 calc(-1.6 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.6 * var(--u)) 0 rgb(var(--outline-rgb)); }
-  .summary .sop { font-size: calc(12 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  /* --- versus: one block between the boards --- */
-  .versus { width: calc(150 * var(--u)); box-sizing: border-box; padding: calc(3 * var(--u)) calc(7 * var(--u));
-    background: var(--band); border-radius: calc(4 * var(--u)); }
-  .versus .vrow { height: calc(34 * var(--u)); position: relative; }
-  .versus .vlab { position: absolute; left: 0; right: 0; top: calc(1 * var(--u)); text-align: center;
-    font-size: calc(10 * var(--u)); font-weight: var(--fw-bold); color: rgb(var(--soft-rgb)); }
-  .versus .vals { display: flex; justify-content: space-between; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold);
-    line-height: calc(19 * var(--u)); }
-  .versus .l { color: var(--t-left); } .versus .r { color: var(--t-right); }
-  .versus .split { display: flex; height: calc(6 * var(--u)); border-radius: calc(3 * var(--u)); overflow: hidden;
-    background: rgba(255,255,255,0.24); margin-top: calc(1 * var(--u)); }
-  .versus .split .a { background: var(--p-left); } .versus .split .b { background: var(--p-right); }
-
-  /* --- events and clock: follow the chosen style (body.style-*) like the
-     stats do — same looks as the HUD's EventBlock / ClockBlock --- */
-  .events {
-    padding: calc(2 * var(--u)) calc(6 * var(--u)) calc(2 * var(--u)) calc(11 * var(--u));
-    font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: rgb(var(--event-rgb));
-    line-height: calc(14 * var(--u));
-    text-align: right; white-space: nowrap; box-sizing: border-box;
-    background: linear-gradient(to right, var(--clear) 0%, var(--band) 45%, var(--band) 100%);
-  }
-  body.pos-right .events {
-    padding: calc(2 * var(--u)) calc(11 * var(--u)) calc(2 * var(--u)) calc(6 * var(--u));
-    text-align: left;
-    background: linear-gradient(to right, var(--band) 0%, var(--band) 55%, var(--clear) 100%);
-  }
-  body.style-gauge .events.p-left { box-shadow: inset calc(-2 * var(--u)) 0 0 var(--p-left); }
-  body.style-gauge .events.p-right { box-shadow: inset calc(-2 * var(--u)) 0 0 var(--p-right); }
-  body.style-gauge.pos-right .events.p-left { box-shadow: inset calc(2 * var(--u)) 0 0 var(--p-left); }
-  body.style-gauge.pos-right .events.p-right { box-shadow: inset calc(2 * var(--u)) 0 0 var(--p-right); }
-  body.style-text .events { background: none; color: var(--fg); line-height: calc(15 * var(--u)); }
-  body.style-pop .events { background: none; display: flex; flex-direction: column; align-items: flex-end;
-    gap: calc(3 * var(--u)); padding: calc(2 * var(--u)); line-height: normal; }
-  body.style-pop.pos-right .events { align-items: flex-start; }
-  body.style-pop .events div { height: calc(16 * var(--u)); line-height: calc(13 * var(--u)); box-sizing: border-box;
-    padding: 0 calc(7 * var(--u)); border-radius: 999px; border: calc(1.5 * var(--u)) solid #fff; color: var(--fg); }
-  body.style-pop .events.p-left div { background: var(--p-left); }
-  body.style-pop .events.p-right div { background: var(--p-right); }
-
-  .clockbox {
-    padding: calc(2 * var(--u)) calc(8 * var(--u));
-    background: var(--band);
-    border-radius: calc(4 * var(--u));
-    text-align: center;
-  }
-  body.style-gauge .clockbox { border-radius: 0; padding-bottom: calc(5 * var(--u));
-    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) bottom / 100% calc(2.5 * var(--u)) no-repeat, var(--band); }
-  body.style-pop .clockbox { background: rgb(var(--pop-rgb)); border: calc(2.5 * var(--u)) solid #fff;
-    border-radius: calc(12 * var(--u)); padding: calc(2 * var(--u)) calc(12 * var(--u)); }
-  body.style-text .clockbox { background: none; padding: 0 calc(4 * var(--u)); }
-  .clock { font-size: calc(18 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
-  .state { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #fde68a; }
-  .status { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: #fca5a5; }
-  body.style-text .clockbox div, body.style-text .events, body.style-minimal .clockbox div, body.style-minimal .events {
-    text-shadow:
-      calc(-1.3 * var(--u)) calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)),
-      calc(-1.3 * var(--u)) calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)),
-      0 calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)),
-      calc(-1.3 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) 0 0 rgb(var(--outline-rgb));
-  }
-  /* --- end-of-match summary (same looks as the HUD's SummaryBlock) --- */
-  .summary { width: calc(212 * var(--u)); box-sizing: border-box; padding: calc(4 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
-    background: rgba(var(--bg-rgb),max(0.5, var(--band-a))); border-radius: calc(6 * var(--u)); }
-  .summary .stitle { text-align: center; font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); line-height: calc(28 * var(--u)); }
-  /* 1P | label | 2P, each centered in its column; the player columns are
-     centered at 20% / 80% of the box like hud/overlay.py SummaryBlock.COL_X
-     (60.8 = 2 x (0.2 x 212 - 12 padding)) */
-  .summary .srow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
-    align-items: baseline; height: calc(20 * var(--u)); }
-  .summary .slab { font-size: calc(10 * var(--u)); font-weight: var(--fw-semi); color: rgb(var(--soft-rgb));
-    text-align: center; white-space: nowrap; }
-  .summary .sl, .summary .sr { font-size: calc(15 * var(--u)); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums;
-    text-align: center; min-width: 0; }
-  .summary .sl { color: var(--t-left); } .summary .sr { color: var(--t-right); }
-  body.style-gauge .summary { border-radius: 0;
-    background: linear-gradient(to right, var(--p-left) 50%, var(--p-right) 50%) top / 100% calc(2.5 * var(--u)) no-repeat, rgba(var(--bg-rgb),max(0.5, var(--band-a))); }
-  body.style-pop .summary { background: rgb(var(--pop-rgb)); border: calc(2.5 * var(--u)) solid #fff; border-radius: calc(12 * var(--u)); }
-  body.style-text .summary { background: none; }
-  /* band / gauge: the clock is a plain square box (user's choice) */
-  body.style-band .clockbox, body.style-gauge .clockbox { border-radius: 0; }
-  body.style-band .clockbox, body.style-gauge .clockbox, body.style-simple .clockbox {
-    padding-left: calc(14 * var(--u)); padding-right: calc(14 * var(--u)); }   /* a little wider (user) */
-  body.style-text .summary div, body.style-text .summary span, body.style-minimal .summary div, body.style-minimal .summary span {
-    text-shadow: calc(-1.3 * var(--u)) 0 0 rgb(var(--outline-rgb)), calc(1.3 * var(--u)) 0 0 rgb(var(--outline-rgb)),
-      0 calc(-1.3 * var(--u)) 0 rgb(var(--outline-rgb)), 0 calc(1.3 * var(--u)) 0 rgb(var(--outline-rgb)); }
-
-
-  /* --- the designs added later (hud/overlay.py NEW_STYLES): frame, slash, hex,
-     meter, tower, minimal, trend. Same looks as the HUD. --- */
-  .stat.p-left, .events.p-left { --acc: var(--p-left); --tint: var(--t-left); }
-  .stat.p-right, .events.p-right { --acc: var(--p-right); --tint: var(--t-right); }
-  /* frame (カラー枠): dark box with a border in the player's color (the text color for shared parts) */
-  .st-frame { padding: calc(4 * var(--u)) calc(9 * var(--u)); }
-  .st-frame .row { height: calc(21 * var(--u)); }
-  .st-frame .lab { font-size: calc(12 * var(--u)); color: var(--tint); }
-  .st-frame .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
-  .st-frame, body.style-frame .events, body.style-frame .clockbox, body.style-frame .summary, body.style-frame .ob {
-    background: var(--band) !important; border: calc(2 * var(--u)) solid var(--acc, var(--fg)) !important;
-    border-radius: calc(5 * var(--u)) !important; box-shadow: none !important; }
-  body.style-frame .clockbox { padding: calc(2 * var(--u)) calc(14 * var(--u)); }
-  /* slash: each row a slanted box with a player-color edge, stepped like stairs */
-  .st-slash { padding: calc(2 * var(--u)) 0; }
-  .st-slash .row { height: calc(20 * var(--u)); margin: calc(2 * var(--u)) 0; align-items: center;
-    background: var(--band); border-left: calc(4 * var(--u)) solid var(--acc);
-    transform: skewX(-17deg); padding: 0 calc(10 * var(--u)) 0 calc(8 * var(--u)); width: max-content; }
-  .st-slash .row > * { transform: skewX(17deg); }
-  .st-slash.hug-r .row { margin-left: auto; }
-  .st-slash .lab { font-size: calc(11 * var(--u)); color: var(--tint); }
-  .st-slash .val { font-size: calc(15 * var(--u)); font-weight: var(--fw-semi); }
-  body.style-slash .events, body.style-slash .clockbox, body.style-slash .ob {
-    background: var(--band) !important; transform: skewX(-12deg); border-radius: 0 !important; box-shadow: none !important; }
-  body.style-slash .events, body.style-slash #ob-left, body.style-slash #ob-right { border-left: calc(4 * var(--u)) solid var(--acc) !important; }
-  body.style-slash .events > div, body.style-slash .clockbox > div, body.style-slash .ob > * { transform: skewX(12deg); }
-  body.style-slash .clockbox { padding-left: calc(18 * var(--u)); padding-right: calc(18 * var(--u)); }
-  /* the opener name box: longer, so the name keeps clear of the slanted ends (as the HUD) */
-  body.style-slash .ob { padding-left: calc(34 * var(--u)) !important; padding-right: calc(34 * var(--u)) !important; }
-  body.style-slash.om-namebar .ob { padding-left: calc(18 * var(--u)) !important; padding-right: calc(18 * var(--u)) !important; }
-  body.style-slash .summary { background: rgba(var(--bg-rgb),max(0.5, var(--band-a))); border-radius: 0; }
-  /* hex: each number in a hexagon with a player-color rim; a honeycomb two wide that grows downward */
-  .st-hex { --hw: calc(54 * var(--u)); padding: calc(1 * var(--u)); }
-  .st-hex .hxwrap { position: relative; }
-  .st-hex.hug-r .hxwrap { margin-left: auto; }
-  .st-hex .hx { position: absolute; width: var(--hw); height: calc(var(--hw) * 0.88);
-    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); background: var(--acc);
-    display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .st-hex .hx::before { content: ""; position: absolute; inset: calc(1.6 * var(--u));
-    clip-path: inherit; background: var(--band); }
-  .st-hex .hx > * { position: relative; }
-  .st-hex .lab { font-size: calc(9 * var(--u)); color: var(--tint); max-width: 72%; overflow: hidden; white-space: nowrap; }
-  .st-hex .val, .st-tower .val { min-width: 0; text-align: center; }
-  .st-hex .val { font-size: calc(14 * var(--u)); font-weight: var(--fw-semi); line-height: 1.1; }
-  /* meter: the first number as a speedometer arc, the rest under it (narrow, like the band) */
-  .st-meter { display: flex; flex-direction: column; align-items: stretch; padding: calc(5 * var(--u)) calc(6 * var(--u));
-    background: var(--band); border-radius: calc(6 * var(--u)); }
-  .st-meter .mbox { position: relative; width: calc(70 * var(--u)); height: calc(48 * var(--u)); flex: none; align-self: center; order: -1; }
-  .st-meter .mrows { margin-top: calc(4 * var(--u)); }
-  .st-meter .mrows .row { justify-content: space-between !important; }
-  .st-meter svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-  .st-meter .mval { position: absolute; left: 0; right: 0; top: calc(17 * var(--u)); text-align: center;
-    font-size: calc(16 * var(--u)); font-weight: var(--fw-semi); }
-  .st-meter .mlab { position: absolute; left: 0; right: 0; top: calc(36 * var(--u)); text-align: center;
-    font-size: calc(8 * var(--u)); font-weight: var(--fw-bold); color: var(--tint); }
-  .st-meter .mrows .row { height: calc(16 * var(--u)); }
-  .st-meter .lab { font-size: calc(10 * var(--u)); color: var(--tint); }
-  .st-meter .mrows .val { font-size: calc(13 * var(--u)); font-weight: var(--fw-semi); }
-  /* tower: a vertical bar per number, value on top */
-  /* kept compact (as the HUD): short thin bars, columns close together */
-  .st-tower { display: flex; gap: calc(2 * var(--u)); padding: calc(3 * var(--u)) calc(4 * var(--u)); background: var(--band); }
-  .st-tower .tw { min-width: calc(22 * var(--u)); display: flex; flex-direction: column; align-items: center; }
-  .st-tower .val { font-size: calc(11 * var(--u)); font-weight: var(--fw-semi); line-height: calc(13 * var(--u)); }
-  .st-tower .tb { width: calc(10 * var(--u)); height: calc(58 * var(--u)); margin: calc(2 * var(--u)) 0;
-    border-radius: calc(3 * var(--u)); background: rgba(255,255,255,0.18); display: flex; align-items: flex-end; overflow: hidden; }
-  .st-tower .tb i { display: block; width: 100%; border-radius: calc(3 * var(--u));
-    background: linear-gradient(var(--tint), var(--acc)); }
-  .st-tower .lab { font-size: calc(8 * var(--u)); color: var(--tint); line-height: calc(11 * var(--u)); white-space: nowrap; }
-  /* minimal: no box, a line under each number — the line is its background
-     (the background strength, in display.line_color: white to start) */
-  .st-minimal { padding: calc(2 * var(--u)) calc(3 * var(--u)); }
-  .st-minimal .row { height: calc(20 * var(--u)); margin-bottom: calc(2 * var(--u));
-    border-bottom: calc(1.5 * var(--u)) solid rgba(var(--line-rgb), var(--band-a)); }
-  .st-minimal .lab { font-size: calc(12 * var(--u)); }
-  .st-minimal .val { font-size: calc(17 * var(--u)); font-weight: var(--fw-semi); }
-  body.style-minimal .events, body.style-minimal .clockbox, body.style-minimal .ob { background: none !important; box-shadow: none !important; border-color: transparent !important; }
-  body.style-minimal .summary { background: none; }
-  body.style-minimal .summary .stitle { border-bottom: calc(1.5 * var(--u)) solid rgba(var(--line-rgb), max(0.5, var(--band-a))); margin: 0 15%; }
-  /* trend: each number with a small line chart of its last minute */
-  .st-trend { padding: calc(4 * var(--u)) calc(6 * var(--u)); background: var(--band); border-radius: calc(6 * var(--u)); }
-  .st-trend .row { height: calc(20 * var(--u)); align-items: center; gap: calc(4 * var(--u)); }
-  .st-trend .lab { font-size: calc(11 * var(--u)); color: rgb(var(--soft-rgb)); }
-  .st-trend .val { font-size: calc(14 * var(--u)); font-weight: var(--fw-semi); }
-  .st-trend svg { width: calc(32 * var(--u)); height: calc(13 * var(--u)); flex: none; overflow: visible; }
-  /* the shared parts in hex / tower: plain square boxes; in meter / trend: rounded ones */
-  body.style-hex .events, body.style-hex .clockbox, body.style-hex .summary, body.style-hex .ob,
-  body.style-tower .events, body.style-tower .clockbox, body.style-tower .summary, body.style-tower .ob {
-    background: var(--band) !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
-  body.style-meter .events, body.style-trend .events { background: var(--band); border-radius: calc(6 * var(--u)); }
-  body.style-meter .clockbox, body.style-trend .clockbox { border-radius: calc(6 * var(--u)); padding-left: calc(14 * var(--u)); padding-right: calc(14 * var(--u)); }
-
-  /* Capture down: dim instead of hiding — the numbers are the last real
-     measurement, never fabricated, but not live either. */
-  body.stale .abs { opacity: 0.4; }
-  /* off the match screen (home, menus, character select): nothing shown, unless display.always_show */
-  body.away .abs { visibility: hidden !important; }
+     Everything is drawn on one canvas by the same steps as the desktop HUD
+     (hud/overlay.py: each part's paintEvent and HudWindow._place), so the two
+     look the same (user's request). The server sends the "display" settings
+     with every update, so changes made in the settings window apply here too. */
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  canvas { position: absolute; left: 0; top: 0; }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
-  <div class="abs clockbox" id="clockbox">
-    <div class="clock" id="clock">0:00</div>
-    <div class="state" id="state"></div>
-    <div class="status" id="status">接続中...</div>
-  </div>
-  <div class="abs events p-left hidden" id="ev-left"></div>
-  <div class="abs events p-right hidden" id="ev-right"></div>
-  <div class="abs stat" id="stat-left"></div>
-  <div class="abs stat" id="stat-right"></div>
-  <div class="abs versus hidden" id="versus"></div>
-  <div class="abs summary hidden" id="summary"></div>
-  <div class="abs ob hidden" id="ob-left"></div>
-  <div class="abs ob hidden" id="ob-right"></div>
-  <div class="abs ob hidden" id="ob-both"></div>
+  <canvas id="hud"></canvas>
   <!-- the 「猫」 opener display: a cat over each player's board holding up the name -->
-  <canvas class="abs cat hidden" id="cat-left"></canvas>
-  <canvas class="abs cat hidden" id="cat-right"></canvas>
+  <canvas class="cat hidden" id="cat-left"></canvas>
+  <canvas class="cat hidden" id="cat-right"></canvas>
 <script src="../assets/cat/cat.js"></script>
 
 <script>
-// Layout in reference px (1232x692 game client) — same numbers as hud/overlay.py.
+"use strict";
+// ======================================================================
+// The same numbers and steps as hud/overlay.py — keep the two in sync.
+// Sizes are reference px (1232x692 game client) x u.
+// ======================================================================
 const REF_W = 1232;
-const STAT_ANCHOR_X = { left: { left: 184, right: 789.2 }, right: { left: 448, right: 1052 } };   // as hud/overlay.py
+const STAT_ANCHOR_X = { left: { left: 184, right: 789.2 }, right: { left: 448, right: 1052 } };
+const VS_PUYO_SHIFT_X = { left: -12, right: 0 };
 const STAT_BOTTOM_Y = 562, EVENT_GAP = 2, VERSUS_GAP = 4;
-const CLOCK_CENTER_X = 615.6, CLOCK_BOTTOM_Y = 576;   // midway between the boards (as hud/overlay.py)
 const SUMMARY_TOP_Y = 120;
-// opener displays (same numbers as hud/overlay.py)
-// Opener name: up for POPUP_S seconds in every position, eased in/out (same as hud/overlay.py popup_alpha)
-const POPUP_S = 4.0, POPUP_IN_S = 0.25, POPUP_FADE_S = 1.2;
-const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
-// seconds: display.opener_seconds (how long the name stays up; 0 = until the match ends)
-function popupAlpha(sideState, frozen, seconds = POPUP_S) {
-  const age = (sideState || {}).opener_age_s;
-  if (age == null || frozen) return 0;
-  if (!(seconds > 0)) return smooth(age / POPUP_IN_S);
-  if (age >= seconds) return 0;
-  return Math.min(smooth(age / POPUP_IN_S), smooth((seconds - age) / Math.min(POPUP_FADE_S, seconds / 2)));
-}
+const CLOCK_CENTER_X = 615.6, CLOCK_BOTTOM_Y = 576;
 const BOARD_CENTER_X = { left: 313, right: 918 }, OPENER_BOARD_TOP_Y = 150;
 const HOLD_RIGHT_X = { left: 191, right: 797 }, OPENER_HOLD_TOP_Y = 172;
 const NAMEBAR_RIGHT_X = 466, NAMEBAR_LEFT_X = 762, NAMEBAR_TOP_Y = 608;
 const OPENER_TOP_CENTER_X = 615.6, OPENER_TOP_Y = 14;
-const OPENER_DISPLAYS = ["board", "hold", "namebar", "top", "cat"];
-// --- the 「猫」 opener display (same as hud/overlay.py CatPopup / cat_frame):
-// 1P's cat mirrored, in from the left edge; 2P's in from the right
-const CAT_BOTTOM_Y = 632, CAT_SCALE = 0.625, CAT_MIN_STILL_S = 0.5;   // the clip is 1280 wide, shown 800 wide (as the HUD)
-const CAT_CENTER_X = { left: 320, right: 912 };   // as hud/overlay.py: the clip's middle over each board
+const POPUP_S = 4.0, POPUP_IN_S = 0.25, POPUP_FADE_S = 1.2;
+const GAUGE_MAX = { apm: 120, pps: 4, app: 1, attack: 100, pieces: 300, ren: 12, b2b: 10 };
+const NEW_STYLES = ["frame", "slash", "hex", "meter", "tower", "minimal", "trend"];
+const FRAMES = { frame: "frame", slash: "slash", hex: "square", tower: "square", meter: "rounded", trend: "rounded", minimal: "none" };
+const NEW_STYLE_GAP = 6;
+const TREND_SAMPLES = 60;
+const TEXT_OUTLINE_RATIO = 0.10, OPENER_NAME_THICKEN = 0.4;
+const STATE_RGB = [253, 230, 138], STATUS_RGB = [252, 165, 165];
+const STAT_KEYS = ["apm", "pps", "app", "attack", "pieces", "ren", "b2b"];
+const VALUE_TEMPLATES = { apm: "DDD.D", pps: "D.DD", app: "D.DD", attack: "DDD", pieces: "DDDD", ren: "DD", b2b: "xDD" };
+const DEFAULT_LABELS = { apm: "APM", pps: "PPS", app: "APP", attack: "ATK", pieces: "PIECES", ren: "REN", b2b: "B2B" };
+const DEFAULT_LABELS_EN = { ...DEFAULT_LABELS, ren: "COMBO" };   // the English game says "Combo" for REN
+const UI_TEXT = {
+  ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", capture_down: "認識不可",
+        summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP",
+        s_lines: "送った段数", s_pieces: "置いたミノ", s_max_ren: "最大REN",
+        s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
+        s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
+        connecting: "接続中...", disconnected: "切断されました。再接続中..." },
+  en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", capture_down: "Can't read the game",
+        summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP",
+        s_lines: "Lines sent", s_pieces: "Pieces", s_max_ren: "Max combo",
+        s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
+        s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
+        connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
+};
+const SUMMARY_ROWS = [   // [key, label, decimals; null = text] (hud/overlay.py SUMMARY_ROWS)
+  ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2],
+  ["lines_sent", "s_lines", 0], ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
+  ["tspin", "s_tspin", 0], ["tspin_single", "s_tss", 0], ["tspin_double", "s_tsd", 0], ["tspin_triple", "s_tst", 0],
+  ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];
+const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enabled: true, opener_language: "auto",
+  opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, bg_color: "#000000", text_color: "#ffffff",
+  line_color: "#ffffff", font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0,
+  offset_x: 0, offset_y: 0, clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
+  summary_offset_x: 0, summary_offset_y: 0, stats_left_offset_x: 0, stats_left_offset_y: 0,
+  stats_right_offset_x: 0, stats_right_offset_y: 0, opener_offset_x: 0, opener_offset_y: 0,
+  opener_left_offset_x: 0, opener_left_offset_y: 0, opener_right_offset_x: 0, opener_right_offset_y: 0,
+  show_summary: true, show_opener: true, opener_display: "board", background_opacity: 0.85,
+  stat_items: ["apm", "pps", "app"], labels: {}, player_color_left: "#3b8eea", player_color_right: "#e5484d",
+  parts: {}, show_clock: true, show_event_log: false, event_log_count: 3,
+  summary_items: ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear"] };
+
+// --- small helpers ---
+const int = Math.trunc;                        // Python int()
+function pyRound(x) {                          // Python round(): halves to even
+  const f = Math.floor(x), d = x - f;
+  return d > 0.5 ? f + 1 : d < 0.5 ? f : (f % 2 === 0 ? f : f + 1);
+}
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const smooth = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
+const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ""); const v = m ? m[1] : "ffffff";
+  return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
+const mix = (a, b, t) => a.map((x, i) => pyRound(x + (b[i] - x) * t));
+const rgba = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const luminance = (c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+const $ = (id) => document.getElementById(id);
+
+// --- colors (hud/overlay.py set_colors / set_player_colors / use_colors) ---
+let BAND_RGB = [0, 0, 0], WHITE = [255, 255, 255], LINE_RGB = [255, 255, 255], SOFT, EVENT_RGB,
+    POP_CLOCK_RGB, OUTLINE_RGB, TEXT_OUTLINE_RGB = [0, 0, 0];
+let PLAYER_COLORS = { left: [59, 142, 234], right: [229, 72, 77] };
+let PLAYER_TEXT_COLORS = { left: [140, 200, 255], right: [255, 154, 158] };
+function setColors(bgHex, textHex, lineHex = "#ffffff") {
+  BAND_RGB = hexRgb(bgHex); WHITE = hexRgb(textHex); LINE_RGB = hexRgb(lineHex);
+  SOFT = mix(WHITE, BAND_RGB, 0.12);
+  EVENT_RGB = mix(WHITE, BAND_RGB, 0.1);
+  POP_CLOCK_RGB = mix(BAND_RGB, [255, 255, 255], 0.08);
+  OUTLINE_RGB = mix(BAND_RGB, [255, 255, 255], 0.06);
+  TEXT_OUTLINE_RGB = luminance(WHITE) >= 0.5 ? [0, 0, 0] : [255, 255, 255];
+}
+setColors("#000000", "#ffffff");
+function setPlayerColors(leftHex, rightHex) {
+  PLAYER_COLORS = { left: hexRgb(leftHex), right: hexRgb(rightHex) };
+  PLAYER_TEXT_COLORS = { left: mix(PLAYER_COLORS.left, [255, 255, 255], 0.45),
+                         right: mix(PLAYER_COLORS.right, [255, 255, 255], 0.45) };
+}
+const useColors = (part) => { if (part.colors) setColors(...part.colors); };
+
+// --- text (hud/overlay.py weight_style / _font / text_width / draw_text / elide) ---
+// display.text_weight (0-100): Regular thickened a little up to 30, then Bold thickened more
+function weightStyle(value) {
+  let v = Number(value);
+  if (!(v >= 0 || v < 0)) v = 65;
+  v = Math.min(100, Math.max(0, v));
+  return v < 30 ? [400, 400, 0.04 * v / 30] : [700, 700, 0.10 * (v - 30) / 70];
+}
+let [BOLD, SEMI, THICKEN] = weightStyle(65);
+let TEXT_OUTLINE = 0;
+let FONT_CSS = '"Segoe UI", "Yu Gothic UI", sans-serif';
+const fontOf = (px, weight) => `${weight} ${Math.max(7, pyRound(px))}px ${FONT_CSS}`;
+const measureCtx = document.createElement("canvas").getContext("2d");
+const widthCache = new Map();
+// Qt (the HUD) lays text out with each character's width rounded to whole
+// pixels; the browser keeps the fractions, so lines came out a little longer
+// and boxes sized from them a pixel or two wider. Measured and placed the Qt way.
+function charWidth(font, c) {
+  const key = font + "\u0000" + c;
+  let w = widthCache.get(key);
+  if (w === undefined) {
+    measureCtx.font = font;
+    w = Math.round(measureCtx.measureText(c).width);
+    if (widthCache.size > 4000) widthCache.clear();
+    widthCache.set(key, w);
+  }
+  return w;
+}
+function textWidth(px, weight, text) {
+  const font = fontOf(px, weight);
+  let w = 0;
+  for (const c of text) w += charWidth(font, c);
+  return w;
+}
+// each character at its Qt position: op(ctx, char, x)
+function eachChar(ctx, font, text, x, op) {
+  for (const c of text) { op(c, x); x += charWidth(font, c); }
+}
+function elide(text, px, weight, width) {
+  if (textWidth(px, weight, text) <= width) return text;
+  const chars = [...text];
+  for (let n = chars.length - 1; n > 0; n--) {
+    const t = chars.slice(0, n).join("") + "…";
+    if (textWidth(px, weight, t) <= width) return t;
+  }
+  return "…";
+}
+let layerCanvas = null;
+// Draws text with its left / right / center at x and its baseline at y; returns its width
+function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 0, alpha = 1, thickenShare = 1) {
+  const font = fontOf(px, weight);
+  const w = textWidth(px, weight, text);
+  if (align === "right") x -= w; else if (align === "center") x -= w / 2;
+  const thicken = THICKEN * thickenShare * px;
+  outline = Math.max(outline, TEXT_OUTLINE * px);
+  ctx.font = font; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; ctx.lineJoin = "round";
+  if (outline > 0) {
+    ctx.strokeStyle = rgba(TEXT_OUTLINE ? TEXT_OUTLINE_RGB : OUTLINE_RGB, alpha);
+    ctx.lineWidth = outline * 2 + thicken;   // still shows around the thickened glyphs
+    eachChar(ctx, font, text, x, (c, cx) => ctx.strokeText(c, cx, y));
+  }
+  if (thicken > 0 && alpha < 1) {
+    // fill + stroke opaque on a layer, then the layer at alpha (the stroke must not double the alpha)
+    const m = ctx.measureText(text), k = ctx.getTransform().a;
+    const pad = thicken + 2;
+    const left = x - pad, top = y - m.fontBoundingBoxAscent - pad;
+    const lw = w + 2 * pad, lh = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent + 2 * pad;
+    layerCanvas = layerCanvas || document.createElement("canvas");
+    layerCanvas.width = Math.ceil(lw * k) + 2; layerCanvas.height = Math.ceil(lh * k) + 2;
+    const q = layerCanvas.getContext("2d");
+    q.setTransform(k, 0, 0, k, 0, 0);
+    q.translate(-left, -top);
+    q.font = font; q.textAlign = "left"; q.textBaseline = "alphabetic"; q.lineJoin = "round";
+    q.fillStyle = rgba(color); q.strokeStyle = rgba(color); q.lineWidth = thicken;
+    eachChar(q, font, text, x, (c, cx) => { q.fillText(c, cx, y); q.strokeText(c, cx, y); });
+    const dev = new DOMPoint(left, top).matrixTransform(ctx.getTransform());
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);   // the layer is already at device pixels
+    ctx.drawImage(layerCanvas, dev.x, dev.y);
+    ctx.restore();
+    return w;
+  }
+  ctx.fillStyle = rgba(color, alpha);
+  ctx.strokeStyle = rgba(color, alpha);
+  ctx.lineWidth = thicken;
+  eachChar(ctx, font, text, x, (c, cx) => { ctx.fillText(c, cx, y); if (thicken > 0) ctx.strokeText(c, cx, y); });
+  return w;
+}
+
+// --- shapes (Qt drawRoundedRect / polygons) ---
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rx = Math.max(0, Math.min(r, w / 2)), ry = Math.max(0, Math.min(r, h / 2));
+  ctx.beginPath();
+  if (rx <= 0 || ry <= 0) { ctx.rect(x, y, w, h); return; }
+  ctx.moveTo(x + rx, y);
+  ctx.lineTo(x + w - rx, y); ctx.ellipse(x + w - rx, y + ry, rx, ry, 0, -Math.PI / 2, 0);
+  ctx.lineTo(x + w, y + h - ry); ctx.ellipse(x + w - rx, y + h - ry, rx, ry, 0, 0, Math.PI / 2);
+  ctx.lineTo(x + rx, y + h); ctx.ellipse(x + rx, y + h - ry, rx, ry, 0, Math.PI / 2, Math.PI);
+  ctx.lineTo(x, y + ry); ctx.ellipse(x + rx, y + ry, rx, ry, 0, Math.PI, Math.PI * 1.5);
+  ctx.closePath();
+}
+// fill and/or stroke (pen: [color, width]) a rounded rect, like QPainter.drawRoundedRect
+function roundRect(ctx, x, y, w, h, r, fill, pen) {
+  roundRectPath(ctx, x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (pen) { ctx.strokeStyle = pen[0]; ctx.lineWidth = pen[1]; ctx.lineJoin = "miter"; ctx.stroke(); }
+}
+function polygon(ctx, pts, fill, pen) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (pen) { ctx.strokeStyle = pen[0]; ctx.lineWidth = pen[1]; ctx.lineJoin = "miter"; ctx.stroke(); }
+}
+const slantDx = (h, u) => Math.min(h * 0.3, 10 * u);
+function slant(x, y, w, h, u, dx = null) {   // a parallelogram leaning right inside the rect
+  dx = dx == null ? slantDx(h, u) : dx;
+  return [[x + dx, y], [x + w, y], [x + w - dx, y + h], [x, y + h]];
+}
+const minimalLine = (a, opacity) => rgba(LINE_RGB, int(255 * opacity * a) / 255);
+
+// The box behind a part in the later designs (hud/overlay.py paint_frame)
+function paintFrame(ctx, x, y, w, h, kind, u, a, opacity, accent = null) {
+  if (kind == null || kind === "none") return;
+  const fill = rgba(BAND_RGB, opacity * a);
+  if (kind === "square") ctx.fillStyle = fill, ctx.fillRect(x, y, w, h);
+  else if (kind === "rounded") roundRect(ctx, x, y, w, h, 6 * u, fill);
+  else if (kind === "frame") {
+    const c = accent || WHITE;
+    const ix = x + u, iy = y + u, iw = w - 2 * u, ih = h - 2 * u;
+    roundRect(ctx, ix, iy, iw, ih, Math.min(5 * u, ih / 2), fill, [rgba(c, int(255 * a) / 255), 2 * u]);
+  } else if (kind === "slash") {
+    polygon(ctx, slant(x, y, w, h, u), fill);
+    if (accent) {   // a player-color edge on the slanted left side
+      const dx = slantDx(h, u);
+      polygon(ctx, slant(x, y, dx + 4 * u, h, u, dx), rgba(accent, int(255 * a) / 255));
+    }
+  }
+}
+
+// The dark band behind a part (hud/overlay.py Band.paintEvent)
+function paintBand(ctx, part) {
+  const alpha = int(255 * part.opacity * (part.dim ? 0.4 : 1));
+  if (alpha <= 0) return;
+  const W = part.w, H = part.h, solid = rgba(BAND_RGB, alpha / 255);
+  if (part.square) { ctx.fillStyle = solid; ctx.fillRect(0, 0, W, H); }
+  else if (part.fade) {
+    const clear = rgba(BAND_RGB, 0);
+    const g = ctx.createLinearGradient(0, 0, W - 1, 0);
+    const ends = part.fade === "left" ? [clear, solid] : [solid, clear];
+    g.addColorStop(0, ends[0]);
+    g.addColorStop(part.fade === "left" ? 0.55 : 0.45, solid);
+    g.addColorStop(1, ends[1]);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  } else roundRect(ctx, 0, 0, W, H, 4, solid);
+}
+
+// --- labels and values ---
+let LABELS = { ...DEFAULT_LABELS };
+function setLabels(own, language) { LABELS = { ...(language === "en" ? DEFAULT_LABELS_EN : DEFAULT_LABELS), ...(own || {}) }; }
+const labelFor = (key) => LABELS[key] || key.toUpperCase();
+function valueSlotWidth(key, px, weight) {
+  let d = "0", best = -1;
+  for (const c of "0123456789") { const w = textWidth(px, weight, c); if (w > best) { best = w; d = c; } }
+  return textWidth(px, weight, VALUE_TEMPLATES[key].replace(/D/g, d));
+}
+function fmtValue(key, v) {
+  if (v == null) return "--";
+  if (key === "b2b") return v ? `x${v}` : "--";      // no chain going
+  if (key === "attack" || key === "pieces" || key === "ren") return String(int(v));
+  return Number(v).toFixed(key === "apm" ? 1 : 2);
+}
+const fmtClock = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const isPuyo = (side) => !!(side && (side.puyo || side.hidden));
+function sideValues(side) {
+  side = side || {};
+  return { apm: (side.apm || {}).apm, pps: side.pps, app: side.app, attack: side.attack,
+           pieces: side.pieces, ren: side.ren, b2b: side.b2b };
+}
+const hexCells = (n) => Array.from({ length: n }, (_, i) => [i % 2, Math.floor(i / 2) + (i % 2 ? 0.5 : 0)]);
+const gaugeFrac = (key, v) => v == null ? 0 : clamp01(v / GAUGE_MAX[key]);
+
+// ======================================================================
+// The parts (hud/overlay.py StatBlock, VersusBlock, EventBlock, ClockBlock,
+// SummaryBlock, OpenerBadge). Each has a size (w, h), a spot (x, y) and
+// paint(ctx) in its own coordinates.
+// ======================================================================
+function newPart(extra) {
+  return { x: 0, y: 0, w: 0, h: 0, visible: false, opacity: 0.85, dim: false, fade: null, square: false,
+           colors: null, u: 1, ...extra };
+}
+
+// --- StatBlock ---
+const STAT_WIDTH = { band: 92, pop: 104, gauge: 104, text: 104, simple: 92 };
+const GAUGE_TEXT_W = 86;
+const STAT_ROW_H = { band: 21, pop: 26, gauge: 27, text: 23, simple: 21 };
+const STAT_PAD = { band: 3, pop: 1, gauge: 3, text: 1, simple: 3 };
+const TABLE = { frame: [21, 9, 4, 12, 17], minimal: [22, 3, 2, 12, 17], trend: [20, 6, 4, 11, 14], slash: [22, 9, 2, 11, 15] };
+const STAT_GAP = 6, SPARK_W = 32, SPARK_GAP = 4, STEP = 6, HEX_W = 54, METER_W = 70, METER_H = 48;
+const TOWER_BAR_H = 58, TOWER_COL_W = 22, TOWER_GAP = 2, TOWER_PAD = 4;
+
+function makeStat(side) {
+  const s = newPart({ side, style: "band", mode: "left", shown: ["apm", "pps", "app"], values: sideValues(null),
+                      history: {}, historyT: null });
+  s.resetHistory = () => { s.history = Object.fromEntries(STAT_KEYS.map((k) => [k, []])); s.historyT = null; };
+  s.resetHistory();
+  return s;
+}
+function statTableCols(s, u, labPx, valPx, keys) {
+  keys = keys || (s.shown.length ? s.shown : ["apm"]);
+  const labW = Math.max(...keys.map((k) => textWidth(labPx * u, BOLD, labelFor(k))));
+  const slotW = Math.max(...keys.map((k) => Math.max(valueSlotWidth(k, valPx * u, SEMI),
+                                                     textWidth(valPx * u, SEMI, fmtValue(k, s.values[k])))));
+  return [labW, slotW];
+}
+function statHexW(s, u) {
+  const keys = s.shown.length ? s.shown : ["apm"];
+  const need = Math.max(Math.max(...keys.map((k) => valueSlotWidth(k, 14 * u, SEMI))) + 14 * u,
+                        Math.max(...keys.map((k) => textWidth(9 * u, BOLD, labelFor(k)))) + 18 * u);
+  return Math.max(HEX_W * u, need);
+}
+function statTowerColW(s, u) {
+  const keys = s.shown.length ? s.shown : ["apm"];
+  return Math.max(TOWER_COL_W * u, Math.max(...keys.map((k) => valueSlotWidth(k, 11 * u, SEMI))) + 2 * u,
+                  Math.max(...keys.map((k) => textWidth(8 * u, BOLD, labelFor(k)))) + 2 * u);
+}
+function statNewSize(s, u) {
+  const st = s.style, n = Math.max(1, s.shown.length);
+  if (TABLE[st]) {
+    const [rowH, padX, padY, labPx, valPx] = TABLE[st];
+    const [labW, slotW] = statTableCols(s, u, labPx, valPx);
+    let w = labW + STAT_GAP * u + slotW + 2 * padX * u;
+    if (st === "trend") w += (SPARK_W + 2 * SPARK_GAP - STAT_GAP) * u;
+    if (st === "slash") w += 10 * u + (n - 1) * STEP * u;
+    return [w, n * rowH * u + 2 * padY * u];
+  }
+  if (st === "hex") {
+    const hw = statHexW(s, u), cells = hexCells(n);
+    return [(Math.max(...cells.map((c) => c[0])) * 0.78 + 1) * hw + 2 * u,
+            (Math.max(...cells.map((c) => c[1])) + 1) * hw * 0.88 + 2 * u];
+  }
+  if (st === "meter") {
+    const rest = s.shown.slice(1);
+    let w = METER_W * u;
+    if (rest.length) { const [labW, slotW] = statTableCols(s, u, 10, 13, rest); w = Math.max(w, labW + 6 * u + slotW); }
+    return [w + 12 * u, (METER_H + rest.length * 16 + (rest.length ? 4 : 0) + 10) * u];
+  }
+  if (st === "tower") {
+    const cw = statTowerColW(s, u);
+    return [n * cw + (n - 1) * TOWER_GAP * u + 2 * TOWER_PAD * u, (14 + TOWER_BAR_H + 12 + 6) * u];
+  }
+  return [92 * u, 21 * n * u];
+}
+function statNeededWidth(s, u) {
+  const st = s.style, keys = s.shown.length ? s.shown : ["apm"];
+  const cols = (labPx, valPx, valWeight) => [Math.max(...keys.map((k) => textWidth(labPx, BOLD, labelFor(k)))),
+                                             Math.max(...keys.map((k) => valueSlotWidth(k, valPx, valWeight)))];
+  if (["band", "text", "simple"].includes(st)) { const [l, v] = cols(12 * u, (st === "text" ? 20 : 17) * u, SEMI); return l + v + 14 * u; }
+  if (st === "pop") { const [l, v] = cols(11 * u, 16 * u, BOLD); return l + v + 31 * u; }
+  if (st === "gauge") { const [l, v] = cols(11 * u, 15 * u, SEMI); return l + v + 18 * u + (STAT_WIDTH.gauge - GAUGE_TEXT_W) * u; }
+  return 0;
+}
+function statConfigure(s, style, mode, shown, u) {
+  Object.assign(s, { style, mode, shown: [...shown], u });
+  s.fade = (style === "simple" || NEW_STYLES.includes(style)) ? null : mode;
+  s.square = style === "simple";
+  const n = Math.max(1, s.shown.length);
+  if (NEW_STYLES.includes(style)) {
+    const [w, h] = statNewSize(s, u);
+    s.w = int(w) + 1; s.h = int(h) + 1;
+  } else {
+    s.w = int(Math.max(STAT_WIDTH[style] * u, statNeededWidth(s, u)));
+    s.h = int((STAT_ROW_H[style] * n + STAT_PAD[style] * 2) * u);
+  }
+}
+function statUpdate(s, side, elapsed) {
+  s.values = sideValues(side);
+  if (elapsed != null) {
+    if (s.historyT != null && elapsed < s.historyT - 0.5) s.resetHistory();
+    if (s.historyT == null || elapsed >= s.historyT + 1.0) {
+      s.historyT = elapsed;
+      for (const k of STAT_KEYS) {
+        if (s.values[k] == null) continue;
+        s.history[k].push(Number(s.values[k]));
+        if (s.history[k].length > TREND_SAMPLES) s.history[k].shift();
+      }
+    }
+  }
+}
+function statColumns(s, labPx, labWeight, valPx, valWeight) {
+  const labW = Math.max(...s.shown.map((k) => textWidth(labPx, labWeight, labelFor(k))));
+  const slotW = Math.max(...s.shown.map((k) => Math.max(valueSlotWidth(k, valPx, valWeight),
+                                                        textWidth(valPx, valWeight, fmtValue(k, s.values[k])))));
+  return [labW, slotW];
+}
+function statPaint(ctx, s) {
+  useColors(s);
+  if (NEW_STYLES.includes(s.style)) return statPaintNew(ctx, s);
+  const u = s.u, W = s.w, st = s.style, a = s.dim ? 0.45 : 1;
+  if (["band", "gauge", "simple"].includes(st)) paintBand(ctx, s);
+  const hugRight = s.mode === "left";   // placed left of the board: hug the right edge
+  s.shown.forEach((key, i) => {
+    const top = (STAT_PAD[st] + i * STAT_ROW_H[st]) * u;
+    const label = labelFor(key), value = fmtValue(key, s.values[key]);
+    if (["band", "text", "simple"].includes(st)) {
+      const big = st === "text" ? 20 : 17, outline = st === "text" ? 1.6 * u : 0;
+      const base = top + (st === "text" ? 18 : 16) * u;
+      const [labW, slotW] = statColumns(s, 12 * u, BOLD, big * u, SEMI);
+      const labX = hugRight ? W - 5 * u - slotW - 4 * u - labW : 5 * u;
+      drawText(ctx, labX, base, label, 12 * u, BOLD, WHITE, "left", outline, a);
+      drawText(ctx, labX + labW + 4 * u + slotW, base, value, big * u, SEMI, WHITE, "right", outline, a);
+    } else if (st === "pop") {
+      const h = 22 * u;
+      const [labW, slotW] = statColumns(s, 11 * u, BOLD, 16 * u, BOLD);
+      const pw = labW + slotW + 27 * u;
+      const x0 = hugRight ? W - pw - 2 * u : 2 * u;
+      roundRect(ctx, x0, top + 2 * u, pw, h, h / 2, rgba(PLAYER_COLORS[s.side], a), [rgba([255, 255, 255], a), 2.5 * u]);
+      const base = top + 2 * u + h / 2 + 5.5 * u;
+      drawText(ctx, x0 + 11 * u, base, label, 11 * u, BOLD, [225, 236, 255], "left", 0, a);
+      drawText(ctx, x0 + pw - 11 * u, base, value, 16 * u, BOLD, WHITE, "right", 0, a);
+    } else {   // gauge
+      const base = top + 14 * u, xl = 6 * u, xr = W - 6 * u;
+      const inset = (STAT_WIDTH.gauge - GAUGE_TEXT_W) * u;
+      drawText(ctx, hugRight ? xl + inset : xl, base, label, 11 * u, BOLD, SOFT, "left", 0, a);
+      drawText(ctx, hugRight ? xr : xr - inset, base, value, 15 * u, SEMI, WHITE, "right", 0, a);
+      const by = top + 18 * u, bw = xr - xl, bh = 4.5 * u, r = bh / 2;
+      roundRect(ctx, xl, by, bw, bh, r, rgba([255, 255, 255], int(60 * a) / 255));
+      const f = gaugeFrac(key, s.values[key]);
+      if (f > 0) {
+        const fw = bw * f, fx = hugRight ? xl + bw - fw : xl;   // grows from the board side
+        roundRect(ctx, fx, by, fw, bh, r, rgba(PLAYER_COLORS[s.side], a));
+      }
+    }
+  });
+}
+function statPaintNew(ctx, s) {
+  const st = s.style, u = s.u, W = s.w, H = s.h, a = s.dim ? 0.45 : 1, hugRight = s.mode === "left";
+  const accent = PLAYER_COLORS[s.side], tint = PLAYER_TEXT_COLORS[s.side];
+  if (st === "frame" || st === "trend") paintFrame(ctx, 0, 0, W, H, FRAMES[st], u, a, s.opacity, st === "frame" ? accent : null);
+  if (st === "hex" || st === "meter" || st === "tower") {
+    if (st !== "hex") paintFrame(ctx, 0, 0, W, H, FRAMES[st], u, a, s.opacity);
+    return ({ hex: statPaintHex, meter: statPaintMeter, tower: statPaintTower })[st](ctx, s, u, W, H, a, accent, tint, hugRight);
+  }
+  const [rowH, padX, padY, labPx, valPx] = TABLE[st];
+  const [labW, slotW] = statTableCols(s, u, labPx, valPx);
+  const extra = st === "trend" ? (SPARK_W + 2 * SPARK_GAP - STAT_GAP) * u : 0;
+  const tableW = labW + STAT_GAP * u + extra + slotW;
+  const outline = st === "minimal" ? 1.6 * u : 0;
+  const labColor = { frame: tint, slash: tint, trend: SOFT }[st] || WHITE;
+  const n = s.shown.length;
+  s.shown.forEach((key, i) => {
+    const top = (padY + i * rowH) * u;
+    let labX;
+    if (st === "slash") {   // one slanted box per row, stepping toward the board going down
+      const step = (n - 1 - i) * STEP * u, boxW = tableW + 2 * padX * u + 10 * u;
+      const x0 = hugRight ? W - step - boxW : step;
+      paintFrame(ctx, x0, top + u, boxW, (rowH - 2) * u, "slash", u, a, s.opacity, accent);
+      labX = x0 + padX * u + 6 * u;
+    } else labX = hugRight ? W - padX * u - tableW : padX * u;
+    const base = top + (rowH * 0.5 + valPx * 0.36) * u;
+    drawText(ctx, labX, base, labelFor(key), labPx * u, BOLD, labColor, "left", outline, a);
+    drawText(ctx, labX + tableW, base, fmtValue(key, s.values[key]), valPx * u, SEMI, WHITE, "right", outline, a);
+    if (st === "minimal") { ctx.fillStyle = minimalLine(a, s.opacity); ctx.fillRect(labX, top + (rowH - 2.5) * u, tableW, 1.5 * u); }
+    if (st === "trend") statSparkline(ctx, s, labX + labW + SPARK_GAP * u, top + 4 * u, SPARK_W * u, (rowH - 8) * u, key, accent, a);
+  });
+}
+function statSparkline(ctx, s, x, y, w, h, key, color, a) {
+  const vs = s.history[key] || [];
+  ctx.save();
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  if (vs.length < 2) {   // nothing to draw yet: a faint baseline
+    ctx.lineCap = "butt";
+    ctx.strokeStyle = rgba([255, 255, 255], int(50 * a) / 255); ctx.lineWidth = 1.2 * s.u;
+    ctx.beginPath(); ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2); ctx.stroke();
+    ctx.restore(); return;
+  }
+  const lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo;
+  ctx.beginPath();
+  vs.forEach((v, i) => {
+    const px = x + w * i / (vs.length - 1), py = span < 1e-9 ? y + h / 2 : y + h - h * (v - lo) / span;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  });
+  ctx.strokeStyle = rgba(color, int(255 * a) / 255); ctx.lineWidth = 1.8 * s.u; ctx.stroke();
+  ctx.restore();
+}
+function statPaintHex(ctx, s, u, W, H, a, accent, tint) {
+  const hw = statHexW(s, u), hh = hw * 0.88, cells = hexCells(s.shown.length);
+  s.shown.forEach((key, i) => {
+    const [col, row] = cells[i], x = u + col * hw * 0.78, y = u + row * hh;
+    const pts = [[0.25, 0], [0.75, 0], [1, 0.5], [0.75, 1], [0.25, 1], [0, 0.5]].map(([px, py]) => [x + hw * px, y + hh * py]);
+    polygon(ctx, pts, rgba(BAND_RGB, s.opacity * a), [rgba(accent, int(255 * a) / 255), 1.6 * u]);
+    const cx = x + hw / 2;
+    drawText(ctx, cx, y + hh * 0.42, elide(labelFor(key), 9 * u, BOLD, hw * 0.72), 9 * u, BOLD, tint, "center", 0, a);
+    drawText(ctx, cx, y + hh * 0.42 + 16 * u, fmtValue(key, s.values[key]), 14 * u, SEMI, WHITE, "center", 0, a);
+  });
+}
+function statPaintMeter(ctx, s, u, W, H, a, accent, tint) {
+  const first = s.shown[0], rest = s.shown.slice(1);
+  const bx = (W - METER_W * u) / 2, by = 5 * u, bw = METER_W * u, bh = METER_H * u;
+  const d = Math.min(bw - 8 * u, (bh - 4 * u) * 2);
+  const cx = bx + bw / 2, cy = by + 4 * u + d / 2;
+  const v = s.values[first], f = gaugeFrac(first, v);
+  ctx.save();
+  ctx.lineCap = "round"; ctx.lineWidth = 6.5 * u;
+  ctx.strokeStyle = rgba([255, 255, 255], int(55 * a) / 255);
+  ctx.beginPath(); ctx.arc(cx, cy, d / 2, Math.PI, 2 * Math.PI); ctx.stroke();
+  if (f > 0) {
+    ctx.strokeStyle = rgba(accent, int(255 * a) / 255);
+    ctx.beginPath(); ctx.arc(cx, cy, d / 2, Math.PI, Math.PI + Math.PI * int(180 * 16 * f) / (180 * 16)); ctx.stroke();
+  }
+  ctx.restore();
+  drawText(ctx, cx, cy - 2 * u, fmtValue(first, v), 16 * u, SEMI, WHITE, "center", 0, a);
+  drawText(ctx, cx, cy + 9 * u, elide(labelFor(first), 8 * u, BOLD, d * 0.8), 8 * u, BOLD, tint, "center", 0, a);
+  const y0 = by + bh + 4 * u;
+  rest.forEach((key, i) => {
+    const base = y0 + (i * 16 + 12) * u;
+    drawText(ctx, 6 * u, base, labelFor(key), 10 * u, BOLD, tint, "left", 0, a);
+    drawText(ctx, W - 6 * u, base, fmtValue(key, s.values[key]), 13 * u, SEMI, WHITE, "right", 0, a);
+  });
+}
+function statPaintTower(ctx, s, u, W, H, a, accent, tint, hugRight) {
+  const cw = statTowerColW(s, u), n = s.shown.length;
+  const barTop = 17 * u, barH = TOWER_BAR_H * u, step = cw + TOWER_GAP * u, pad = TOWER_PAD * u;
+  s.shown.forEach((key, i) => {
+    const col = hugRight ? n - 1 - i : i;
+    const x = hugRight ? W - pad - cw - col * step : pad + col * step, cx = x + cw / 2;
+    const v = s.values[key];
+    drawText(ctx, cx, 13 * u, fmtValue(key, v), 11 * u, SEMI, WHITE, "center", 0, a);
+    roundRect(ctx, cx - 5 * u, barTop, 10 * u, barH, 3 * u, rgba([255, 255, 255], int(45 * a) / 255));
+    const f = gaugeFrac(key, v);
+    if (f > 0) {
+      const g = ctx.createLinearGradient(0, barTop, 0, barTop + barH);
+      g.addColorStop(0, rgba(mix(accent, [255, 255, 255], 0.45), int(255 * a) / 255));
+      g.addColorStop(1, rgba(accent, int(255 * a) / 255));
+      roundRect(ctx, cx - 5 * u, barTop + barH - barH * f, 10 * u, barH * f, 3 * u, g);
+    }
+    drawText(ctx, cx, barTop + barH + 10 * u, elide(labelFor(key), 8 * u, BOLD, cw + 2 * u), 8 * u, BOLD, tint, "center", 0, a);
+  });
+}
+
+// --- VersusBlock ---
+const versus = newPart({ shown: ["apm", "pps", "app"], values: { left: sideValues(null), right: sideValues(null) },
+                         puyo: { left: false, right: false } });
+function versusConfigure(v, shown, u) {
+  v.shown = [...shown]; v.u = u;
+  v.w = int(150 * u); v.h = int((34 * Math.max(1, shown.length) + 6) * u);
+}
+function versusPaint(ctx, v) {
+  useColors(v);
+  paintBand(ctx, v);
+  const u = v.u, W = v.w, a = v.dim ? 0.45 : 1;
+  v.shown.forEach((key, i) => {
+    const top = (3 + i * 34) * u, lv = v.values.left[key], rv = v.values.right[key];
+    drawText(ctx, W / 2, top + 11 * u, labelFor(key), 10 * u, BOLD, SOFT, "center", 0, a);
+    if (!v.puyo.left) drawText(ctx, 7 * u, top + 15 * u, fmtValue(key, lv), 15 * u, BOLD, PLAYER_TEXT_COLORS.left, "left", 0, a);
+    if (!v.puyo.right) drawText(ctx, W - 7 * u, top + 15 * u, fmtValue(key, rv), 15 * u, BOLD, PLAYER_TEXT_COLORS.right, "right", 0, a);
+    const bx = 7 * u, by = top + 20 * u, bw = W - 14 * u, bh = 6 * u;
+    const total = (lv || 0) + (rv || 0);
+    if (total <= 0 || v.puyo.left || v.puyo.right) { roundRect(ctx, bx, by, bw, bh, 3 * u, rgba([255, 255, 255], int(60 * a) / 255)); return; }
+    const split = bx + bw * (lv || 0) / total;
+    ctx.save();
+    roundRectPath(ctx, bx, by, bw, bh, 3 * u); ctx.clip();
+    ctx.fillStyle = rgba(PLAYER_COLORS.left, a); ctx.fillRect(bx, by, split - bx, bh);
+    ctx.fillStyle = rgba(PLAYER_COLORS.right, a); ctx.fillRect(split, by, bx + bw - split, bh);
+    ctx.restore();
+  });
+}
+
+// --- EventBlock ---
+const EVENT_LINE_H = { band: 14, gauge: 14, versus: 14, text: 15, pop: 19, simple: 14 };
+const EVENT_NEW_PAD = { frame: [4, 2], slash: [14, 2], minimal: [-7, 0] };
+function makeEvents(side) { return newPart({ side, style: "band", mode: "left", count: 3, texts: [], language: "ja", openerLanguage: "ja" }); }
+function eventsConfigure(e, style, mode, count, u) {
+  Object.assign(e, { style, mode, count, u });
+  e.fade = style === "simple" ? null : mode;
+  e.square = style === "simple";
+  eventsResize(e);
+}
+function eventsUpdate(e, side) {
+  const log = (side || {}).event_log || [];   // newest first
+  const key = e.language === "en" ? "text_en" : "text";
+  const text = (ev) => (ev.ren_source === "opener" && ev.opener)
+    ? (e.language === "en" ? "Opener: " : "開幕：") + ((e.openerLanguage === "en" && ev.opener_en) || ev.opener)
+    : (ev[key] || ev.text || "");
+  e.texts = log.slice(0, e.count).map(text).reverse();
+  eventsResize(e);
+  return e.texts.length > 0;
+}
+function eventsResize(e) {
+  const u = e.u;
+  const widest = Math.max(0, ...e.texts.map((t) => textWidth(10 * u, SEMI, t)));
+  const extra = { pop: 18, text: 10 }[e.style] ?? 17;
+  const [addW, addH] = EVENT_NEW_PAD[e.style] || [0, 0];
+  const n = Math.max(1, e.texts.length);
+  e.w = int(widest + (extra + addW) * u) + 2;
+  e.h = int(((EVENT_LINE_H[e.style] || 14) * n + 4 + addH) * u);
+}
+function eventsPaint(ctx, e) {
+  useColors(e);
+  const st = e.style, u = e.u, W = e.w, a = e.dim ? 0.45 : 1, hugRight = e.mode === "left";
+  if (["band", "gauge", "versus", "simple"].includes(st)) paintBand(ctx, e);
+  if (st === "gauge") { ctx.fillStyle = rgba(PLAYER_COLORS[e.side], a); ctx.fillRect(hugRight ? W - 2 * u : 0, 0, 2 * u, e.h); }
+  if (FRAMES[st]) paintFrame(ctx, 0, 0, W, e.h, FRAMES[st], u, a, e.opacity, (st === "frame" || st === "slash") ? PLAYER_COLORS[e.side] : null);
+  let xPad = (st === "frame" ? 8 : 6) * u;
+  if (st === "slash") xPad = 9 * u + slantDx(e.h, u);
+  const yOff = (EVENT_NEW_PAD[st] || [0, 0])[1] / 2 * u;
+  e.texts.forEach((text, i) => {
+    const top = (2 + i * (EVENT_LINE_H[st] || 14)) * u + yOff;
+    if (st === "pop") {
+      const tw = textWidth(10 * u, SEMI, text), h = 16 * u;
+      const x0 = hugRight ? W - tw - 16 * u : 2 * u;
+      roundRect(ctx, x0, top + u, tw + 14 * u, h, h / 2, rgba(PLAYER_COLORS[e.side], a), [rgba([255, 255, 255], a), 1.5 * u]);
+      drawText(ctx, x0 + 7 * u, top + 12.5 * u, text, 10 * u, SEMI, WHITE, "left", 0, a);
+      return;
+    }
+    const base = top + 11 * u, plain = st === "text" || st === "minimal";
+    drawText(ctx, hugRight ? W - xPad : xPad, base, text, 10 * u, SEMI, plain ? WHITE : EVENT_RGB,
+             hugRight ? "right" : "left", plain ? 1.0 * u : 0, a);
+  });
+}
+
+// --- ClockBlock ---
+const clock = newPart({ style: "band", clockText: "0:00", stateText: "", statusText: "" });
+function clockLines(c) {
+  const lines = [[c.clockText, 18, BOLD, WHITE, 20]];
+  if (c.stateText) lines.push([c.stateText, 10, SEMI, STATE_RGB, 13]);
+  if (c.statusText) lines.push([c.statusText, 10, SEMI, STATUS_RGB, 13]);
+  return lines;
+}
+const clockPad = (c) => ({ pop: [13, 4], text: [4, 1], versus: [8, 2], minimal: [4, 1], frame: [14, 3], slash: [20, 2] })[c.style] || [14, 2];
+function clockResize(c) {
+  const u = c.u, lines = clockLines(c);
+  const widest = Math.max(...lines.map(([t, px, w]) => textWidth(px * u, w, t)));
+  const [pxPad, pyPad] = clockPad(c);
+  const h = lines.reduce((sum, l) => sum + l[4], 0) + pyPad * 2 + (c.style === "gauge" ? 3 : 0);
+  c.w = int(widest + pxPad * 2 * u) + 2; c.h = int(h * u);
+}
+function clockPaint(ctx, c) {
+  useColors(c);
+  const st = c.style, u = c.u, a = c.dim ? 0.45 : 1, W = c.w, H = c.h;
+  const band = rgba(BAND_RGB, c.opacity * a);
+  if (st === "versus") roundRect(ctx, 0, 0, W, H, 4 * u, band);
+  else if (["band", "gauge", "simple"].includes(st)) {
+    ctx.fillStyle = band; ctx.fillRect(0, 0, W, H);
+    if (st === "gauge") {   // blue | red line along the bottom
+      const lh = 2.5 * u;
+      ctx.fillStyle = rgba(PLAYER_COLORS.left, a); ctx.fillRect(0, H - lh, W / 2, lh);
+      ctx.fillStyle = rgba(PLAYER_COLORS.right, a); ctx.fillRect(W / 2, H - lh, W / 2, lh);
+    }
+  } else if (st === "pop") {
+    const ih = H - 3 * u;
+    roundRect(ctx, 1.5 * u, 1.5 * u, W - 3 * u, ih, Math.min(ih / 2, 12 * u),
+              rgba(POP_CLOCK_RGB, Math.max(c.opacity, 0.6) * a), [rgba([255, 255, 255], a), 2.5 * u]);
+  } else if (FRAMES[st]) paintFrame(ctx, 0, 0, W, H, FRAMES[st], u, a, c.opacity);
+  const outline = (st === "text" || st === "minimal") ? 1.6 * u : 0;
+  let y = clockPad(c)[1] * u;
+  for (const [text, px, weight, color, lh] of clockLines(c)) {
+    y += lh * u;
+    drawText(ctx, W / 2, y - (lh === 20 ? 4 : 3) * u, text, px * u, weight, color, "center", outline, a);
+  }
+}
+
+// --- SummaryBlock ---
+const SUM_W = 212, SUM_TITLE_H = 28, SUM_ROW_H = 20, SUM_COL_X = 0.2;
+const summary = newPart({ style: "band", language: "ja", openerLanguage: "ja", duration: 0, sides: { left: {}, right: {} }, rows: SUMMARY_ROWS });
+function summarySide(side) {
+  side = side || {};
+  const out = { ...(side.match_stats || {}), ...sideValues(side) };   // the live numbers win (as the HUD)
+  out.opener = side.opener; out.opener_en = side.opener_en || side.opener; out.puyo = isPuyo(side);
+  return out;
+}
+function summaryConfigure(m, style, language, u, items) {
+  Object.assign(m, { style, language, u });
+  m.rows = SUMMARY_ROWS.filter(([k]) => !Array.isArray(items) || items.includes(k));
+  m.w = int(SUM_W * u); m.h = int((SUM_TITLE_H + SUM_ROW_H * m.rows.length + 8) * u);
+}
+function summaryPaint(ctx, m) {
+  useColors(m);
+  const st = m.style, u = m.u, a = m.dim ? 0.45 : 1, W = m.w, H = m.h;
+  if (st === "pop") roundRect(ctx, 1.5 * u, 1.5 * u, W - 3 * u, H - 3 * u, 12 * u,
+                              rgba(POP_CLOCK_RGB, Math.max(m.opacity, 0.6) * a), [rgba([255, 255, 255], a), 2.5 * u]);
+  else if (st === "minimal") { ctx.fillStyle = minimalLine(a, Math.max(m.opacity, 0.5)); ctx.fillRect(W * 0.15, 26 * u, W * 0.7, 1.5 * u); }
+  else if (FRAMES[st]) paintFrame(ctx, 0, 0, W, H, st === "slash" ? "square" : FRAMES[st], u, a, Math.max(m.opacity, 0.5));
+  else if (st !== "text") {
+    roundRect(ctx, 0, 0, W, H, (st === "gauge" || st === "simple") ? 0 : 6 * u, rgba(BAND_RGB, Math.max(m.opacity, 0.5) * a));
+    if (st === "gauge") {
+      ctx.fillStyle = rgba(PLAYER_COLORS.left, a); ctx.fillRect(0, 0, W / 2, 2.5 * u);
+      ctx.fillStyle = rgba(PLAYER_COLORS.right, a); ctx.fillRect(W / 2, 0, W / 2, 2.5 * u);
+    }
+  }
+  const ui = UI_TEXT[m.language];
+  const outline = (st === "text" || st === "minimal") ? 1.3 * u : 0;
+  drawText(ctx, W / 2, 20 * u, `${ui.summary}  ${fmtClock(m.duration)}`, 15 * u, BOLD, WHITE, "center", outline, a);
+  m.rows.forEach(([key, labelKey, dec], i) => {
+    const base = (SUM_TITLE_H + 4 + i * SUM_ROW_H + 15) * u;
+    drawText(ctx, W / 2, base, ui[labelKey], 12 * u, SEMI, SOFT, "center", outline, a);
+    for (const [side, x] of [["left", W * SUM_COL_X], ["right", W * (1 - SUM_COL_X)]]) {
+      const data = m.sides[side];
+      if (data.puyo) continue;   // a Puyo side's column stays empty
+      let v = data[key], text;
+      if (dec === null) {   // text row (opener): cut to its column
+        if (m.openerLanguage === "en") v = data[key + "_en"] || v;
+        text = !v ? "--" : elide(v, 12 * u, BOLD, 2 * W * SUM_COL_X - 12 * u);
+      } else text = v == null ? "--" : Number(v).toFixed(dec);
+      drawText(ctx, x, base, text, (dec === null ? 12 : 15) * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a);
+    }
+  });
+}
+
+// --- OpenerBadge ---
+const BADGE_NAME_PX = { board: 28, hold: 15, top: 18 }, BADGE_LABEL_PX = { board: 13, hold: 10, top: 11 }, NAMEBAR_PX = 12;
+function makeBadge(side) { return newPart({ side, mode: "board", style: "band", language: "ja", names: { left: null, right: null }, alpha: 1 }); }
+const badgeLabel = (b) => UI_TEXT[b.language].s_opener;
+const badgeNamebarText = (b) => `${badgeLabel(b)}${b.language === "ja" ? "：" : ": "}${b.names[b.side] || ""}`;
+function badgeResize(b) {
+  const u = b.u, m = b.mode;
+  let w, h;
+  if (m === "namebar") { w = textWidth(NAMEBAR_PX * u, BOLD, badgeNamebarText(b)) + 22 * u; h = 20 * u; }
+  else if (m === "top") {
+    const l = b.names.left || "--", r = b.names.right || "--";
+    w = 2 * Math.max(textWidth(18 * u, BOLD, l), textWidth(18 * u, BOLD, r)) + textWidth(13 * u, BOLD, "vs") + 52 * u;
+    w = Math.max(w, 200 * u); h = 50 * u;
+  } else {
+    const name = b.names[b.side] || "";
+    w = Math.max(textWidth(BADGE_NAME_PX[m] * u, BOLD, name), textWidth(BADGE_LABEL_PX[m] * u, BOLD, badgeLabel(b)))
+        + (m === "board" ? 44 : 24) * u;
+    h = (m === "board" ? 68 : 42) * u;
+  }
+  if (b.style === "slash" && m !== "namebar") w += 2 * slantDx(h, u) + 16 * u;
+  b.w = int(w); b.h = int(h);
+}
+function badgePaint(ctx, b) {
+  useColors(b);
+  const st = b.style, u = b.u, m = b.mode, a = b.alpha * (b.dim ? 0.45 : 1), W = b.w, H = b.h;
+  const accents = (b.side === "both" ? ["left", "right"] : [b.side]).map((sd) => rgba(PLAYER_COLORS[sd], a));
+  const radius = m === "namebar" ? H / 2 : (m === "board" ? 10 : 6) * u;
+  if (st === "pop") {
+    const iw = W - 3 * u, ih = H - 3 * u, r = Math.min(radius, ih / 2);
+    roundRect(ctx, 1.5 * u, 1.5 * u, iw, ih, r, accents.length === 1 ? accents[0] : rgba(POP_CLOCK_RGB, int(255 * a) / 255),
+              [rgba([255, 255, 255], a), 2.5 * u]);
+  } else if (FRAMES[st]) {
+    let kind = FRAMES[st];
+    if (m === "namebar" && (kind === "square" || kind === "slash")) kind = "rounded";   // a pill on the name bar
+    const accent = (b.side in PLAYER_COLORS && (st === "frame" || st === "slash")) ? PLAYER_COLORS[b.side] : null;
+    paintFrame(ctx, 0, 0, W, H, kind, u, a, Math.max(b.opacity, 0.78), accent);
+  } else if (st !== "text") {
+    const rr = (st === "gauge" || st === "simple") ? 0 : radius;
+    roundRect(ctx, 0, 0, W, H, rr, rgba(BAND_RGB, Math.max(b.opacity, 0.78) * a));
+    if (m === "namebar") roundRect(ctx, u, u, W - 2 * u, H - 2 * u, rr, null, [accents[0], 2 * u]);   // accent ring
+    else accents.forEach((c, i) => {   // accent bar along the bottom (split for both players)
+      ctx.fillStyle = c; ctx.fillRect(W * i / accents.length, H - 3 * u, W / accents.length, 3 * u);
+    });
+  }
+  const outline = (st === "text" || st === "minimal") ? 1.6 * u : 0;
+  if (m === "namebar") drawText(ctx, W / 2, H / 2 + 4.2 * u, badgeNamebarText(b), NAMEBAR_PX * u, BOLD, WHITE, "center", outline, a, OPENER_NAME_THICKEN);
+  else if (m === "top") {
+    drawText(ctx, W / 2, 15 * u, badgeLabel(b), 11 * u, BOLD, SOFT, "center", outline, a);
+    const inset = (st === "slash" ? 26 : 14) * u;   // past the slanted ends
+    drawText(ctx, inset, 38 * u, b.names.left || "--", 18 * u, BOLD, PLAYER_TEXT_COLORS.left, "left", outline, a, OPENER_NAME_THICKEN);
+    drawText(ctx, W / 2, 37 * u, "vs", 13 * u, BOLD, SOFT, "center", outline, a);
+    drawText(ctx, W - inset, 38 * u, b.names.right || "--", 18 * u, BOLD, PLAYER_TEXT_COLORS.right, "right", outline, a, OPENER_NAME_THICKEN);
+  } else {
+    const labelColor = st === "pop" ? [235, 242, 255] : PLAYER_TEXT_COLORS[b.side];
+    const name = b.names[b.side] || "";
+    if (m === "board") {
+      drawText(ctx, W / 2, 20 * u, badgeLabel(b), BADGE_LABEL_PX[m] * u, BOLD, labelColor, "center", outline, a);
+      drawText(ctx, W / 2, 54 * u, name, BADGE_NAME_PX[m] * u, BOLD, WHITE, "center", outline, a, OPENER_NAME_THICKEN);
+    } else {   // hold
+      const lx = (12 + (st === "slash" ? 14 : 0)) * u;   // past the slanted edge
+      drawText(ctx, lx, 14 * u, badgeLabel(b), BADGE_LABEL_PX[m] * u, BOLD, labelColor, "left", outline, a);
+      drawText(ctx, lx, 33 * u, name, BADGE_NAME_PX[m] * u, BOLD, WHITE, "left", outline, a, OPENER_NAME_THICKEN);
+    }
+  }
+}
+
+// ======================================================================
+// The window (hud/overlay.py HudWindow: _layout, _place, _place_openers)
+// ======================================================================
+const stats = { left: makeStat("left"), right: makeStat("right") };
+const events = { left: makeEvents("left"), right: makeEvents("right") };
+const badges = { left: makeBadge("left"), right: makeBadge("right"), both: makeBadge("both") };
+let display = { ...DEFAULTS };
+let lastState = {};
+let stateT = performance.now();     // when lastState arrived (opener fade timing)
+let scale = 1;                       // screen px per reference px
+let connected = false, everConnected = false;
+let pageRev = null;                  // the server's page_rev when this page loaded (see onmessage)
+
+const partValue = (part, key) => { const own = ((display.parts || {})[part] || {})[key]; return own == null ? display[key] : own; };
+const openerLanguage = () => (display.opener_language && display.opener_language !== "auto") ? display.opener_language : display.language;
+function openerOffset(d, side) {
+  let x = d.opener_offset_x || 0, y = d.opener_offset_y || 0;
+  if (side === "left" || side === "right") { x += d[`opener_${side}_offset_x`] || 0; y += d[`opener_${side}_offset_y`] || 0; }
+  return [x, y];
+}
+function popupAlpha(sideState, frozen, since, seconds = POPUP_S) {
+  let age = (sideState || {}).opener_age_s;
+  if (age == null || frozen) return 0;
+  age += since;
+  if (!(seconds > 0)) return smooth(age / POPUP_IN_S);
+  if (age >= seconds) return 0;
+  return Math.min(smooth(age / POPUP_IN_S), smooth((seconds - age) / Math.min(POPUP_FADE_S, seconds / 2)));
+}
+function markHiddenSides(state, players) {   // 1P / 2P only: the other side shows nothing
+  if (players !== "left" && players !== "right") return state;
+  const other = players === "left" ? "right" : "left";
+  return { ...state, [other]: { ...(state[other] || {}), hidden: true } };
+}
+
+// display.font_family / font_file. A loaded file lives in assets/user_fonts/.
+let loadedFontFile = "";
+function setFont(family, file) {
+  let fam = (family || "").replace(/["\\]/g, "");
+  if (file && file !== loadedFontFile && /^user_fonts\/[^\/\\]+\.(ttf|otf|ttc)$/i.test(file)) {
+    loadedFontFile = file;
+    const face = new FontFace(fam || "UserFont", `url("../assets/${encodeURI(file)}")`);
+    face.load().then((f) => { document.fonts.add(f); widthCache.clear(); layout(); }).catch(() => {});
+  }
+  if (!fam && file) fam = "UserFont";
+  const css = fam ? `"${fam}", "Segoe UI", "Yu Gothic UI", sans-serif` : '"Segoe UI", "Yu Gothic UI", sans-serif';
+  if (css !== FONT_CSS) { FONT_CSS = css; widthCache.clear(); }
+}
+
+function look(part, name) {   // this part's background strength and colors
+  part.opacity = partValue(name, "background_opacity");
+  part.colors = [partValue(name, "bg_color"), partValue(name, "text_color"), partValue(name, "line_color")];
+}
+
+function layout() {
+  scale = window.innerWidth / REF_W;
+  const s = scale, d = display;
+  [BOLD, SEMI, THICKEN] = weightStyle(d.text_weight);
+  TEXT_OUTLINE = d.text_outline ? TEXT_OUTLINE_RATIO : 0;
+  setColors(d.bg_color, d.text_color, d.line_color);
+  setFont(d.font_family, d.font_file);
+  setLabels(d.labels, d.language);
+  setPlayerColors(d.player_color_left, d.player_color_right);
+  const pu = (part) => s * partValue(part, "scale");
+  const mode = d.stats_position === "right" ? "right" : "left";
+  const shown = (Array.isArray(d.stat_items) ? d.stat_items : []).filter((k) => STAT_KEYS.includes(k));
+  for (const side of ["left", "right"]) {
+    look(stats[side], "stats"); look(events[side], "events");
+    if (shown.length && d.style !== "versus") statConfigure(stats[side], d.style, mode, shown, pu("stats"));
+    events[side].language = d.language; events[side].openerLanguage = openerLanguage();
+    eventsConfigure(events[side], d.style, mode, d.event_log_count, pu("events"));
+  }
+  look(versus, "stats");
+  if (shown.length && d.style === "versus") versusConfigure(versus, shown, pu("stats"));
+  look(clock, "clock"); clock.style = d.style; clock.u = pu("clock"); clockResize(clock);
+  look(summary, "summary"); summary.openerLanguage = openerLanguage();
+  summaryConfigure(summary, d.style, d.language, pu("summary"), d.summary_items);
+  for (const b of Object.values(badges)) {
+    look(b, "opener");
+    Object.assign(b, { mode: d.opener_display === "cat" ? "board" : d.opener_display, style: d.style, language: d.language, u: pu("opener") });
+    badgeResize(b);
+  }
+  place();
+}
+
+function awayFromMatch() {
+  if (display.enabled === false) return true;
+  return !display.always_show && !display.force_show && lastState.match_screen === false;
+}
+
+function place() {
+  const s = scale, d = display, st = lastState;
+  const all = [stats.left, stats.right, events.left, events.right, versus, clock, summary, ...Object.values(badges)];
+  if (awayFromMatch()) { all.forEach((p) => { p.visible = false; }); hideCats(); paint(); return; }
+  const u = s * partValue("stats", "scale");   // the gaps next to the stat block go with its size
+  const mode = d.stats_position === "right" ? "right" : "left";
+  const anyStat = (d.stat_items || []).length > 0, isVersus = d.style === "versus", shown = anyStat && !isVersus;
+  if (shown) for (const side of ["left", "right"]) statConfigure(stats[side], stats[side].style, mode, stats[side].shown, stats[side].u);
+  for (const side of ["left", "right"]) {
+    const stat = stats[side], ev = events[side];
+    const other = st[side === "left" ? "right" : "left"] || {};
+    const vsPuyo = other.puyo ? VS_PUYO_SHIFT_X[mode] : 0;
+    let anchorX = (STAT_ANCHOR_X[mode][side] + vsPuyo + d.offset_x + (d[`stats_${side}_offset_x`] || 0)) * s;
+    if (NEW_STYLES.includes(d.style)) anchorX += NEW_STYLE_GAP * u * (mode === "left" ? -1 : 1);
+    let bottom = (STAT_BOTTOM_Y + d.offset_y + (d[`stats_${side}_offset_y`] || 0)) * s;
+    const puyo = isPuyo(st[side]);
+    stat.visible = shown && !puyo;
+    if (stat.visible) {
+      stat.x = int(mode === "left" ? anchorX - stat.w : anchorX);
+      stat.y = int(bottom - stat.h);
+      bottom -= stat.h + EVENT_GAP * u;
+    }
+    ev.visible = !!(d.show_event_log && !puyo && eventsUpdate(ev, st[side]));
+    if (ev.visible) {
+      const ex = anchorX + d.event_offset_x * s;
+      ev.x = int(mode === "left" ? ex - ev.w : ex);
+      ev.y = int(bottom + d.event_offset_y * s - ev.h);
+    }
+  }
+  clock.visible = !!d.show_clock;
+  const clockTop = CLOCK_BOTTOM_Y * s - clock.h;
+  clock.x = int((CLOCK_CENTER_X + d.clock_offset_x) * s - clock.w / 2);
+  clock.y = int(clockTop + d.clock_offset_y * s);
+  summary.visible = !!(d.show_summary && st.frozen && (st.match_elapsed_s || 0) > 0);
+  summary.x = int((CLOCK_CENTER_X + d.summary_offset_x) * s - summary.w / 2);
+  summary.y = int((SUMMARY_TOP_Y + d.summary_offset_y) * s);
+  versus.visible = isVersus && anyStat;
+  if (versus.visible) {
+    const vb = d.show_clock ? clockTop - VERSUS_GAP * u : CLOCK_BOTTOM_Y * s;
+    versus.x = int((CLOCK_CENTER_X + d.offset_x) * s - versus.w / 2);
+    versus.y = int(vb + d.offset_y * s - versus.h);
+  }
+  placeOpeners();
+}
+
+let ticking = false;
+function placeOpeners() {
+  const s = scale, d = display, st = lastState;
+  const since = (performance.now() - stateT) / 1000;
+  const omode = d.opener_display;
+  const key = openerLanguage() === "en" ? "opener_en" : "opener";
+  const names = {}, alphas = {};
+  for (const sd of ["left", "right"]) {
+    const data = st[sd] || {};
+    names[sd] = isPuyo(data) ? null : (data[key] || data.opener || null);
+    alphas[sd] = names[sd] ? popupAlpha(data, st.frozen, since, d.opener_seconds) : 0;
+  }
+  let shownBadges = {}, up = false;
+  if (d.show_opener && omode === "cat") {
+    up = placeCats(names, st, since);
+  } else {
+    hideCats();
+    if (d.show_opener && omode === "top") { if (Math.max(alphas.left, alphas.right) > 0) shownBadges.both = Math.max(alphas.left, alphas.right); }
+    else if (d.show_opener) for (const sd of ["left", "right"]) if (alphas[sd] > 0) shownBadges[sd] = alphas[sd];
+  }
+  for (const [k, b] of Object.entries(badges)) {
+    if (!(k in shownBadges)) { b.visible = false; continue; }
+    if (JSON.stringify(b.names) !== JSON.stringify(names)) { b.names = { ...names }; badgeResize(b); }
+    b.alpha = shownBadges[k]; b.visible = true;
+    let x, y;
+    if (k === "both") { x = OPENER_TOP_CENTER_X * s - b.w / 2; y = OPENER_TOP_Y * s; }
+    else if (omode === "board") { x = BOARD_CENTER_X[k] * s - b.w / 2; y = OPENER_BOARD_TOP_Y * s; }
+    else if (omode === "hold") { x = HOLD_RIGHT_X[k] * s - b.w; y = OPENER_HOLD_TOP_Y * s; }
+    else { x = k === "left" ? NAMEBAR_RIGHT_X * s - b.w : NAMEBAR_LEFT_X * s; y = NAMEBAR_TOP_Y * s; }
+    const [dx, dy] = openerOffset(d, k);
+    b.x = int(x + dx * s); b.y = int(y + dy * s);
+    up = true;
+  }
+  paint();
+  // repaint every frame while a name is up (the fade and the cat's walk)
+  if (up && !ticking) { ticking = true; requestAnimationFrame(tick); }
+  return up;
+}
+function tick() { ticking = false; placeOpeners(); }
+
+// --- drawing all parts on the canvas, in the HUD's stacking order ---
+const canvas = $("hud"), hudCtx = canvas.getContext("2d");
+function paint() {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.round(window.innerWidth * dpr), ch = Math.round(window.innerHeight * dpr);
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw; canvas.height = ch;
+    canvas.style.width = window.innerWidth + "px"; canvas.style.height = window.innerHeight + "px";
+  }
+  const ctx = hudCtx;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  const order = [[stats.left, statPaint], [stats.right, statPaint], [versus, versusPaint], [summary, summaryPaint],
+                 [badges.left, badgePaint], [badges.right, badgePaint], [badges.both, badgePaint],
+                 [events.left, eventsPaint], [events.right, eventsPaint], [clock, clockPaint]];
+  for (const [part, fn] of order) {
+    if (!part.visible || part.w <= 0 || part.h <= 0) continue;
+    // Each part drawn at SUPERSAMPLE x the size on its own small canvas, then
+    // shrunk into place: the browser snaps letters to whole pixels (they came
+    // out heavier than the HUD's, which Qt draws as smooth outlines), and at
+    // twice the size that snapping mostly averages out.
+    const k = dpr * SUPERSAMPLE;
+    const off = partCanvas(part, Math.ceil(part.w * k), Math.ceil(part.h * k));
+    const octx = off.getContext("2d");
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    octx.clearRect(0, 0, off.width, off.height);
+    octx.setTransform(k, 0, 0, k, 0, 0);
+    fn(octx, part);   // (its own canvas is its box: it draws only inside it, as a Qt widget)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(off, 0, 0, part.w * k, part.h * k, part.x, part.y, part.w, part.h);
+  }
+}
+const SUPERSAMPLE = 2;
+function partCanvas(part, w, h) {
+  const c = part.canvas || (part.canvas = document.createElement("canvas"));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return c;
+}
+
+// ======================================================================
+// The 「猫」 opener display (hud/overlay.py CatPopup / cat_pos / paper_layout)
+// ======================================================================
+const CAT_BOTTOM_Y = 632, CAT_SCALE = 0.625, CAT_MIN_STILL_S = 0.5;
+const CAT_CENTER_X = { left: 320, right: 912 };
+const PAPER_W = 184, PAPER_H = 130, PAPER_MAX_PX = 40, CAT_PAPER_MIN_PX = 30, PAPER_TWO_LINE_MIN_PX = 22;
 const CAT_IMAGES = {};
-let catStateTime = performance.now(), catRunning = false;
 function catImage(file) {
   if (!CAT_IMAGES[file]) { const im = new Image(); im.src = "../assets/cat/" + file; CAT_IMAGES[file] = im; }
   return CAT_IMAGES[file];
 }
-// [frame, next frame, how far toward it] (blended, as hud/overlay.py cat_pos), or null when gone
-function catPos(cat, age, seconds) {
-  // same as hud/overlay.py cat_pos: only the standing-still part is fitted to the time
+function catPos(cat, age, seconds) {   // [frame, next frame, how far toward it], or null when gone
   const n = cat.frames.length, hs = cat.hold_start, he = cat.hold_end;
   const s0 = cat.still_start ?? hs, s1 = cat.still_end ?? he, span = Math.max(1, s1 - s0);
-  const pingpong = k => s0 + (k <= span ? k : 2 * span - k);
-  let t = Math.max(0, age) * cat.fps, pos;   // never before the start (the age can be a hair below 0)
+  const pingpong = (k) => s0 + (k <= span ? k : 2 * span - k);
+  const t = Math.max(0, age) * cat.fps;
+  let pos;
   if (t < s0) pos = t;
   else {
     const u = t - s0;
@@ -404,7 +1031,7 @@ function catPos(cat, age, seconds) {
     else {
       const fit = Math.max(CAT_MIN_STILL_S * cat.fps, seconds * cat.fps - (s0 - hs) - (he - s1));
       if (u < fit) {
-        const passes = 2 * Math.round((fit / span - 1) / 2) + 1;
+        const passes = 2 * pyRound((fit / span - 1) / 2) + 1;
         pos = pingpong((u * passes * span / fit) % (2 * span));
       } else { pos = s1 + (u - fit); if (pos > n - 1) return null; }
     }
@@ -412,520 +1039,146 @@ function catPos(cat, age, seconds) {
   const i = Math.floor(pos);
   return [i, Math.min(i + 1, n - 1), pos - i];
 }
-// each cat on this page's own clock from when it started (the ages arriving 10 times a second jitter)
-const catStart = { left: null, right: null }, catName = { left: null, right: null };
-function drawCat(side, pos, name, u) {
-  const cat = window.CAT, el = $("cat-" + side);
-  const [i, j, frac] = pos;
-  const [w, h] = cat.size;
-  const cw = Math.round(w * u), ch = Math.round(h * u);
-  if (el.width !== cw || el.height !== ch) { el.width = cw; el.height = ch; }
-  const ctx = el.getContext("2d");
-  ctx.clearRect(0, 0, el.width, el.height);
-  const mirror = side === "left";
-  // the two frames added up with weights (1 - frac, frac): stays solid where both are
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  ctx.scale(u, u);
-  if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
-  for (const [k, weight] of [[i, 1 - frac], [j, frac]]) {
-    const f = cat.frames[k];
-    if (!f.file || weight < 0.004) continue;
-    const im = catImage(f.file);
-    if (!im.complete) continue;
-    ctx.globalAlpha = weight;
-    ctx.drawImage(im, f.x, f.y);
-  }
-  ctx.restore();
-  const pa = cat.frames[i].paper, pb = cat.frames[j].paper;
-  const paper = pa && pb ? pa.map((p, n) => [p[0] + (pb[n][0] - p[0]) * frac, p[1] + (pb[n][1] - p[1]) * frac]) : (pa || pb);
-  if (!paper || !name) return;
-  // the name on the paper: corners top-left, top-right, (bottom-right), bottom-left
-  let q = paper.map(([x, y]) => [mirror ? w - x : x, y]);
-  if (mirror) q = [q[1], q[0], q[3], q[2]];
-  const [tl, tr, , bl] = q;
-  ctx.save();
-  ctx.setTransform(u * (tr[0] - tl[0]) / 200, u * (tr[1] - tl[1]) / 200, u * (bl[0] - tl[0]) / 140, u * (bl[1] - tl[1]) / 140, u * tl[0], u * tl[1]);
-  const fam = getComputedStyle(document.body).fontFamily;
-  // one line, two lines, or running off the paper (same as the HUD's paper_layout)
-  if (paperFor[side] !== name) {
-    ctx.font = `bold 100px ${fam}`;
-    paperFor[side] = name;
-    paperLayout[side] = paperLayoutOf(name, (t) => ctx.measureText(t).width);
-  }
-  const [lines, sz] = paperLayout[side];
-  ctx.font = `bold ${Math.round(sz)}px ${fam}`;
-  ctx.fillStyle = "rgb(25,25,30)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  lines.forEach((line, i) => ctx.fillText(line, 100, 70 + (i - (lines.length - 1) / 2) * sz * 1.1));
-  ctx.restore();
-}
-// hud/overlay.py opener_offset: both players' shift, plus the player's own ("both": shared only)
-function openerOffset(d, side) {
-  let x = d.opener_offset_x || 0, y = d.opener_offset_y || 0;
-  if (side === "left" || side === "right") { x += d[`opener_${side}_offset_x`] || 0; y += d[`opener_${side}_offset_y`] || 0; }
-  return [x, y];
-}
-const paperFor = { left: null, right: null }, paperLayout = { left: null, right: null };
-function paperLayoutOf(name, measure) {   // hud/overlay.py paper_layout
-  const W = 184, H = 130, MAX = 40, MIN_ONE = 30, MIN_TWO = 22;
-  const one = Math.min(MAX, W * 100 / Math.max(1, measure(name)));
-  if (one >= MIN_ONE) return [[name], one];
+function paperLayout(name, measure) {
+  const one = Math.min(PAPER_MAX_PX, PAPER_W * 100 / Math.max(1, measure(name)));
+  if (one >= CAT_PAPER_MIN_PX) return [[name], one];
   const spaces = [...name].map((c, i) => c === " " ? i : -1).filter((i) => i >= 0);
   const cuts = spaces.length ? spaces : Array.from({ length: name.length - 1 }, (_, i) => i + 1);
   let best = null;
   for (const i of cuts) {
     const a = name.slice(0, i).trimEnd(), b = name.slice(i).trimStart();
     if (!a || !b) continue;
-    const size = Math.min(MAX, H / 2.3, W * 100 / Math.max(1, measure(a), measure(b)));
+    const size = Math.min(PAPER_MAX_PX, PAPER_H / 2.3, PAPER_W * 100 / Math.max(1, measure(a), measure(b)));
     if (!best || size > best[1]) best = [[a, b], size];
   }
-  return best && best[1] >= MIN_TWO ? best : [[name], MIN_ONE];
+  return best && best[1] >= PAPER_TWO_LINE_MIN_PX ? best : [[name], CAT_PAPER_MIN_PX];
 }
-function catTick() {
-  const d = display, st = lastState || {};
-  const on = d.show_opener && d.opener_display === "cat" && window.CAT && !st.frozen;
+const catStart = { left: null, right: null }, catName = { left: null, right: null };
+const paperFor = { left: null, right: null }, paperOf = { left: null, right: null };
+function hideCats() { for (const sd of ["left", "right"]) { $("cat-" + sd).classList.add("hidden"); catStart[sd] = null; } }
+function placeCats(names, st, since) {
+  const cat = window.CAT;
   let any = false;
-  for (const side of ["left", "right"]) {
-    const el = $("cat-" + side), data = st[side] || {};
-    const name = isPuyo(data) ? null : openerOf(data);
-    const age = data.opener_age_s;
+  for (const sd of ["left", "right"]) {
+    const el = $("cat-" + sd), age = (st[sd] || {}).opener_age_s;
     let pos = null;
-    if (on && name && age != null) {
-      const now = performance.now() / 1000, serverAge = age + (performance.now() - catStateTime) / 1000;
-      if (catStart[side] == null || catName[side] !== name || Math.abs((now - catStart[side]) - serverAge) > 0.35) {
-        catStart[side] = now - serverAge; catName[side] = name;   // new opener, or drifted: start over
+    if (cat && names[sd] && age != null && !st.frozen) {
+      const now = performance.now() / 1000, serverAge = age + since;
+      // a new opener, or this page's clock and the server's drifted apart: start over from the server's age
+      if (catStart[sd] == null || catName[sd] !== names[sd] || Math.abs((now - catStart[sd]) - serverAge) > 0.35) {
+        catStart[sd] = now - serverAge; catName[sd] = names[sd];
       }
-      pos = catPos(window.CAT, now - catStart[side], d.opener_seconds);
+      pos = catPos(cat, now - catStart[sd], display.opener_seconds);
     }
-    if (pos == null) { el.classList.add("hidden"); catStart[side] = null; continue; }
-    const k = window.innerWidth / REF_W, u = k * CAT_SCALE * partValue("opener", "scale");
-    drawCat(side, pos, name, u);
-    const [odx, ody] = openerOffset(d, side);
-    el.style.left = (CAT_CENTER_X[side] * k - el.width / 2 + odx * k) + "px";
-    el.style.top = (CAT_BOTTOM_Y * k - el.height + ody * k) + "px";
+    if (pos == null) { el.classList.add("hidden"); catStart[sd] = null; continue; }
+    const s = scale, u = s * CAT_SCALE * partValue("opener", "scale");
+    drawCat(sd, pos, names[sd], u);
+    const w = cat.size[0] * u, h = cat.size[1] * u;
+    const [dx, dy] = openerOffset(display, sd);
+    el.style.left = int(CAT_CENTER_X[sd] * s - w / 2 + dx * s) + "px";
+    el.style.top = int(CAT_BOTTOM_Y * s - h + dy * s) + "px";
     el.classList.remove("hidden");
     any = true;
   }
-  catRunning = any;
-  if (any) requestAnimationFrame(catTick);
+  return any;
 }
-const SUMMARY_ROWS = [   // [key, label, decimals; null = text]
-  ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["lines_sent", "s_lines", 0],
-  ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
-  ["tspin", "s_tspin", 0], ["tspin_single", "s_tss", 0], ["tspin_double", "s_tsd", 0], ["tspin_triple", "s_tst", 0],
-  ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];   // shown: display.summary_items
-const GAUGE_MAX = { apm: 120, pps: 4, app: 1, attack: 100, pieces: 300, ren: 12, b2b: 10 };   // value that fills a gauge bar
-const STYLES = ["band", "pop", "gauge", "text", "versus", "simple",
-                "frame", "slash", "hex", "meter", "tower", "minimal", "trend"];
-const NEW_STYLES = STYLES.slice(6);   // the later ones: hud/overlay.py NEW_STYLES
-const NEW_STYLE_GAP = 6;   // their stat blocks keep this much room from the board (as the HUD)
-const TREND_SAMPLES = 60;   // trend: one value a second, the last minute (as the HUD)
-// display.text_weight (0-100) -> [bold, semi, stroke x font size] (same as hud/overlay.py weight_style):
-// Regular thickened a little up to 30, then Bold thickened more; 65 = the old "bold"
-function weightStyle(value) {
-  const v = Math.min(100, Math.max(0, Number(value)));
-  if (!(v >= 0)) return weightStyle(65);
-  return v < 30 ? [400, 400, 0.04 * v / 30] : [700, 700, 0.10 * (v - 30) / 70];
-}
-// The overlay's own text, by display.language (event text comes from the
-// server in both languages: "text" / "text_en").
-const UI_TEXT = {
-  ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", down: "認識不可",
-        summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "送った段数",
-        s_pieces: "置いたミノ", s_max_ren: "最大REN", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
-        s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
-        connecting: "接続中...", disconnected: "切断されました。再接続中..." },
-  en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", down: "Can't read the game",
-        summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_lines: "Lines sent",
-        s_pieces: "Pieces", s_max_ren: "Max combo", s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
-        s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
-        connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
-};
-const ui = () => UI_TEXT[display.language === "en" ? "en" : "ja"];
-const DEFAULTS = { style: "gauge", always_show: false, enabled: true, opener_language: "auto", opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, bg_color: "#000000", text_color: "#ffffff",
-  line_color: "#ffffff",
-  font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0, offset_x: 0, offset_y: 0,
-  clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
-  summary_offset_x: 0, summary_offset_y: 0, show_summary: true, show_opener: true, opener_display: "board",
-  background_opacity: 0.85, stat_items: ["apm", "pps", "app"], labels: {}, player_color_left: "#3b8eea",
-  player_color_right: "#e5484d", parts: {}, show_clock: true,
-  show_event_log: false, event_log_count: 3,
-  summary_items: ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear"] };
-
-let display = { ...DEFAULTS };
-let lastState = null;
-let pageRev = null;   // the server's page_rev when this page loaded (see onmessage)
-
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-// stat rows (display.stat_items, in order) — same as hud/overlay.py
-const STAT_ITEMS = ["apm", "pps", "app", "attack", "pieces", "ren", "b2b"];
-const DEFAULT_LABELS = { apm: "APM", pps: "PPS", app: "APP", attack: "ATK", pieces: "PIECES", ren: "REN", b2b: "B2B" };
-const SLOT_CH = { apm: 5, pps: 4, app: 4, attack: 3, pieces: 4, ren: 2, b2b: 3 };   // widest value, in digits
-const fmt = (key, v) => {
-  if (v == null) return "--";
-  if (key === "b2b") return v ? `x${v}` : "--";      // no chain going
-  if (key === "attack" || key === "pieces" || key === "ren") return String(Math.round(v));
-  return Number(v).toFixed(key === "apm" ? 1 : 2);
-};
-const shownKeys = () => (Array.isArray(display.stat_items) ? display.stat_items : []).filter((k) => STAT_ITEMS.includes(k));
-const DEFAULT_LABELS_EN = { ...DEFAULT_LABELS, ren: "COMBO" };   // the English game says "Combo" for REN
-const labelFor = (key) => esc((display.labels || {})[key]
-  || (display.language === "en" ? DEFAULT_LABELS_EN : DEFAULT_LABELS)[key] || key.toUpperCase());
-const style = () => STYLES.includes(display.style) ? display.style : "gauge";
-
-// PPS = pieces placed / match seconds; APM = lines sent / match minutes (the
-// user's own definition). Both use match time, so pauses don't count.
-// The server saw this side playing Puyo Puyo: its display is hidden (as in the HUD).
-// ...or display.players shows only the other player (1P / 2P only), marked "hidden" in render()
-const isPuyo = (data) => !!(data && (data.puyo || data.hidden));
-// the opener's name in the overlay's language (English names: Japanese where there's none)
-// display.opener_language: "ja" / "en", or "auto" = the overlay's language (config_store.opener_language)
-const openerLang = () => (display.opener_language && display.opener_language !== "auto") ? display.opener_language : display.language;
-const openerOf = (data) => data && ((openerLang() === "en" && data.opener_en) || data.opener);
-
-function values(data) {
-  data = data || {};
-  return { apm: (data.apm || {}).apm, pps: data.pps, app: data.app, opener: openerOf(data),
-           attack: data.attack, pieces: data.pieces, ren: data.ren, b2b: data.b2b };
-}
-
-// trend: each side's values, one a second of match time; starts over when the clock goes back
-const history = { left: {}, right: {} }, historyT = { left: null, right: null };
-function recordHistory(side, data, elapsed) {
-  if (elapsed == null) return;
-  if (historyT[side] != null && elapsed < historyT[side] - 0.5) { history[side] = {}; historyT[side] = null; }
-  if (historyT[side] != null && elapsed < historyT[side] + 1) return;
-  historyT[side] = elapsed;
-  const v = values(data);
-  for (const k of STAT_ITEMS) {
-    if (v[k] == null) continue;
-    (history[side][k] = history[side][k] || []).push(Number(v[k]));
-    if (history[side][k].length > TREND_SAMPLES) history[side][k].shift();
+function drawCat(side, pos, name, u) {
+  const cat = window.CAT, el = $("cat-" + side), mirror = side === "left";
+  const [i, j] = pos, frac = clamp01(pos[2]);
+  const [w, h] = cat.size, cw = int(w * u), ch = int(h * u);
+  if (el.width !== cw || el.height !== ch) { el.width = cw; el.height = ch; }
+  const ctx = el.getContext("2d");
+  ctx.clearRect(0, 0, cw, ch);
+  // the first frame solid, the next over it at the in-between opacity (as the HUD)
+  for (const [k, alpha] of [[i, 1], [j, j !== i ? frac : 0]]) {
+    const f = cat.frames[k];
+    if (!f.file || alpha <= 0) continue;
+    const im = catImage(f.file);
+    if (!im.complete || !im.naturalWidth) continue;
+    const iw = Math.max(1, pyRound(im.naturalWidth * u)), ih = Math.max(1, pyRound(im.naturalHeight * u));
+    let x = f.x * u;
+    if (mirror) x = w * u - x - iw;
+    const ix = pyRound(x), iy = pyRound(f.y * u);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (mirror) { ctx.translate(ix + iw, iy); ctx.scale(-1, 1); ctx.drawImage(im, 0, 0, iw, ih); }
+    else ctx.drawImage(im, ix, iy, iw, ih);
+    ctx.restore();
   }
-}
-function sparkSvg(side, key) {
-  const vs = history[side][key] || [];
-  if (vs.length < 2) return `<svg viewBox="0 0 46 13" preserveAspectRatio="none"><line x1="0" y1="6.5" x2="46" y2="6.5" stroke="rgba(255,255,255,0.2)" stroke-width="1.2"/></svg>`;
-  const lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo;
-  const pts = vs.map((x, i) => `${(46 * i / (vs.length - 1)).toFixed(1)},${(span < 1e-9 ? 6.5 : 13 - 13 * (x - lo) / span).toFixed(1)}`).join(" ");
-  return `<svg viewBox="0 0 46 13" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
-}
-const frac = (key, x) => x == null ? 0 : Math.max(0, Math.min(1, x / GAUGE_MAX[key]));
-
-function statRowsHtml(st, side, v) {
-  const keys = shownKeys();
-  if (st === "hex") {   // two side by side at most, the right one half lower, more rows below (as the HUD's hex_cells)
-    const cells = keys.map((_, i) => [i % 2, Math.floor(i / 2) + (i % 2 ? 0.5 : 0)]);
-    const w = Math.max(0, ...cells.map(([c]) => c)) * 0.78 + 1, h = (Math.max(0, ...cells.map(([, r]) => r)) + 1) * 0.88;
-    return `<div class="hxwrap" style="width:calc(var(--hw) * ${w});height:calc(var(--hw) * ${h.toFixed(2)})">` +
-      keys.map((key, i) => `<div class="hx" style="left:calc(var(--hw) * ${(cells[i][0] * 0.78).toFixed(2)});` +
-        `top:calc(var(--hw) * ${(cells[i][1] * 0.88).toFixed(2)})"><span class="lab">${labelFor(key)}</span>` +
-        `<span class="val num">${fmt(key, v[key])}</span></div>`).join("") + `</div>`;
+  // the name on the paper, following its corners (unmirrored text)
+  const quadOf = (k) => {
+    const p = cat.frames[k].paper;
+    if (!p) return null;
+    let q = p.map(([x, y]) => [mirror ? w - x : x, y]);
+    if (mirror) q = [q[1], q[0], q[3], q[2]];
+    return q;
+  };
+  const qa = quadOf(i), qb = quadOf(j);
+  const q = qa && qb ? qa.map((p, n) => [p[0] + (qb[n][0] - p[0]) * frac, p[1] + (qb[n][1] - p[1]) * frac]) : (qa || qb);
+  if (!q || !name) return;
+  const [tl, tr, , bl] = q;
+  ctx.save();
+  ctx.setTransform(u * (tr[0] - tl[0]) / 200, u * (tr[1] - tl[1]) / 200, u * (bl[0] - tl[0]) / 140,
+                   u * (bl[1] - tl[1]) / 140, u * tl[0], u * tl[1]);
+  const key = name + "\u0000" + FONT_CSS + BOLD;
+  if (paperFor[side] !== key) {   // one line, two lines, or running off the paper
+    paperFor[side] = key;
+    paperOf[side] = paperLayout(name, (t) => textWidth(100, BOLD, t));
   }
-  if (st === "tower") return keys.map((key) =>
-    `<div class="tw"><span class="val num">${fmt(key, v[key])}</span><div class="tb"><i style="height:${(frac(key, v[key]) * 100).toFixed(1)}%"></i></div>` +
-    `<span class="lab">${labelFor(key)}</span></div>`).join("");
-  if (st === "meter" && keys.length) {
-    const [first, ...rest] = keys;
-    const arc = "M 8 44 A 27 27 0 0 1 62 44";
-    const rows = rest.map((key) => `<div class="row"><span class="lab">${labelFor(key)}</span><span class="val num v-${key}">${fmt(key, v[key])}</span></div>`).join("");
-    return (rest.length ? `<div class="mrows">${rows}</div>` : "") +
-      `<div class="mbox"><svg viewBox="0 0 70 48"><path d="${arc}" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="6.5" stroke-linecap="round"/>` +
-      (frac(first, v[first]) > 0 ? `<path d="${arc}" fill="none" stroke="var(--acc)" stroke-width="6.5" stroke-linecap="round" pathLength="100" stroke-dasharray="${(frac(first, v[first]) * 100).toFixed(1)} 200"/>` : "") +
-      `</svg><div class="mval num">${fmt(first, v[first])}</div><div class="mlab">${labelFor(first)}</div></div>`;
-  }
-  const n = keys.length;
-  return keys.map((key, i) => {
-    const lab = `<span class="lab">${labelFor(key)}</span>`;
-    const val = `<span class="val num v-${key}">${fmt(key, v[key])}</span>`;
-    if (st === "pop") return `<div class="row"><span class="pill">${lab}${val}</span></div>`;
-    if (st === "gauge")
-      return `<div class="row">${lab}${val}<div class="bar"><i style="width:${(frac(key, v[key]) * 100).toFixed(1)}%"></i></div></div>`;
-    if (st === "trend") return `<div class="row">${lab}${sparkSvg(side, key)}${val}</div>`;
-    if (st === "slash") {   // stepping toward the board going down (as the HUD)
-      const step = `calc(${(n - 1 - i) * 6} * var(--u))`;
-      return `<div class="row" style="margin-${display.stats_position === "right" ? "left" : "right"}:${step}">${lab}${val}</div>`;
-    }
-    return `<div class="row">${lab}${val}</div>`;
-  }).join("");
+  const [lines, size] = paperOf[side];
+  ctx.font = `${BOLD} ${Math.max(7, int(size))}px ${FONT_CSS}`;
+  ctx.fillStyle = "rgb(25,25,30)"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  const m = ctx.measureText("Hg");
+  const shift = (m.fontBoundingBoxAscent - m.fontBoundingBoxDescent) / 2;   // a line's box centered, as Qt's AlignCenter
+  lines.forEach((line, k) => ctx.fillText(line, 100, 70 + (k - (lines.length - 1) / 2) * size * 1.1 + shift));
+  ctx.restore();
 }
 
-function versusHtml(left, right, puyo) {
-  // puyo: {left, right} — a Puyo side's numbers are left out, and the bar stays even
-  return shownKeys().map((key) => {
-    const a = left[key] || 0, b = right[key] || 0, total = a + b;
-    const split = total > 0 && !puyo.left && !puyo.right
-      ? `<div class="a" style="width:${(a / total * 100).toFixed(1)}%"></div><div class="b" style="flex:1"></div>`
-      : "";
-    return `<div class="vrow"><div class="vlab">${labelFor(key)}</div>` +
-      `<div class="vals"><span class="l num">${puyo.left ? "" : fmt(key, left[key])}</span>` +
-      `<span class="r num">${puyo.right ? "" : fmt(key, right[key])}</span></div>` +
-      `<div class="split">${split}</div></div>`;
-  }).join("");
-}
-
-function summaryHtml(state) {
-  const side = (data) => ({ ...values(data), ...((data || {}).match_stats || {}) });
-  const L = side(state.left), R = side(state.right);
-  const f = (v, dec) => v == null ? "--" : Number(v).toFixed(dec);
-  const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
-  const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  const cell = (cls, v, dec, puyo) => puyo ? `<span class="${cls}"></span>`   // a Puyo side's column stays empty
-    : dec === null ? `<span class="${cls} sop">${esc(v || "--")}</span>` : `<span class="${cls}">${f(v, dec)}</span>`;
-  const items = Array.isArray(display.summary_items) ? display.summary_items : SUMMARY_ROWS.map(([k]) => k);
-  return `<div class="stitle">${ui().summary}&nbsp;&nbsp;${time}</div>` +
-    SUMMARY_ROWS.filter(([key]) => items.includes(key)).map(([key, lab, dec]) =>
-    `<div class="srow">${cell("sl", L[key], dec, isPuyo(state.left))}<span class="slab">${ui()[lab]}</span>` +
-    `${cell("sr", R[key], dec, isPuyo(state.right))}</div>`).join("");
-}
-
-// display.bg_color / text_color -> CSS variables; the in-between colors are
-// mixed the same way as hud/overlay.py set_colors.
-const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ""); const v = m ? m[1] : "ffffff";
-  return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
-const mixRgb = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
-function setColors(target, bgHex, textHex, opacity, lineHex) {
-  // target: the root (overall look) or one part's element (display.parts)
-  const bg = hexRgb(bgHex || "#000000"), fg = hexRgb(textHex || "#ffffff"), white = [255, 255, 255];
-  const set = (k, v) => target.style.setProperty(k, v);
-  set("--bg-rgb", bg.join(","));
-  set("--band", `rgba(${bg.join(",")},${opacity})`);
-  set("--clear", `rgba(${bg.join(",")},0)`);
-  set("--band-a", opacity);
-  set("--fg", `rgb(${fg.join(",")})`);
-  set("--soft-rgb", mixRgb(fg, bg, 0.12).join(","));
-  set("--event-rgb", mixRgb(fg, bg, 0.1).join(","));
-  set("--pop-rgb", mixRgb(bg, white, 0.08).join(","));
-  set("--outline-rgb", mixRgb(bg, white, 0.06).join(","));
-  const lum = (0.299 * fg[0] + 0.587 * fg[1] + 0.114 * fg[2]) / 255;
-  set("--to", lum >= 0.5 ? "#000" : "#fff");   // the text outline contrasts with the text
-  // the minimal design's lines (its background: the background strength, their own color)
-  set("--line-rgb", hexRgb(lineHex || "#ffffff").join(","));
-}
-
-// display.player_color_left / right (and the lighter text tints, as in the HUD)
-function setPlayerColors(leftHex, rightHex) {
-  const set = (k, v) => document.documentElement.style.setProperty(k, v);
-  for (const [side, hex] of [["left", leftHex], ["right", rightHex]]) {
-    const c = hexRgb(hex);
-    set(`--p-${side}`, `rgb(${c.join(",")})`);
-    set(`--t-${side}`, `rgb(${mixRgb(c, [255, 255, 255], 0.45).join(",")})`);
-  }
-}
-
-// display.parts: a part's own size / colors / background, else the overall ones
-const PART_ELEMENTS = { stats: ["stat-left", "stat-right", "versus"], events: ["ev-left", "ev-right"],
-                        clock: ["clockbox"], summary: ["summary"], opener: ["ob-left", "ob-right", "ob-both"] };
-const partValue = (part, key) => {
-  const own = ((display.parts || {})[part] || {})[key];
-  return own == null ? display[key] : own;
-};
-
-// display.font_family / font_file. A loaded file lives in assets/user_fonts/
-// (next to this page's folder) and is registered under the family name the
-// settings window saved for it.
-let loadedFontFile = "";
-function setFont(family, file) {
-  const fam = (family || "").replace(/["\\]/g, "");
-  if (file && file !== loadedFontFile && /^user_fonts\/[^\/\\]+\.(ttf|otf|ttc)$/i.test(file)) {
-    loadedFontFile = file;
-    const face = new FontFace(fam || "UserFont", `url("../assets/${encodeURI(file)}")`);
-    face.load().then((f) => { document.fonts.add(f); layout(); }).catch(() => {});
-  }
-  const name = fam || (file ? "UserFont" : "");
-  document.body.style.fontFamily = name ? `"${name}", "Segoe UI", "Yu Gothic UI", sans-serif` : "";
-}
-
-function layout() {
-  const k = window.innerWidth / REF_W;          // screen px per reference px
-  const d = display, st = style();
-  document.documentElement.style.setProperty("--u", (k * d.scale) + "px");
-  setColors(document.documentElement, d.bg_color, d.text_color, d.background_opacity, d.line_color);
-  setPlayerColors(d.player_color_left, d.player_color_right);
-  for (const [part, ids] of Object.entries(PART_ELEMENTS)) {
-    for (const id of ids) {
-      const el = $(id);
-      el.style.setProperty("--u", (k * partValue(part, "scale")) + "px");
-      setColors(el, partValue(part, "bg_color"), partValue(part, "text_color"), partValue(part, "background_opacity"),
-                partValue(part, "line_color"));
-    }
-  }
-  const su = k * partValue("stats", "scale");   // the gaps next to the stat block go with its size
-  setFont(d.font_family, d.font_file);
-  const [fwBold, fwSemi, fwStroke] = weightStyle(d.text_weight);
-  document.body.classList.toggle("outlined", !!d.text_outline);
-  document.documentElement.style.setProperty("--fw-bold", fwBold);
-  document.documentElement.style.setProperty("--fw-semi", fwSemi);
-  document.documentElement.style.setProperty("--fw-stroke", fwStroke);
-  const mode = d.stats_position === "right" ? "right" : "left";
-  document.body.classList.toggle("pos-right", mode === "right");
-  for (const s of STYLES) document.body.classList.toggle("style-" + s, s === st);
-  const anyStat = shownKeys().length > 0;
-  const showStat = anyStat && st !== "versus";
-
-  for (const side of ["left", "right"]) {
-    const stat = $("stat-" + side), ev = $("ev-" + side);
-    const shown = showStat && !isPuyo((lastState || {})[side]);   // a side playing Puyo shows nothing
-    stat.className = `abs stat st-${st} p-${side} ${mode === "left" ? "hug-r" : "hug-l"}` + (shown ? "" : " hidden");
-    stat.style.setProperty("--slot", Math.max(2, ...shownKeys().map((k2) => SLOT_CH[k2])) + "ch");
-    // against a Puyo player the Tetris frame is wider (hud/overlay.py VS_PUYO_SHIFT_X)
-    const otherData = (lastState || {})[side === "left" ? "right" : "left"] || {};
-    const vsPuyo = otherData.puyo ? (mode === "left" ? -12 : 0) : 0;
-    const x = (STAT_ANCHOR_X[mode][side] + vsPuyo + d.offset_x + (d[`stats_${side}_offset_x`] || 0)) * k   // both, then this player's own
-      + (NEW_STYLES.includes(st) ? NEW_STYLE_GAP * su * (mode === "left" ? -1 : 1) : 0);
-    const ex = x + d.event_offset_x * k;    // events: stacked above the stats, then their own offset
-    let bottom = (STAT_BOTTOM_Y + d.offset_y + (d[`stats_${side}_offset_y`] || 0)) * k;
-    for (const [el, ax] of [[stat, x], [ev, ex]]) {
-      el.style.left = mode === "left" ? "auto" : ax + "px";
-      el.style.right = mode === "left" ? (window.innerWidth - ax) + "px" : "auto";
-    }
-    if (shown) {
-      stat.style.top = (bottom - stat.offsetHeight) + "px";
-      bottom -= stat.offsetHeight + EVENT_GAP * su;
-    }
-    ev.style.top = (bottom + d.event_offset_y * k - ev.offsetHeight) + "px";
-  }
-  const cb = $("clockbox");
-  cb.classList.toggle("hidden", !d.show_clock);
-  const clockTop = CLOCK_BOTTOM_Y * k - cb.offsetHeight;   // default spot (the versus block uses it)
-  cb.style.left = ((CLOCK_CENTER_X + d.clock_offset_x) * k - cb.offsetWidth / 2) + "px";
-  cb.style.top = (clockTop + d.clock_offset_y * k) + "px";
-
-  // versus: centered between the boards, just above the clock; offsets move it too.
-  const vs = $("versus");
-  vs.classList.toggle("hidden", !(anyStat && st === "versus"));
-  const vb = d.show_clock ? clockTop - VERSUS_GAP * su : CLOCK_BOTTOM_Y * k;
-  vs.style.left = ((CLOCK_CENTER_X + d.offset_x) * k - vs.offsetWidth / 2) + "px";
-  vs.style.top = (vb + d.offset_y * k - vs.offsetHeight) + "px";
-
-  // opener (開幕テンプレ): where display.opener_display says
-  const om = OPENER_DISPLAYS.includes(d.opener_display) ? d.opener_display : "board";
-  for (const m of OPENER_DISPLAYS) document.body.classList.toggle("om-" + m, m === om);
-  const st0 = lastState || {};
-  const nameOf = (data) => isPuyo(data) ? null : openerOf(data);
-  const names = { left: nameOf(st0.left), right: nameOf(st0.right) };
-  for (const id of ["ob-left", "ob-right", "ob-both"]) $(id).classList.add("hidden");
-  const alphas = { left: names.left ? popupAlpha(st0.left, st0.frozen, d.opener_seconds) : 0,
-                   right: names.right ? popupAlpha(st0.right, st0.frozen, d.opener_seconds) : 0 };
-  catStateTime = performance.now();   // ages just arrived with this state
-  if (om === "cat") { if (!catRunning) catTick(); }
-  else for (const side of ["left", "right"]) $("cat-" + side).classList.add("hidden");
-  if (om === "cat") { /* names shown by the cat (catTick) */ }
-  else if (d.show_opener && om === "top" && Math.max(alphas.left, alphas.right) > 0) {
-    // one box for both: up while either name is still within its few seconds
-    const ob = $("ob-both");
-    ob.classList.remove("hidden");
-    ob.style.opacity = Math.max(alphas.left, alphas.right);
-    const [odx, ody] = openerOffset(d, "both");
-    ob.style.left = ((OPENER_TOP_CENTER_X + odx) * k - ob.offsetWidth / 2) + "px";
-    ob.style.top = ((OPENER_TOP_Y + ody) * k) + "px";
-  } else if (d.show_opener && om !== "top") {
-    for (const side of ["left", "right"]) {
-      const alpha = alphas[side];
-      if (alpha <= 0) continue;
-      const ob = $("ob-" + side);
-      ob.classList.remove("hidden");
-      ob.style.opacity = alpha;
-      let x, y;
-      if (om === "board") { x = BOARD_CENTER_X[side] * k - ob.offsetWidth / 2; y = OPENER_BOARD_TOP_Y * k; }
-      else if (om === "hold") { x = HOLD_RIGHT_X[side] * k - ob.offsetWidth; y = OPENER_HOLD_TOP_Y * k; }
-      else { x = side === "left" ? NAMEBAR_RIGHT_X * k - ob.offsetWidth : NAMEBAR_LEFT_X * k; y = NAMEBAR_TOP_Y * k; }
-      const [odx, ody] = openerOffset(d, side);
-      ob.style.left = (x + odx * k) + "px";
-      ob.style.top = (y + ody * k) + "px";
-    }
-  }
-
-  // summary: while a finished match is on screen
-  const sm = $("summary");
-  const ready = lastState && lastState.frozen && (lastState.match_elapsed_s || 0) > 0;
-  sm.classList.toggle("hidden", !(d.show_summary && ready));
-  sm.style.left = ((CLOCK_CENTER_X + d.summary_offset_x) * k - sm.offsetWidth / 2) + "px";
-  sm.style.top = ((SUMMARY_TOP_Y + d.summary_offset_y) * k) + "px";
-}
-
-function alignStatColumns(box) {
-  const labs = [...box.querySelectorAll(box.classList.contains("st-meter") ? ".mrows .lab" : ".lab")];
-  labs.forEach((l) => { l.style.minWidth = ""; });
-  if (["st-gauge", "st-hex", "st-tower"].some((c) => box.classList.contains(c))) return;
-  const w = Math.max(0, ...labs.map((l) => l.getBoundingClientRect().width));
-  labs.forEach((l) => { l.style.minWidth = w + "px"; });
-}
-
-function renderSide(side, data) {
-  const box = $("stat-" + side);
-  box.innerHTML = statRowsHtml(style(), side, values(data));
-  alignStatColumns(box);
-  const ev = $("ev-" + side);
-  const log = ((data || {}).event_log || []).slice(0, display.event_log_count).reverse();  // oldest on top
-  const key = display.language === "en" ? "text_en" : "text";
-  const text = (e) => (e.ren_source === "opener" && e.opener)    // an opener: its name in openerLang()
-    ? (display.language === "en" ? "Opener: " : "開幕：") + ((openerLang() === "en" && e.opener_en) || e.opener)
-    : (e[key] || e.text || "");
-  ev.innerHTML = log.map((e) => `<div>${esc(text(e))}</div>`).join("");
-  ev.classList.toggle("hidden", !(display.show_event_log && log.length && !isPuyo(data)));
-}
-
+// ======================================================================
+// State from the server
+// ======================================================================
 function render(state) {
   if (state.display) display = { ...DEFAULTS, ...state.display };
-  if (display.players === "left" || display.players === "right") {   // 1P / 2P only
-    const other = display.players === "left" ? "right" : "left";
-    state[other] = { ...(state[other] || {}), hidden: true };
-  }
-  for (const side of ["left", "right"]) recordHistory(side, state[side], state.match_elapsed_s);
-  renderSide("left", state.left);
-  renderSide("right", state.right);
-  $("versus").innerHTML = versusHtml(values(state.left), values(state.right),
-                                     { left: isPuyo(state.left), right: isPuyo(state.right) });
-  $("summary").innerHTML = summaryHtml(state);
-  const lab = ui().s_opener, sep = display.language === "en" ? ": " : "：";
-  for (const side of ["left", "right"]) {
-    const name = esc(openerOf(state[side]) || "");
-    $("ob-" + side).innerHTML = display.opener_display === "namebar"
-      ? `<span class="olab">${lab}${sep}</span><span class="oname">${name}</span>`
-      : `<div class="olab">${lab}</div><div class="oname">${name}</div>`;
-  }
-  $("ob-both").innerHTML = `<div class="olab">${lab}</div><div class="orow">` +
-    `<span class="ol">${esc(openerOf(state.left) || "--")}</span><span class="ovs">vs</span>` +
-    `<span class="or">${esc(openerOf(state.right) || "--")}</span></div>`;
-  // Match clock is game time: it stops while paused and resumes after.
-  const s = Math.max(0, Math.floor(state.match_elapsed_s || 0));
-  $("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  $("state").textContent = state.frozen ? ui().frozen
-    : state.paused ? ui().paused
-    : state.waiting_start ? ui().waiting : "";
-  document.body.classList.toggle("away", display.enabled === false   // switched off
-    || (!display.always_show && !display.force_show && state.match_screen === false));
-  const captureDown = state.capture && state.capture.ok === false;
-  document.body.classList.toggle("stale", !!captureDown);
-  const msg = (display.language === "en" && state.capture && state.capture.message_en) || (state.capture || {}).message;
-  $("status").textContent = captureDown ? ui().down + ": " + msg : "";
+  lastState = state = markHiddenSides(state, display.players);
+  stateT = performance.now();
+  const ui = UI_TEXT[display.language === "en" ? "en" : "ja"];
+  clock.clockText = fmtClock(state.match_elapsed_s);
+  clock.stateText = state.frozen ? ui.frozen : state.paused ? ui.paused : state.waiting_start ? ui.waiting : "";
+  const cap = state.capture || {}, stale = cap.ok === false;
+  const msg = (display.language === "en" && cap.message_en) || cap.message;
+  clock.statusText = stale ? `⚠ ${msg || ui.capture_down}`
+    : !connected ? (everConnected ? ui.disconnected : ui.connecting) : "";
+  for (const side of ["left", "right"]) statUpdate(stats[side], state[side], state.match_elapsed_s);
+  versus.values = { left: sideValues(state.left), right: sideValues(state.right) };
+  versus.puyo = { left: isPuyo(state.left), right: isPuyo(state.right) };
+  summary.duration = state.match_elapsed_s || 0;
+  summary.sides = { left: summarySide(state.left), right: summarySide(state.right) };
+  // dim rather than hide when capture is down: the numbers are the last real measurement
+  for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, summary, ...Object.values(badges)]) p.dim = stale;
   layout();
 }
 
+let lastMessage = null;
 function connect() {
   const ws = new WebSocket("ws://127.0.0.1:8765");
-  ws.onopen = () => { $("status").textContent = ""; layout(); };
-  ws.onclose = () => {
-    $("status").textContent = ui().disconnected;
-    layout();
-    setTimeout(connect, 2000);
-  };
+  ws.onopen = () => { connected = everConnected = true; lastMessage = null; render(lastState); };
+  ws.onclose = () => { connected = false; render(lastState); setTimeout(connect, 2000); };
   ws.onerror = () => { ws.close(); };
   ws.onmessage = (event) => {
-    lastState = JSON.parse(event.data);
+    if (event.data === lastMessage) return;   // nothing changed (menus, the result screen): nothing to redraw
+    lastMessage = event.data;
+    const state = JSON.parse(event.data);
     // OBS keeps a page as it first loaded it: when the app's files change
     // (an update, a new cat) the server says so and the page loads them again
-    // (user: the cat wasn't in OBS — it still had the page from before the cat).
-    if (lastState.page_rev) {
-      if (pageRev === null) pageRev = lastState.page_rev;
-      else if (lastState.page_rev !== pageRev) { location.reload(); return; }
+    if (state.page_rev) {
+      if (pageRev === null) pageRev = state.page_rev;
+      else if (state.page_rev !== pageRev) { location.reload(); return; }
     }
-    render(lastState);
+    render(state);
   };
 }
 window.addEventListener("resize", layout);
+document.fonts && document.fonts.ready.then(() => { widthCache.clear(); layout(); });
 render({});
 connect();
 </script>

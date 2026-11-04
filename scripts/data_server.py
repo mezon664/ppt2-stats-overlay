@@ -22,6 +22,12 @@ import sys
 import cv2
 import websockets
 
+# OpenCV's own worker threads: with them a frame finished a little sooner
+# (24 vs 29 ms of the 67 ms it has at 15 a second) but took 46 ms of CPU
+# instead of 29 (measured on burst_english / burst_boundary). One thread
+# leaves more of the PC to the game (user: make the app lighter).
+cv2.setNumThreads(1)
+
 # The full package's bundled Python doesn't put this script's own folder on
 # the import path (its ._pth file fixes the path), so do it here.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -90,6 +96,24 @@ def capture_loop_video(path, speed, realtime):
         CAPTURE_STATUS = {"ok": False, "message": f"error: {e}"}
 
 
+# Off the match screen (home, menus, character select) for a while, the game
+# is read fewer times a second: reading the window alone took ~28% of a CPU
+# core at 15 a second with nothing to recognize (user: make the app lighter).
+# Nothing there needs the full rate: the screen goes black as a match is left
+# (that reset is seen at the full rate, from the match screen — every blackout
+# in the 13 recordings came right after match-screen frames), and coming back
+# to the match screen is seen within 1/IDLE_FPS s, seconds before GO!.
+IDLE_FPS = 5
+IDLE_AFTER_S = 3.0
+
+
+def idle_period(reason, since, now, period):
+    """The time between reads: longer once off the match screen IDLE_AFTER_S."""
+    if reason == "no_match_ui" and since is not None and now - since >= IDLE_AFTER_S:
+        return max(period, 1.0 / IDLE_FPS)
+    return period
+
+
 def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     """Live game-window capture. See live_capture.py for the window-finding /
     minimized-window handling; kept separate so this module stays testable without
@@ -105,6 +129,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     consecutive_errors = 0
     last_error = None
     last_error_log_t = 0.0
+    away_since = None   # when the game left the match screen (see idle_period)
     while stop_event is None or not stop_event.is_set():
         loop_start = time.monotonic()
         try:
@@ -156,12 +181,18 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
             if stop_event is None:
                 time.sleep(retry_delay)
             continue
+        reason = getattr(getattr(PIPELINE, "gameplay_gate", None), "last_reason", None)
+        if reason != "no_match_ui":
+            away_since = None
+        elif away_since is None:
+            away_since = loop_start
+        wait = idle_period(reason, away_since, time.monotonic(), period)
         elapsed = time.monotonic() - loop_start
-        if elapsed < period:
+        if elapsed < wait:
             if stop_event is not None:
-                stop_event.wait(period - elapsed)
+                stop_event.wait(wait - elapsed)
             else:
-                time.sleep(period - elapsed)
+                time.sleep(wait - elapsed)
     close = getattr(cap, "close", None) if cap is not None else None
     if close:
         close()

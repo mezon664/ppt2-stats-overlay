@@ -1552,12 +1552,49 @@ def load_cat():
 
 
 def cat_image(frame):
-    """A frame's image (read once, kept), or None for a frame without the cat."""
+    """A frame's image read from its file (not kept: only the scaled copies
+    are, see CatFrames), or None for a frame without the cat."""
     if not frame.get("file"):
         return None
-    if "img" not in frame:
-        frame["img"] = QtGui.QImage(str(CAT_DIR / frame["file"]))
-    return frame["img"]
+    return QtGui.QImage(str(CAT_DIR / frame["file"]))
+
+
+class CatFrames:
+    """The cat's frames scaled to the size shown, shared by both players'
+    cats (1P's is mirrored as it's drawn). Kept so none is scaled while the
+    cat walks, but only one set, and nothing once the cat display isn't
+    chosen: two mirrored sets plus the read files took +380 MB at a 1756-wide
+    game window and +650 MB at 2560, and stayed taken after switching away
+    (user: make the app lighter)."""
+
+    def __init__(self):
+        self.cat, self.u, self.frames = None, None, {}
+
+    def get(self, cat, u, index):
+        """Frame `index` at size u: (QImage, x, y) in the unmirrored clip, or None."""
+        if cat is not self.cat or u != self.u:
+            self.cat, self.u, self.frames = cat, u, {}
+        if index not in self.frames:
+            f = cat["frames"][index]
+            src = cat_image(f)
+            if src is None or src.isNull():
+                self.frames[index] = None
+            else:
+                img = src.scaled(max(1, round(src.width() * u)), max(1, round(src.height() * u)),
+                                 QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
+                                 QtCore.Qt.TransformationMode.SmoothTransformation)
+                self.frames[index] = (img.convertToFormat(QtGui.QImage.Format.Format_ARGB32_Premultiplied),
+                                      f["x"] * u, f["y"] * u)
+        return self.frames[index]
+
+    def has(self, cat, u, index):
+        return cat is self.cat and u == self.u and index in self.frames
+
+    def clear(self):
+        self.cat, self.u, self.frames = None, None, {}
+
+
+CAT_FRAMES = CatFrames()
 
 
 def cat_pos(cat, age, seconds):
@@ -1659,8 +1696,6 @@ class CatPopup(QtWidgets.QWidget):
         self.pos = None
         self.name = ""
         self.u = 1.0
-        self._ready = {}          # frame index -> (QImage at self.u, its top-left)
-        self._ready_u = None
         self._dirty = None        # the area painted last (show_frame repaints only that and the new one)
         self._todo = []           # frames still to scale (prepare)
         self._prep_timer = QtCore.QTimer(self)
@@ -1672,9 +1707,7 @@ class CatPopup(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     def show_frame(self, cat, pos, name, u):
-        self.cat, self.pos, self.name = cat, pos, name
-        if u != self.u or self._ready_u != u:
-            self.u, self._ready, self._ready_u = u, {}, u
+        self.cat, self.pos, self.name, self.u = cat, pos, name, u
         w, h = cat["size"]
         size = QtCore.QSize(int(w * u), int(h * u))
         if self.size() != size:
@@ -1710,10 +1743,8 @@ class CatPopup(QtWidgets.QWidget):
         walking (that made it hitch) — a few at a time in the order they're
         shown, between other work: all at once froze the app for about a
         second the first time the cat display was chosen (user: it flickered)."""
-        self.cat = cat
-        if self._ready_u != u:
-            self.u, self._ready, self._ready_u = u, {}, u
-        self._todo = [i for i in range(len(cat["frames"])) if i not in self._ready]
+        self.cat, self.u = cat, u
+        self._todo = [i for i in range(len(cat["frames"])) if not CAT_FRAMES.has(cat, u, i)]
         if self._todo and not self._prep_timer.isActive():
             self._prep_timer.start()
 
@@ -1725,24 +1756,32 @@ class CatPopup(QtWidgets.QWidget):
             self._frame(self._todo.pop(0))
 
     def _frame(self, index):
-        """Frame `index` scaled to self.u (mirrored for 1P), and where it goes."""
-        if index not in self._ready:
-            f = self.cat["frames"][index]
-            src = cat_image(f)
-            if src is None or src.isNull():
-                self._ready[index] = None
-            else:
-                img = src.scaled(max(1, round(src.width() * self.u)),
-                                 max(1, round(src.height() * self.u)),
-                                      QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
-                                      QtCore.Qt.TransformationMode.SmoothTransformation)
-                img = img.convertToFormat(QtGui.QImage.Format.Format_ARGB32_Premultiplied)
-                x = f["x"] * self.u
-                if self.side == "left":   # 1P: comes in from the left
-                    img = img.mirrored(True, False)
-                    x = self.cat["size"][0] * self.u - x - img.width()
-                self._ready[index] = (img, int(round(x)), int(round(f["y"] * self.u)))
-        return self._ready[index]
+        """Frame `index` at self.u and its top-left in this widget, or None.
+        For 1P the frame is mirrored as it's drawn (paintEvent)."""
+        f = CAT_FRAMES.get(self.cat, self.u, index)
+        if f is None:
+            return None
+        img, x, y = f
+        if self.side == "left":   # 1P: comes in from the left
+            x = self.cat["size"][0] * self.u - x - img.width()
+        return img, int(round(x)), int(round(y))
+
+    def release(self):
+        """The cat display isn't chosen any more: let go of the frames."""
+        self._prep_timer.stop()
+        self._todo, self.cat, self.pos, self._dirty = [], None, None, None
+        CAT_FRAMES.clear()
+
+    def _draw(self, p, f):
+        img, x, y = f
+        if self.side == "left":
+            p.save()
+            p.translate(x + img.width(), y)
+            p.scale(-1, 1)
+            p.drawImage(0, 0, img)
+            p.restore()
+        else:
+            p.drawImage(x, y, img)
 
     def _quad(self, index):
         f = self.cat["frames"][index]
@@ -1798,10 +1837,10 @@ class CatPopup(QtWidgets.QWidget):
         # blend of every pixel each repaint was the heavy part on big windows.
         p = QtGui.QPainter(self)
         if a is not None:
-            p.drawImage(a[1], a[2], a[0])
+            self._draw(p, a)
         if b is not None and frac > 0:
             p.setOpacity(frac)
-            p.drawImage(b[1], b[2], b[0])
+            self._draw(p, b)
             p.setOpacity(1.0)
         qa, qb = self._quad(i), self._quad(j)
         quad = qa if qb is None else qb if qa is None else \
@@ -1882,6 +1921,7 @@ class HudWindow(QtWidgets.QWidget):
         self._size = (REFERENCE_W, REFERENCE_H)
         self._scale = 1.0
         self._last_state = {}
+        self._last_raw_state = None   # the last state as the server sent it (on_state)
         self._state_t = time.monotonic()   # when _last_state arrived (opener fade timing)
         self._fade = QtCore.QTimer(self)   # repaints the opener names while they're up
         self._fade.setInterval(16)
@@ -1972,9 +2012,15 @@ class HudWindow(QtWidgets.QWidget):
         if d["opener_display"] == "cat" and d["show_opener"]:
             # ready the cat's frames at this size now, not while it's walking
             QtCore.QTimer.singleShot(0, self._prepare_cats)
+        elif self._cat is not None:   # not shown: let go of the clip and its frames
+            for c in self.cats.values():
+                c.release()
+            self._cat = None
         self._place()
 
     def _prepare_cats(self):
+        if not (self.display["opener_display"] == "cat" and self.display["show_opener"]):
+            return   # switched away again before this ran
         if self._cat is None:
             self._cat = load_cat() or False
         if self._cat:
@@ -2088,6 +2134,12 @@ class HudWindow(QtWidgets.QWidget):
 
     # --- data ---
     def on_state(self, state):
+        # The server sends 10 a second even when nothing changes (menus, the
+        # result screen): an identical one is skipped instead of laying out
+        # and repainting everything again (user: make the app lighter).
+        if state == self._last_raw_state:
+            return
+        self._last_raw_state = state
         self._last_state = state
         self._state_t = time.monotonic()
         # Follow the server's copy only when IT changes (someone edited the

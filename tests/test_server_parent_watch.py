@@ -18,3 +18,14 @@ def test_server_side_watch_ends_when_the_parent_is_gone():
         if child.poll() is None:
             child.kill()
         parent.wait(timeout=5)
+
+
+def test_reads_fewer_times_a_second_off_the_match_screen():
+    """Off the match screen for a while the game is read 5 times a second,
+    not 15; on it (or paused, or just left it) at the full rate."""
+    from data_server import idle_period, IDLE_AFTER_S
+    p = 1 / 15
+    assert idle_period(None, None, 100.0, p) == p                      # match screen
+    assert idle_period("pause", 90.0, 100.0, p) == p                   # pause menu
+    assert idle_period("no_match_ui", 99.0, 100.0, p) == p             # just left it
+    assert idle_period("no_match_ui", 100.0 - IDLE_AFTER_S, 100.0, p) == 1 / 5
