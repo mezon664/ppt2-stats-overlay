@@ -22,8 +22,6 @@ matches exactly each landed piece is taken out in turn: what's left must be
 a whole shape, or a shape once a piece of the kind in HOLD (its color) is put
 back somewhere. (Indexing every shape without each of its pieces instead
 took 1.5 million entries and 527 MB.)
-Not used for now: it named the CPU's boards (burst_boundary). Only
-exact matches are shown.
 
 Garbage (お邪魔) received during the opening pushes the shape up: whole
 garbage rows at the bottom are set aside first (user's request), and the
@@ -464,9 +462,11 @@ class OpenerDetector:
             # shape matching, then shown.
             if self._pending is None or self._pending[0] != names:
                 self._pending = (names, self.placements)
-        # The hold case (OpenerIndex.match_with_hold) is not used for now: it
-        # named the CPU's boards. The landed pieces are still noted for
-        # _report_miss.
+        elif self.name is None and self.landed:
+            # the hold case: only shapes of 6 pieces or more, shown at once
+            names = openers().match_with_hold(mask, self.landed, hold)
+            if names:
+                return self._announce(names)
         if self._pending is not None and self.placements - self._pending[1] >= WAIT_PIECES:
             return self._announce(self._pending[0])
         return None
