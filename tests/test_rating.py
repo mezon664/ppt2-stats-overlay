@@ -187,3 +187,31 @@ def test_a_club_room_forgets_the_league(monkeypatch):
     assert r.update(wait, now=12) is None and r.update(wait, now=13) is None   # not kept
     r.update(menu, now=14)
     assert r.league == "puzzle"                                                  # back in a league
+
+
+@pytest.mark.parametrize("name,league,value", [("rating_en_menu_puzzle.jpg", "puzzle", 2633),
+                                               ("rating_en_menu_puyo.jpg", "puyo", 984),
+                                               ("rating_en_menu_tetris.jpg", "tetris", 2504),
+                                               ("rating_en_menu_skill.jpg", "skill", 985)])
+def test_the_english_games_league_menus(name, league, value):
+    """English game (debug_frames/burst_english_rating): "Rating" and the
+    league titles in English; the bold digits of its menu are read too
+    (Tetris League's 2504 needed the thinned reading)."""
+    r = rating.RatingReader()
+    f = frame(name)
+    kind, box = r.find(f)
+    assert kind == "menu" and r.league_on_screen(f) == league
+    x1, y1, x2, y2 = box
+    assert r.read_number(f[y1:y2, x1:x2]) == value
+
+
+def test_the_english_games_standby_and_free_play():
+    """STANDBY is the まちうけ screen with the same "You"; FREE PLAY and
+    GAME LOBBY are club screens, which forget the league."""
+    r = rating.RatingReader()
+    standby = frame("rating_en_standby.jpg")
+    kind, box = r.find(standby)
+    x1, y1, x2, y2 = box
+    assert kind == "wait" and r.read_number(standby[y1:y2, x1:x2]) == 2633
+    assert r.in_club(frame("rating_en_lobby.jpg")) and r.in_club(frame("rating_en_freeplay.jpg"))
+    assert not any(r.in_club(frame(n)) for n in ("rating_en_standby.jpg", "rating_en_menu_puzzle.jpg"))

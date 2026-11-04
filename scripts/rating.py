@@ -63,10 +63,15 @@ YOU = {   # where "You" shows on your card, and your rating box then
     "left": {"tmpl": "rating_you_left.png", "near": (575, 160, 680, 225), "box": (420, 379, 505, 403)},
     "right": {"tmpl": "rating_you_right.png", "near": (620, 445, 725, 510), "box": (1140, 177, 1225, 201)},
 }
-MENU = {"tmpl": "rating_menu_label.png", "near": (1040, 268, 1145, 322), "box": (1140, 282, 1228, 310)}
-# each league's menu title, top left (order = the settings window's)
+# The league menu's rating label: "レート" in the Japanese game, "Rating" in the
+# English one (same place, same box: debug_frames/burst_english_rating).
+MENU = {"tmpl": ("rating_menu_label.png", "rating_menu_label_en.png"),
+        "near": (1040, 268, 1145, 322), "box": (1140, 282, 1228, 310)}
+# each league's menu title, top left (order = the settings window's): the
+# Japanese and the English game's ("Puzzle League" ...). The English game's
+# STANDBY screen is the まちうけ one with the same "You": no template of its own.
 LEAGUES = ("puzzle", "tetris", "puyo", "skill")
-LEAGUE_TITLES = {league: f"rating_league_{league}.png" for league in LEAGUES}
+LEAGUE_TITLES = {league: (f"rating_league_{league}.png", f"rating_league_{league}_en.png") for league in LEAGUES}
 TITLE_NEAR = (20, 40, 340, 150)
 # A club room ("ルーム" top left, like the league menus' titles; also on
 # ルームをつくる / ルームセレクト): no league is being played, so the league
@@ -74,7 +79,8 @@ TITLE_NEAR = (20, 40, 340, 150)
 # (2633 in debug_frames/burst_club), which must not go down as the league
 # whose menu was seen before (user: club matches shouldn't move the history).
 # 0.998 on the club room, 0.33 at most on burst_rating / burst_leagues.
-CLUB_TITLE = "rating_title_club.png"
+# English game: FREE PLAY (its menu) and GAME LOBBY (the room).
+CLUB_TITLES = ("rating_title_club.png", "rating_title_club_en_freeplay.png", "rating_title_club_en_lobby.png")
 MATCH_MIN = 0.80
 
 
@@ -82,19 +88,33 @@ def _scale(box, k):
     return tuple(int(round(v * k)) for v in box)
 
 
+def _read_all(names):
+    """The templates of these names that are there (one name or several)."""
+    names = (names,) if isinstance(names, str) else names
+    return [img for img in (read_image(TEMPLATES / n) for n in names) if img is not None]
+
+
+def _best(frame, tmpls, near, k):
+    """The best score of any of these templates near there (0 if none fits)."""
+    x1, y1, x2, y2 = _scale(near, k)
+    region = frame[max(0, y1):y2, max(0, x1):x2]
+    best = 0.0
+    for tmpl in tmpls:
+        if k != 1.0:
+            tmpl = cv2.resize(tmpl, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+        if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
+            continue
+        best = max(best, cv2.minMaxLoc(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED))[1])
+    return best
+
+
 class RatingReader:
     def __init__(self):
-        self._tmpl = {}
+        self._tmpl = {}   # key -> its templates (Japanese and English game)
         for key, spec in (("left", YOU["left"]), ("right", YOU["right"]), ("menu", MENU)):
-            img = read_image(TEMPLATES / spec["tmpl"])
-            if img is not None:
-                self._tmpl[key] = img
-        self._titles = {}
-        for league, name in LEAGUE_TITLES.items():
-            img = read_image(TEMPLATES / name)
-            if img is not None:
-                self._titles[league] = img
-        self._club = read_image(TEMPLATES / CLUB_TITLE)
+            self._tmpl[key] = _read_all(spec["tmpl"])
+        self._titles = {league: _read_all(names) for league, names in LEAGUE_TITLES.items()}
+        self._club = _read_all(CLUB_TITLES)
         self._engine = None
         self._engine_tried = False
         self._last_t = 0.0
@@ -106,45 +126,21 @@ class RatingReader:
 
     # --- where's my rating on this screen? ---
     def _found(self, frame, key, spec, k):
-        tmpl = self._tmpl.get(key)
-        if tmpl is None:
-            return False
-        if k != 1.0:
-            tmpl = cv2.resize(tmpl, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
-        x1, y1, x2, y2 = _scale(spec["near"], k)
-        region = frame[max(0, y1):y2, max(0, x1):x2]
-        if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
-            return False
-        score = cv2.minMaxLoc(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED))[1]
-        return score >= MATCH_MIN
+        return _best(frame, self._tmpl.get(key, ()), spec["near"], k) >= MATCH_MIN
 
     def league_on_screen(self, frame):
         """The league whose menu this is (its title top left), or None."""
         k = frame.shape[1] / BASE_W
-        x1, y1, x2, y2 = _scale(TITLE_NEAR, k)
-        region = frame[max(0, y1):y2, max(0, x1):x2]
         best, best_score = None, MATCH_MIN
-        for league, tmpl in self._titles.items():
-            if k != 1.0:
-                tmpl = cv2.resize(tmpl, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
-            if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
-                continue
-            score = cv2.minMaxLoc(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED))[1]
+        for league, tmpls in self._titles.items():
+            score = _best(frame, tmpls, TITLE_NEAR, k)
             if score >= best_score:
                 best, best_score = league, score
         return best
 
     def in_club(self, frame):
-        """A club room is on screen (CLUB_TITLE)."""
-        if self._club is None:
-            return False
-        k = frame.shape[1] / BASE_W
-        tmpl = cv2.resize(self._club, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k != 1.0 else self._club
-        x1, y1, x2, y2 = _scale(TITLE_NEAR, k)
-        region = frame[max(0, y1):y2, max(0, x1):x2]
-        if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
-            return False
-        return cv2.minMaxLoc(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED))[1] >= MATCH_MIN
+        """A club / free play screen is on (CLUB_TITLES)."""
+        return _best(frame, self._club, TITLE_NEAR, frame.shape[1] / BASE_W) >= MATCH_MIN
 
     def own_box(self, frame):
         """The box holding your rating on this frame, or None (another screen)."""
@@ -204,9 +200,17 @@ class RatingReader:
         if engine is None:
             return None
         seen = []
-        for scale in (3, 4, 2):
+        # then the same with the strokes thinned: the English game's league
+        # menu (bold dark digits on a light box) read as nothing at every size
+        # for half the frames (Tetris League's 2504 never) — thinned, 16 of 16
+        # (debug_frames/burst_english_rating). Only tried when the plain ones
+        # don't agree, so what read before reads the same.
+        for scale, thin in ((3, False), (4, False), (2, False), (3, True), (4, True), (2, True)):
             try:
-                text = asyncio.run(self._recognize(engine, self.prepare(crop, scale)))
+                img = self.prepare(crop, scale)
+                if thin:   # dark digits on white: widening the white thins them
+                    img = cv2.dilate(img, np.ones((5, 5), np.uint8))
+                text = asyncio.run(self._recognize(engine, img))
             except Exception:
                 log.debug("rating text recognition failed", exc_info=True)
                 continue
@@ -374,4 +378,4 @@ def clear(path=None):
 
 def has_league_template(league):
     """This league's menu can be recognized (its title template is there)."""
-    return (TEMPLATES / LEAGUE_TITLES[league]).exists()
+    return any((TEMPLATES / n).exists() for n in LEAGUE_TITLES[league])
