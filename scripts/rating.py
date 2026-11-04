@@ -143,29 +143,44 @@ class RatingReader:
         return self._engine
 
     @staticmethod
-    def prepare(crop):
-        """Black digits on white, three times the size: the digits are white
-        on the まちうけ cards and dark on the menu's light box."""
+    def prepare(crop, scale=3):
+        """Dark digits on white, stretched to full contrast and `scale` times
+        the size, edges kept smooth: the digits are white on the まちうけ
+        cards and dark on the menu's light box. (Cut to pure black and white
+        first, the live menu's 2618 read as 266 every time; kept gray, every
+        one of the 159 recorded boxes and the live one read right.)"""
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        g = gray.astype(np.float32)
         if (bw == 255).mean() < 0.5:     # mostly dark: the background is dark, the digits light
-            bw = 255 - bw
-        bw = cv2.resize(bw, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        return cv2.copyMakeBorder(bw, 24, 24, 24, 24, cv2.BORDER_CONSTANT, value=255)
+            g = 255 - g
+        lo, hi = np.percentile(g, 2), np.percentile(g, 98)
+        g = np.clip((g - lo) * 255 / max(1.0, hi - lo), 0, 255).astype(np.uint8)
+        g = cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        return cv2.copyMakeBorder(g, 30, 30, 30, 30, cv2.BORDER_CONSTANT, value=255)
 
     def read_number(self, crop):
+        """The number in the box, or None. Read at up to three sizes and
+        taken once two readings agree, so one odd reading never becomes a
+        rating (the recognizer now and then reads nothing, or drops a digit,
+        at one particular size)."""
         engine = self._ocr_engine()
         if engine is None:
             return None
-        try:
-            text = asyncio.run(self._recognize(engine, self.prepare(crop)))
-        except Exception:
-            log.debug("rating text recognition failed", exc_info=True)
-            return None
-        digits = "".join(c for c in text if c.isdigit())
-        if not 3 <= len(digits) <= 5:
-            return None
-        return int(digits)
+        seen = []
+        for scale in (3, 4, 2):
+            try:
+                text = asyncio.run(self._recognize(engine, self.prepare(crop, scale)))
+            except Exception:
+                log.debug("rating text recognition failed", exc_info=True)
+                continue
+            digits = "".join(c for c in text if c.isdigit())
+            if 3 <= len(digits) <= 5:
+                value = int(digits)
+                if value in seen:
+                    return value
+                seen.append(value)
+        return None
 
     @staticmethod
     async def _recognize(engine, gray):

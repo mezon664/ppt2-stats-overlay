@@ -108,3 +108,14 @@ def test_each_leagues_rating_is_read():
         img = frame(name)
         x1, y1, x2, y2 = r.own_box(img)
         assert r.read_number(img[y1:y2, x1:x2]) == want, name
+
+
+def test_the_live_menu_that_read_wrong():
+    """The live menu (as the server sees it, shrunk to 1232): its 2618 read
+    as 266 every time when cut to pure black and white first."""
+    r = rating.RatingReader()
+    if r._ocr_engine() is None:
+        pytest.skip("no Windows text recognition here")
+    img = cv2.imread(str(FIX / "rating_menu_live.png"))
+    x1, y1, x2, y2 = r.own_box(img)
+    assert r.read_number(img[y1:y2, x1:x2]) == 2618
