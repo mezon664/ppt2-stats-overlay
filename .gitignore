@@ -34,3 +34,6 @@ tools/opener_import/harddrop.json
 
 # tools/make_release.py: the libraries shipped in the zip as vendor/
 vendor/
+
+# Claude Code settings for this PC only
+.claude/settings.local.json

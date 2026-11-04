@@ -18,6 +18,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # the libraries downloaded for the tests are kept between releases
+          # (they took most of the 113 s the tests step needed)
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-vendor.txt
       - name: Tag matches the app's version
         shell: bash
         run: |
