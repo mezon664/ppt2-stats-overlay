@@ -70,9 +70,9 @@ QWidget#settingsRoot QLabel#muted {{ color: {c['muted']}; font-size: 12px; }}
 QPushButton {{ background: #ffffff; border: 1px solid {c['line']}; border-radius: {r2}px; padding: 6px 12px; }}
 QPushButton:hover {{ border-color: {c['accent']}; }}
 QPushButton:disabled {{ color: #9aa0b2; border-color: #e1e4ee; }}
-QPushButton#primary {{ background: {c['accent']}; border-color: {c['accent']}; color: {c['on_accent']}; font-weight: 700; }}
-QPushButton#primary:hover {{ background: {c['accent_hover']}; }}
-QPushButton#primary:checked {{ background: #16a34a; border-color: #16a34a; }}
+QWidget#settingsRoot QPushButton#primary {{ background: {c['accent']}; border-color: {c['accent']}; color: {c['on_accent']}; font-weight: 700; }}
+QWidget#settingsRoot QPushButton#primary:hover {{ background: {c['accent_hover']}; color: {c['on_accent']}; }}
+QWidget#settingsRoot QPushButton#primary:checked {{ background: #16a34a; border-color: #16a34a; color: #ffffff; }}
 QPushButton#cardReset {{ background: transparent; border: 1px solid transparent; border-radius: {r2}px; padding: 3px 8px; color: {c['muted']}; font-size: 12px; }}
 QPushButton#cardReset:hover {{ border-color: {c['line']}; color: {c['text']}; background: {c['page']}; }}
 QPushButton#cardReset:disabled {{ color: #b9bdc6; border-color: transparent; background: transparent; }}
