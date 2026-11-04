@@ -89,3 +89,23 @@ def test_switched_off_hides_everything():
     assert off.stats["left"].isHidden() and off.clock.isHidden()
     on = hud_with({"match_screen": True}, enabled=True)
     assert not on.stats["left"].isHidden()
+
+
+def test_shown_in_obs_only_hides_the_hud():
+    """show_on_hud off (OBS only): nothing over the game — except while
+    positioning, where the parts are needed to drag them."""
+    import overlay
+    settings = overlay.load_settings()
+    settings["hud"]["follow_game"] = False
+    overlay.WsClient.start = lambda self: None
+    win = overlay.HudWindow(settings)
+    d = overlay.display_settings({"display": {"show_on_hud": False, "show_clock": True}})
+    win.apply_display(d, local=True)
+    win.on_state({"match_elapsed_s": 10.0, "frozen": False, "display": d, "capture": {"ok": True},
+                  "match_screen": True, "left": {"apm": {"apm": 50.0}}, "right": {"apm": {"apm": 40.0}}})
+    assert win.clock.isHidden() and win.stats["left"].isHidden()
+    win.set_edit_mode(True)
+    assert not win.clock.isHidden()
+    win.set_edit_mode(False)
+    win.apply_display({**d, "show_on_hud": True}, local=True)
+    assert not win.clock.isHidden() and not win.stats["left"].isHidden()

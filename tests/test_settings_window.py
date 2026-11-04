@@ -189,3 +189,21 @@ def test_on_button_shows_it_anyway_off_the_match_screen(tmp_path, monkeypatch):
     w.set_match_screen(False)
     w._enabled_clicked()                             # off, at home: on and shown at once
     assert w.values()["enabled"] is True and w.values()["force_show"] is True
+
+
+def test_game_screen_and_obs_switch_on_their_own(tmp_path, monkeypatch):
+    """Where it shows while on: over the game (HUD) and in OBS, each its own
+    switch (user's request). From the tray only that one changes."""
+    w = window(tmp_path, monkeypatch)
+    assert w.values()["show_on_hud"] is True and w.values()["show_on_obs"] is True
+    saved = display_settings({"display": {"style": "hex", "scale": 1.4}})
+    config_store.save_settings({**config_store.DEFAULTS, "display": saved})
+    w.set_shown_on("show_on_hud", False)
+    w._save_timer.stop()
+    w._save()
+    d = display_settings(config_store.load_settings())
+    assert d["show_on_hud"] is False and d["show_on_obs"] is True and d["enabled"] is True
+    assert d["style"] == "hex" and d["scale"] == 1.4
+    assert not w.show_on_hud.isChecked() and w.show_on_obs.isChecked()
+    w.set_enabled(False)
+    assert not w.show_on_obs.isEnabled()      # greyed while everything is off

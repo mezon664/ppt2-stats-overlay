@@ -2047,6 +2047,8 @@ class HudWindow(QtWidgets.QWidget):
         With no word from the server yet, it shows as before."""
         if not self.display["enabled"]:   # switched off (settings window / tray)
             return True
+        if not self.display["show_on_hud"] and not self.edit_mode:   # shown in OBS only
+            return True
         return (not self.display["always_show"] and not self.display["force_show"] and not self.edit_mode
                 and self._last_state.get("match_screen") is False)
 
@@ -2523,6 +2525,13 @@ def main():
     act_enabled.setCheckable(True)
     act_enabled.setChecked(win.display["enabled"])
     act_enabled.toggled.connect(settings_win.set_enabled)
+    # where it shows: over the game / in OBS, each on its own
+    act_hud = menu.addAction("")
+    act_hud.setCheckable(True)
+    act_hud.toggled.connect(lambda on: settings_win.set_shown_on("show_on_hud", on))
+    act_obs = menu.addAction("")
+    act_obs.setCheckable(True)
+    act_obs.toggled.connect(lambda on: settings_win.set_shown_on("show_on_obs", on))
     menu.addSeparator()
     act_settings = menu.addAction("", settings_win.open)
     # for "the numbers don't move" reports: logs/ has what the recognition saw
@@ -2535,10 +2544,13 @@ def main():
 
     def show_enabled(d):
         on = d["enabled"]
-        if act_enabled.isChecked() != on:
-            act_enabled.blockSignals(True)
-            act_enabled.setChecked(on)
-            act_enabled.blockSignals(False)
+        for act, value in ((act_enabled, on), (act_hud, d["show_on_hud"]), (act_obs, d["show_on_obs"])):
+            if act.isChecked() != value:
+                act.blockSignals(True)
+                act.setChecked(value)
+                act.blockSignals(False)
+            if act is not act_enabled:
+                act.setEnabled(on)
         tray.setIcon(make_tray_icon(on))
         tray.setToolTip("PPTetrics" + ("" if on else ("（オフ）" if d["language"] != "en" else " (off)")))
     settings_win.display_changed.connect(show_enabled)
@@ -2546,6 +2558,8 @@ def main():
 
     def tray_language(lang):
         act_enabled.setText("Show the overlay" if lang == "en" else "表示する（オン／オフ）")
+        act_hud.setText("    On the game screen" if lang == "en" else "    ゲーム画面に表示")
+        act_obs.setText("    In OBS" if lang == "en" else "    OBS に表示")
         act_settings.setText("Display settings…" if lang == "en" else "表示設定…")
         act_logs.setText("Open the troubleshooting files…" if lang == "en" else "うまく認識しないとき：診断ファイルを開く…")
         act_quit.setText("Quit" if lang == "en" else "終了")

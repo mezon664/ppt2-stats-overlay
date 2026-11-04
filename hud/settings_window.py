@@ -279,6 +279,10 @@ TEXT = {
     "reset_all": {"ja": "初期設定に戻す", "en": "Reset to defaults"},
     "close": {"ja": "閉じる", "en": "Close"},
     "settings_on_top": {"ja": "設定画面を常に最前面に表示", "en": "Keep the settings window on top"},
+    "show_on_hud": {"ja": "ゲーム画面に表示", "en": "On the game screen"},
+    "show_on_obs": {"ja": "OBS に表示", "en": "In OBS"},
+    "show_on_tip": {"ja": "表示オンのとき、どこに出すか（片方だけにもできます）",
+                    "en": "Where it shows while on (either one alone is fine)"},
     "confirm_title": {"ja": "確認", "en": "Confirm"},
     "reset_confirm": {"ja": "表示設定を初期設定に戻します。よろしいですか？",
                        "en": "Reset the display settings to their defaults?"},
@@ -403,6 +407,12 @@ class SettingsWindow(QtWidgets.QWidget):
         self.enabled_button = QtWidgets.QPushButton()
         self.enabled_button.setMinimumHeight(40)
         self.enabled_button.clicked.connect(self._enabled_clicked)
+        # where it shows while on: over the game / in OBS, each on its own (user's request)
+        self.show_on_hud = QtWidgets.QCheckBox()
+        self.show_on_obs = QtWidgets.QCheckBox()
+        for c in (self.show_on_hud, self.show_on_obs):
+            c.setChecked(True)
+            c.toggled.connect(self._changed)
         self.on_top_check = QtWidgets.QCheckBox()
         self.on_top_check.setChecked(self._settings_on_top)
         self.on_top_check.toggled.connect(self._set_settings_on_top)
@@ -434,6 +444,11 @@ class SettingsWindow(QtWidgets.QWidget):
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(self.enabled_button)
+        where = QtWidgets.QHBoxLayout()
+        where.addWidget(self.show_on_hud)
+        where.addWidget(self.show_on_obs)
+        where.addStretch(1)
+        lay.addLayout(where)
         lay.addWidget(self.on_top_check)
         lay.addWidget(self.tabs)
         lay.addWidget(self.note)
@@ -775,6 +790,8 @@ class SettingsWindow(QtWidgets.QWidget):
         return self._enabled and self._off_match_screen and not self._force and not self.always_show.isChecked()
 
     def _paint_enabled(self):
+        for c in (self.show_on_hud, self.show_on_obs):   # where it shows: only matters while on
+            c.setEnabled(self._enabled)
         if not self._enabled:
             key, look = "enabled_off", "background: #e4e4e7; color: #3f3f46; }"
         elif self._hidden_off_screen():
@@ -814,6 +831,11 @@ class SettingsWindow(QtWidgets.QWidget):
             self._save_timer.stop()
             self._save()
         self._apply_saved(enabled=on, force_show=on and self._off_match_screen)
+
+    def set_shown_on(self, key, on):
+        """The tray menu's "on the game screen" / "in OBS" (show_on_hud /
+        show_on_obs): only that one changes (see set_enabled)."""
+        self._apply_saved(**{key: on})
 
     def _apply_saved(self, **changes):
         """Changes just these display values on top of the saved ones (the
@@ -1032,6 +1054,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.reset_button.setText(t("reset_all"))
         self.close_button.setText(t("close"))
         self.on_top_check.setText(t("settings_on_top"))
+        self.show_on_hud.setText(t("show_on_hud"))
+        self.show_on_obs.setText(t("show_on_obs"))
+        for c in (self.show_on_hud, self.show_on_obs):
+            c.setToolTip(t("show_on_tip"))
         self._update_offset_label()
         self._show_look()
         self.adjustSize()
@@ -1423,6 +1449,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_clock.setChecked(d["show_clock"])
         self.always_show.setChecked(d["always_show"])
         self._enabled, self._force = d["enabled"], d["force_show"]
+        self.show_on_hud.setChecked(d["show_on_hud"])
+        self.show_on_obs.setChecked(d["show_on_obs"])
         self._paint_enabled()
         self.players.setCurrentIndex(max(0, self.players.findData(d["players"])))
         self.opener_language.setCurrentIndex(max(0, self.opener_language.findData(d["opener_language"])))
@@ -1462,6 +1490,8 @@ class SettingsWindow(QtWidgets.QWidget):
             "always_show": self.always_show.isChecked(),
             "enabled": self._enabled,
             "force_show": self._enabled and self._force,
+            "show_on_hud": self.show_on_hud.isChecked(),
+            "show_on_obs": self.show_on_obs.isChecked(),
             "players": self.players.currentData(),
             "opener_seconds": self.opener_seconds.value(),
             "opener_language": self.opener_language.currentData(),

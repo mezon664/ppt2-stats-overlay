@@ -91,6 +91,11 @@ DISPLAY_DEFAULTS = {
     # off hides everything, on the HUD and in OBS. Recognition keeps running,
     # so turning it back on shows the current numbers straight away.
     "enabled": True,
+    # Where it shows while on (user: switch the game-screen overlay and OBS
+    # separately): show_on_hud = over the game (the HUD), show_on_obs = the
+    # OBS page. "enabled" above still switches both off at once.
+    "show_on_hud": True,
+    "show_on_obs": True,
     # Shown off the match screen too, for now (user: switch it on from the
     # home screen with the on/off button). Cleared when a match screen next
     # comes up, so the usual hiding is back after that.

@@ -75,7 +75,7 @@ const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enable
   summary_offset_x: 0, summary_offset_y: 0, stats_left_offset_x: 0, stats_left_offset_y: 0,
   stats_right_offset_x: 0, stats_right_offset_y: 0, opener_offset_x: 0, opener_offset_y: 0,
   opener_left_offset_x: 0, opener_left_offset_y: 0, opener_right_offset_x: 0, opener_right_offset_y: 0,
-  show_summary: true, show_opener: true, opener_display: "board", background_opacity: 0.85,
+  show_on_hud: true, show_on_obs: true, show_summary: true, show_opener: true, opener_display: "board", background_opacity: 0.85,
   stat_items: ["apm", "pps", "app"], labels: {}, player_color_left: "#3b8eea", player_color_right: "#e5484d",
   parts: {}, show_clock: true, show_event_log: false, event_log_count: 3,
   summary_items: ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear"] };
@@ -878,7 +878,7 @@ function layout() {
 }
 
 function awayFromMatch() {
-  if (display.enabled === false) return true;
+  if (display.enabled === false || display.show_on_obs === false) return true;   // off, or shown on the game screen only
   return !display.always_show && !display.force_show && lastState.match_screen === false;
 }
 
