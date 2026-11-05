@@ -1122,7 +1122,9 @@ class MatchPipeline:
             self._blackout_reset()
             return
         on_screen = self.gameplay_gate.update(frame)
-        if getattr(self.gameplay_gate, "last_found", None):
+        if on_screen and getattr(self.gameplay_gate, "last_found", None):
+            # (only while playing: the pause menu dims the screen, its label's
+            # white down to 127, and a long pause read as a washed-out capture)
             self.levels.observe(raw, self.gameplay_gate)
         if on_screen or getattr(self.gameplay_gate, "last_reason", None) == "pause":
             self.match_screen = True     # the pause screen is still the match
