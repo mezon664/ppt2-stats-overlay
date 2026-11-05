@@ -237,6 +237,8 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                 read_rating(frame, cap)
                 CAPTURE_STATUS = {
                     "ok": True, "message": "capturing",
+                    # the game's picture inside the window (black bars cut off), for the HUD
+                    "picture": list(getattr(cap, "last_picture", None) or ()),
                     "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),
                 }
                 consecutive_errors = 0

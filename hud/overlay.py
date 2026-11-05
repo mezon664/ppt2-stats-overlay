@@ -2198,7 +2198,7 @@ class HudWindow(QtWidgets.QWidget):
         if game_ok:
             _, _, cw, ch = win32gui.GetClientRect(self._hwnd)
             gx, gy = win32gui.ClientToScreen(self._hwnd, (0, 0))
-            game_rect = (gx, gy, cw, ch)
+            game_rect = self._on_picture(gx, gy, cw, ch)
         g = self.geometry()
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         sg = self.screen().geometry() if self.screen() else QtCore.QRect()
@@ -2343,6 +2343,7 @@ class HudWindow(QtWidgets.QWidget):
         if cw <= 0 or ch <= 0:
             self._lost_game()
             return
+        left, top, cw, ch = self._on_picture(left, top, cw, ch)
         x, y, dpr = native_to_logical(left, top, cw, ch)
         geom = (left, top, cw, ch, dpr)
         if geom == self._last_geom:
@@ -2352,6 +2353,18 @@ class HudWindow(QtWidgets.QWidget):
         self._size = (cw / dpr, ch / dpr)
         self._scale = cw / (REFERENCE_W * dpr)
         self._layout()
+
+    def _on_picture(self, left, top, cw, ch):
+        """The game's picture inside its window: the server cuts off black bars
+        around it (live_capture.find_picture) and says where it is, and the
+        HUD sits on the picture, not on the bars (a user's HUD sat a little to
+        the left of the game)."""
+        pic = ((self._last_state or {}).get("capture") or {}).get("picture") or []
+        if len(pic) == 4 and all(isinstance(v, int) for v in pic):
+            x, y, w, h = pic
+            if w > 0 and h > 0 and x + w <= cw and y + h <= ch:
+                return left + x, top + y, w, h
+        return left, top, cw, ch
 
     def _lost_game(self):
         """No game window to sit on: show nothing until it's back."""

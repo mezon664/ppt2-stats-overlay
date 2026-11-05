@@ -56,6 +56,81 @@ def shrink_for_recognition(frame):
 
 PROCESS_NAME = "PuyoPuyoTetris2.exe"
 
+# Black bars around the game's picture (a window a little wider or taller
+# than 16:9: the game keeps its picture 16:9 and fills the rest with black).
+# Everything is placed from the picture, not the window, so the bars are cut
+# off first. Left in, every box was off by up to the bar's width and the scale
+# a few % big: with 2.5% of bars, the T-SPINs of the recordings went 4 -> 0
+# and 4 -> 1 (a user's T-SPINs went uncounted, the HUD a little to the left).
+BAR_DARK = 12          # brightest a bar's pixel may be (the game's black is 0)
+BAR_STEP = 4           # every 4th pixel is looked at
+BAR_SAME_READS = 3     # the same bars this many frames in a row before they're used
+BAR_ASPECT_TOL = 0.015 # what's left must be this close to 16:9 (else it's dark picture, not bars)
+
+
+def find_picture(frame):
+    """(x, y, w, h) of the game's picture inside black bars, the whole frame
+    when there are none, or None for a frame that's (nearly) all black."""
+    from capture_profile import REFERENCE_ASPECT
+    h, w = frame.shape[:2]
+    small = frame[::BAR_STEP, ::BAR_STEP].max(axis=2)
+    cols = np.flatnonzero(small.max(axis=0) > BAR_DARK)
+    rows = np.flatnonzero(small.max(axis=1) > BAR_DARK)
+    if len(cols) == 0 or len(rows) == 0:
+        return None
+    # the edges to the pixel: only the few lines around each rough one are looked at
+    def first_lit(lines):
+        for i in lines:
+            if 0 <= i < len(profile) and profile[i] > BAR_DARK:
+                return i
+        return None
+    profile = frame[::BAR_STEP, :].max(axis=2).max(axis=0)
+    x1 = first_lit(range(int(cols[0]) * BAR_STEP - BAR_STEP, int(cols[0]) * BAR_STEP + BAR_STEP))
+    x2 = first_lit(range(int(cols[-1]) * BAR_STEP + 2 * BAR_STEP, int(cols[-1]) * BAR_STEP - BAR_STEP, -1))
+    x1 = int(cols[0]) * BAR_STEP if x1 is None else x1
+    x2 = min(w, (int(cols[-1]) + 1) * BAR_STEP) if x2 is None else x2 + 1
+    profile = frame[:, ::BAR_STEP].max(axis=2).max(axis=1)
+    y1 = first_lit(range(int(rows[0]) * BAR_STEP - BAR_STEP, int(rows[0]) * BAR_STEP + BAR_STEP))
+    y2 = first_lit(range(int(rows[-1]) * BAR_STEP + 2 * BAR_STEP, int(rows[-1]) * BAR_STEP - BAR_STEP, -1))
+    y1 = int(rows[0]) * BAR_STEP if y1 is None else y1
+    y2 = min(h, (int(rows[-1]) + 1) * BAR_STEP) if y2 is None else y2 + 1
+    full = (0, 0, w, h)
+    # bars on one axis only, the same on both sides (the game centers its picture)
+    side_x, side_y = (x1, w - x2), (y1, h - y2)
+    if abs(side_x[0] - side_x[1]) > 2 * BAR_STEP or abs(side_y[0] - side_y[1]) > 2 * BAR_STEP:
+        return full
+    if min(side_x) >= BAR_STEP and min(side_y) < BAR_STEP:       # pillarbox
+        rect = (x1, 0, x2 - x1, h)
+    elif min(side_y) >= BAR_STEP and min(side_x) < BAR_STEP:     # letterbox
+        rect = (0, y1, w, y2 - y1)
+    else:
+        return full
+    if abs(rect[2] / rect[3] - REFERENCE_ASPECT) / REFERENCE_ASPECT > BAR_ASPECT_TOL:
+        return full   # not a 16:9 picture: dark picture at the edges, not bars
+    return rect
+
+
+class PictureFinder:
+    """find_picture, kept steady: a new rectangle is used once it's been the
+    same (within a few pixels) BAR_SAME_READS frames in a row; black frames
+    keep the last one."""
+
+    def __init__(self):
+        self.rect = None
+        self._pending, self._count = None, 0
+
+    def update(self, frame):
+        h, w = frame.shape[:2]
+        if self.rect is not None and (self.rect[0] + self.rect[2] > w or self.rect[1] + self.rect[3] > h):
+            self.rect = None   # the window got smaller
+        found = find_picture(frame)
+        if found is not None:
+            close = self._pending is not None and all(abs(a - b) <= BAR_STEP for a, b in zip(found, self._pending))
+            self._pending, self._count = (self._pending, self._count + 1) if close else (found, 1)
+            if self._count >= BAR_SAME_READS:
+                self.rect = self._pending
+        return self.rect or (0, 0, w, h)
+
 FULLSCREEN_REASON = "フルスクリーンでは認識できません (ゲームをウインドウモードにしてください)"
 
 # A new client size is only used once it has held this long. Entering/leaving
@@ -162,6 +237,8 @@ class GameWindowCapture:
         self.last_client_size = None   # the game window's size before shrinking (diagnostic.py)
         self.last_client_origin = None # its top-left on the screen (rating.covered: what's over a box)
         self._black_since = None       # monitor-sized and black since then (FULLSCREEN_BLACK_S)
+        self._picture = PictureFinder()
+        self.last_picture = None       # the game's picture inside the client area (x, y, w, h), bars cut off
 
     def close(self):
         """Release the screen-capture handle before rebuilding after an error."""
@@ -206,12 +283,6 @@ class GameWindowCapture:
             return None, False, None, None
 
         profile = compute_profile(client_w, client_h)
-        if not profile.ok:
-            # Don't even capture: the caller must not show recognized numbers for
-            # an unsupported size, per spec — surfacing the profile's reason here
-            # makes that the caller's responsibility to honor, not guess around.
-            return None, False, profile.reason, profile
-
         monitor = {"left": left, "top": top, "width": client_w, "height": client_h}
         try:
             shot = self.sct.grab(monitor)
@@ -227,7 +298,17 @@ class GameWindowCapture:
                 return None, False, FULLSCREEN_REASON, None
         else:
             self._black_since = None
-        self.last_client_size = (client_w, client_h)
-        self.last_client_origin = (left, top)
+        # the game's picture only (black bars cut off: PictureFinder), and the
+        # size check on it — the caller must not show recognized numbers for
+        # an unsupported size (the profile's reason says why)
+        px, py, pw, ph = self._picture.update(frame)
+        profile = compute_profile(pw, ph)
+        if not profile.ok:
+            return None, False, profile.reason, profile
+        if (pw, ph) != (client_w, client_h):
+            frame = frame[py:py + ph, px:px + pw]
+        self.last_picture = (px, py, pw, ph)
+        self.last_client_size = (pw, ph)
+        self.last_client_origin = (left + px, top + py)
         frame, work_profile = shrink_for_recognition(frame)
         return frame, True, None, work_profile if work_profile.ok else profile

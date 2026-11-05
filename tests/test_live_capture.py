@@ -83,7 +83,8 @@ def test_windowed_fullscreen_is_captured_and_the_real_one_refused(monkeypatch):
 
     cap = lc.GameWindowCapture.__new__(lc.GameWindowCapture)
     cap.sct, cap.hwnd, cap._sizes = FakeShot(), 1, lc.SizeSettler()
-    cap.last_client_size = cap.last_client_origin = cap._black_since = None
+    cap.last_client_size = cap.last_client_origin = cap._black_since = cap.last_picture = None
+    cap._picture = lc.PictureFinder()
 
     frame, ok, reason, _ = cap.grab()
     assert ok and reason is None and frame is not None          # windowed fullscreen: read
@@ -97,3 +98,26 @@ def test_windowed_fullscreen_is_captured_and_the_real_one_refused(monkeypatch):
     assert cap.grab()[1]                                         # a picture again
     exclusive[0] = True                                          # Windows: exclusive fullscreen
     assert cap.grab()[2] == lc.FULLSCREEN_REASON
+
+
+def test_black_bars_around_the_picture_are_cut_off():
+    """A window a little wider or taller than 16:9: the game keeps its
+    picture 16:9 inside black bars. Everything is placed from the picture
+    (left in, 2.5% of bars cost the recordings nearly every T-SPIN)."""
+    import cv2
+    import numpy as np
+    import live_capture as lc
+    pic = cv2.imread(str(Path(__file__).resolve().parent / "fixtures" / "play_sky_stage.jpg"))
+    h, w = pic.shape[:2]
+    assert lc.find_picture(pic) == (0, 0, w, h)                              # no bars: the whole frame
+    side = cv2.copyMakeBorder(pic, 0, 0, 17, 17, cv2.BORDER_CONSTANT, value=0)
+    assert lc.find_picture(side) == (17, 0, w, h)                            # pillarbox, to the pixel
+    top = cv2.copyMakeBorder(pic, 9, 9, 0, 0, cv2.BORDER_CONSTANT, value=0)
+    assert lc.find_picture(top) == (0, 9, w, h)                              # letterbox
+    one_side = cv2.copyMakeBorder(pic, 0, 0, 30, 0, cv2.BORDER_CONSTANT, value=0)
+    assert lc.find_picture(one_side) == (0, 0, w + 30, h)                    # not centered: not bars
+    assert lc.find_picture(np.zeros_like(pic)) is None                       # all black: can't tell
+    finder = lc.PictureFinder()
+    got = [finder.update(side) for _ in range(lc.BAR_SAME_READS)]
+    assert got[0] == (0, 0, w + 34, h) and got[-1] == (17, 0, w, h)           # used once it's steady
+    assert finder.update(np.zeros_like(side)) == (17, 0, w, h)               # a black frame keeps it
