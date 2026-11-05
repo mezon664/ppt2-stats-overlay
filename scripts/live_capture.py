@@ -110,6 +110,42 @@ def find_picture(frame):
     return rect
 
 
+def print_window(hwnd, width, height):
+    """The game window's own client area (PrintWindow), whatever lies over it
+    on the screen, or None. Slower than reading the screen (~30 ms), so only
+    used when a window of ours over the game can't be kept out of screen
+    captures (GameWindowCapture.window_only)."""
+    import ctypes
+    import win32ui
+    hdc = dc = mem = bmp = None
+    try:
+        hdc = win32gui.GetWindowDC(hwnd)
+        dc = win32ui.CreateDCFromHandle(hdc)
+        mem = dc.CreateCompatibleDC()
+        bmp = win32ui.CreateBitmap()
+        bmp.CreateCompatibleBitmap(dc, width, height)
+        mem.SelectObject(bmp)
+        # PW_CLIENTONLY | PW_RENDERFULLCONTENT (what a DirectX game draws, too)
+        if not ctypes.windll.user32.PrintWindow(hwnd, mem.GetSafeHdc(), 1 | 2):
+            return None
+        bits = np.frombuffer(bmp.GetBitmapBits(True), np.uint8)
+        return bits.reshape(height, width, 4)[:, :, :3].copy()
+    except Exception:
+        return None
+    finally:
+        try:
+            if bmp is not None:
+                win32gui.DeleteObject(bmp.GetHandle())
+            if mem is not None:
+                mem.DeleteDC()
+            if dc is not None:
+                dc.DeleteDC()
+            if hdc is not None:
+                win32gui.ReleaseDC(hwnd, hdc)
+        except Exception:
+            pass
+
+
 class PictureFinder:
     """find_picture, kept steady: a new rectangle is used once it's been the
     same (within a few pixels) BAR_SAME_READS frames in a row; black frames
@@ -238,6 +274,11 @@ class GameWindowCapture:
         self.last_client_origin = None # its top-left on the screen (rating.covered: what's over a box)
         self._black_since = None       # monitor-sized and black since then (FULLSCREEN_BLACK_S)
         self._picture = PictureFinder()
+        # read the game's own window instead of the screen (set by the server
+        # when a window of ours over the game isn't kept out of captures)
+        self.window_only = False
+        self.window_unusable = False   # its own window came out black: the screen it is
+        self.last_method = "screen"
         self.last_picture = None       # the game's picture inside the client area (x, y, w, h), bars cut off
 
     def close(self):
@@ -290,6 +331,13 @@ class GameWindowCapture:
             return None, False, f"キャプチャに失敗しました: {e}", profile
 
         frame = np.array(shot)[:, :, :3]  # BGRA -> BGR
+        self.last_method = "screen"
+        if self.window_only and not self.window_unusable:
+            own = print_window(self.hwnd, client_w, client_h)
+            if own is not None and not is_black(own):
+                frame, self.last_method = own, "window"
+            elif not is_black(frame):
+                self.window_unusable = True   # PrintWindow gives nothing for this game here
         if monitor_sized and is_black(frame):
             now = time.monotonic()
             if self._black_since is None:

@@ -16,6 +16,8 @@ else explains a queue shift with no corresponding board change.
 import cv2
 import numpy as np
 
+from gameplay_gate import PIECE_SAT_MIN
+
 from board_read import HUE_BUCKETS
 from capture_profile import scale_box, REFERENCE_PROFILE
 
@@ -49,7 +51,7 @@ class HoldTracker:
         if region.size == 0:
             return None
         hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV).reshape(-1, 3)
-        colored = (hsv[:, 1] > 100) & (hsv[:, 2] > 100)
+        colored = (hsv[:, 1] > PIECE_SAT_MIN) & (hsv[:, 2] > 100)   # (gameplay_gate: paler captures)
         if colored.mean() <= FILLED_RATIO:
             return None
         h = int(np.median(hsv[colored, 0]))
@@ -69,7 +71,7 @@ class HoldTracker:
         if region.size == 0:
             return None
         hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-        filled = ((hsv[..., 1] > 100) & (hsv[..., 2] > 100)).mean() > FILLED_RATIO
+        filled = ((hsv[..., 1] > PIECE_SAT_MIN) & (hsv[..., 2] > 100)).mean() > FILLED_RATIO
         if not filled:
             self._seen_empty = True
             self._candidate_t, self._filled_reads = None, 0

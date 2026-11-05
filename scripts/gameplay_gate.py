@@ -44,6 +44,14 @@ ON_SCREEN_THRESHOLD = 0.7
 # (reference px, x1/y1/x2/y2): the first slot shares the label's box, the
 # other four are the smaller boxes stacked below it.
 QUEUE_SLOTS = [(0, 22, 52, 50), (-2, 70, 50, 102), (-2, 120, 50, 152), (-2, 170, 50, 202), (-2, 220, 50, 252)]
+# A piece's pixel: this colorful and bright (black and the gray frame lines
+# are about 0). Was 120: the pieces' own saturation runs 178 (T, purple) to
+# 255, so with colors 60% as strong (a PC's capture can come out paler) the T
+# read as an empty slot — no placements counted, and an empty slot is a
+# pause, which held back that time's T-SPINs too. Shared by queue_tracker /
+# hold_tracker.
+PIECE_SAT_MIN = 60
+PIECE_VAL_MIN = 120
 SLOT_EMPTY_RATIO = 0.05  # colored-pixel ratio below which a slot holds no piece
 
 # The English game's pause menu covers the left queue with its bright buttons,
@@ -77,7 +85,7 @@ class GameplayGate:
         for a, b, c, d in self.slots:
             x1, y1, x2, y2 = max(0, lx + a), max(0, ly + b), min(w, lx + c), min(h, ly + d)
             reg = hsv[y1:y2, x1:x2]
-            if reg.size and ((reg[..., 1] > 120) & (reg[..., 2] > 120)).mean() >= SLOT_EMPTY_RATIO:
+            if reg.size and ((reg[..., 1] > PIECE_SAT_MIN) & (reg[..., 2] > PIECE_VAL_MIN)).mean() >= SLOT_EMPTY_RATIO:
                 return False
         return True
 
@@ -102,6 +110,7 @@ class GameplayGate:
             self.last_scores[side] = float(score)
             if score >= ON_SCREEN_THRESHOLD:
                 found[side] = (x1 + mx, y1 + my)
+        self.last_found = found   # where each NEXT label is (levels.py measures them)
         if not found:
             self.last_reason = "no_match_ui"
             return False

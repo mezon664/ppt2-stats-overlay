@@ -143,6 +143,62 @@ def game_started_at(cap):
         return None
 
 
+OVERLAY_CHECK_S = 5.0
+_OVERLAY = {"t": 0.0, "pid": None}
+
+
+def ours_in_capture(cap):
+    """True when a visible window of this app (the launcher's process: HUD,
+    settings) over the game isn't kept out of screen captures — the screen
+    then shows it over the game, and the recognition saw the HUD's numbers
+    where T-SPIN banners show. Checked every OVERLAY_CHECK_S."""
+    import ctypes
+    import win32gui
+    import win32process
+    game = getattr(cap, "hwnd", None)
+    pid = _OVERLAY.get("pid")
+    if not game or not pid or not win32gui.IsWindow(game):
+        return False
+    try:
+        gl, gt = win32gui.ClientToScreen(game, (0, 0))
+        _, _, gw, gh = win32gui.GetClientRect(game)
+    except Exception:
+        return False
+    found = []
+
+    def check(hwnd, _):
+        try:
+            if not win32gui.IsWindowVisible(hwnd) or win32process.GetWindowThreadProcessId(hwnd)[1] != pid:
+                return True
+            l, t, r, b = win32gui.GetWindowRect(hwnd)
+            if r <= gl or l >= gl + gw or b <= gt or t >= gt + gh:
+                return True
+            got = ctypes.c_uint32(0)
+            ctypes.windll.user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(got))
+            if got.value != 0x11:   # WDA_EXCLUDEFROMCAPTURE
+                found.append(hwnd)
+        except Exception:
+            pass
+        return True
+    win32gui.EnumWindows(check, None)
+    return bool(found)
+
+
+def follow_overlay(cap):
+    now = time.monotonic()
+    if cap is None or now - _OVERLAY["t"] < OVERLAY_CHECK_S:
+        return
+    _OVERLAY["t"] = now
+    try:
+        inside = ours_in_capture(cap)
+    except Exception:
+        inside = False
+    if inside != getattr(cap, "window_only", False):
+        log.info("a window of this app over the game %s kept out of screen captures: reading %s",
+                 "isn't" if inside else "is", "the game's own window" if inside else "the screen")
+        cap.window_only = inside
+
+
 def follow_session(cap):
     """The game's start time, and at each new match which side is you."""
     SESSION["since"] = game_started_at(cap)
@@ -231,6 +287,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                 cap = make_capture()
             frame, ok, reason, profile = cap.grab()
             follow_session(cap)   # (also when the game is gone: the session ends)
+            follow_overlay(cap)
             if ok:
                 PIPELINE.rebuild_for_profile(profile)
                 PIPELINE.process_frame(frame, time.monotonic() - t0)
@@ -500,6 +557,7 @@ def main():
 
     if args.parent_pid:
         watch_parent(args.parent_pid)
+        _OVERLAY["pid"] = args.parent_pid   # the HUD and the settings window live there
     if bool(args.instance_id) != bool(args.control_token) or (args.instance_id and not args.control_port):
         parser.error("--instance-id, --control-token and --control-port must be supplied together")
     try:

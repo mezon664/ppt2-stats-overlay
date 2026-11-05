@@ -43,7 +43,8 @@ class Diagnostic:
                f"capture: {status.get('message')}"]
         size = getattr(capture, "last_client_size", None)
         if size:
-            out.append(f"game window (client): {size[0]}x{size[1]}")
+            out.append(f"game window (client): {size[0]}x{size[1]}  read from: {getattr(capture, 'last_method', '?')}"
+                       + ("  (own window unusable)" if getattr(capture, "window_unusable", False) else ""))
         if pipeline is not None:
             gate = getattr(pipeline, "gameplay_gate", None)
             scores = getattr(gate, "last_scores", {}) or {}

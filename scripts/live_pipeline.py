@@ -24,6 +24,7 @@ from capture_profile import scale_box, REFERENCE_PROFILE
 from match_boundary import MatchBoundaryDetector, _orange_ratio
 from flash_clear_detector import FlashClearDetector, MAX_LINES_PER_EVENT
 from queue_tracker import NextQueueTracker
+from levels import Levels
 from hold_tracker import HoldTracker
 from gameplay_gate import GameplayGate, ON_SCREEN_THRESHOLD
 
@@ -713,6 +714,7 @@ class MatchPipeline:
         # frames (which contain no NEXT labels) can supply an always-open one.
         self._gate_injected = gate is not None
         self.gameplay_gate = gate or GameplayGate(profile=profile)
+        self.levels = Levels()
         # Pause handling (user's request: freeze numbers while paused, carry on
         # after resuming). Every timestamp handed to the trackers is "game
         # time": capture time minus all the time spent off the match screen.
@@ -1113,11 +1115,15 @@ class MatchPipeline:
         self.match_reset_count += 1
 
     def process_frame(self, frame, t):
+        # a washed-out capture put back to full black-white first (levels.py)
+        raw, frame = frame, self.levels.apply(frame)
         if self.start_t is not None and not self._blackout_handled and \
                 float(cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA).mean()) < BLACK_MEAN:
             self._blackout_reset()
             return
         on_screen = self.gameplay_gate.update(frame)
+        if getattr(self.gameplay_gate, "last_found", None):
+            self.levels.observe(raw, self.gameplay_gate)
         if on_screen or getattr(self.gameplay_gate, "last_reason", None) == "pause":
             self.match_screen = True     # the pause screen is still the match
             self._off_match_screen_since = None

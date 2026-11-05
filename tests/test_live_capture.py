@@ -85,6 +85,7 @@ def test_windowed_fullscreen_is_captured_and_the_real_one_refused(monkeypatch):
     cap.sct, cap.hwnd, cap._sizes = FakeShot(), 1, lc.SizeSettler()
     cap.last_client_size = cap.last_client_origin = cap._black_since = cap.last_picture = None
     cap._picture = lc.PictureFinder()
+    cap.window_only, cap.window_unusable, cap.last_method = False, False, "screen"
 
     frame, ok, reason, _ = cap.grab()
     assert ok and reason is None and frame is not None          # windowed fullscreen: read
@@ -121,3 +122,39 @@ def test_black_bars_around_the_picture_are_cut_off():
     got = [finder.update(side) for _ in range(lc.BAR_SAME_READS)]
     assert got[0] == (0, 0, w + 34, h) and got[-1] == (17, 0, w, h)           # used once it's steady
     assert finder.update(np.zeros_like(side)) == (17, 0, w, h)               # a black frame keeps it
+
+
+def test_the_games_own_window_when_ours_would_be_in_the_picture(monkeypatch):
+    """When a window of ours over the game can't be kept out of screen
+    captures (window_only), the game's own window is read; if that comes out
+    black on this PC, the screen is read as before."""
+    import numpy as np
+    import live_capture as lc
+    monkeypatch.setattr(lc.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(lc.win32gui, "IsWindow", lambda h: True)
+    monkeypatch.setattr(lc.win32gui, "IsIconic", lambda h: False)
+    monkeypatch.setattr(lc.win32gui, "GetClientRect", lambda h: (0, 0, 1232, 692))
+    monkeypatch.setattr(lc.win32gui, "ClientToScreen", lambda h, p: (10, 10))
+    monkeypatch.setattr(lc.win32api, "MonitorFromWindow", lambda h: 1)
+    monkeypatch.setattr(lc.win32api, "GetMonitorInfo", lambda m: {"Monitor": (0, 0, 2560, 1440)})
+    screen = np.full((692, 1232, 4), 50, np.uint8)       # the screen: our HUD over the game
+    own = [np.full((692, 1232, 3), 200, np.uint8)]       # the game's own window
+    monkeypatch.setattr(lc, "print_window", lambda hwnd, w, h: own[0])
+
+    class FakeShot:
+        def grab(self, monitor):
+            return screen
+
+        def close(self):
+            pass
+
+    cap = lc.GameWindowCapture.__new__(lc.GameWindowCapture)
+    cap.sct, cap.hwnd, cap._sizes = FakeShot(), 1, lc.SizeSettler()
+    cap.last_client_size = cap.last_client_origin = cap._black_since = cap.last_picture = None
+    cap._picture = lc.PictureFinder()
+    cap.window_only, cap.window_unusable, cap.last_method = False, False, "screen"
+    assert int(cap.grab()[0].mean()) == 50 and cap.last_method == "screen"
+    cap.window_only = True
+    assert int(cap.grab()[0].mean()) == 200 and cap.last_method == "window"
+    own[0] = np.zeros((692, 1232, 3), np.uint8)          # black on this PC: not usable
+    assert int(cap.grab()[0].mean()) == 50 and cap.window_unusable

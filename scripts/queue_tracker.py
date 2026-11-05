@@ -38,7 +38,8 @@ from image_io import read_image
 
 from board_read import HUE_BUCKETS
 from capture_profile import scale_box, scale_template, REFERENCE_PROFILE
-from gameplay_gate import NEXT_TEMPLATE_PATH, NEXT_WINDOWS, ON_SCREEN_THRESHOLD, QUEUE_SLOTS, SLOT_EMPTY_RATIO
+from gameplay_gate import (NEXT_TEMPLATE_PATH, NEXT_WINDOWS, ON_SCREEN_THRESHOLD, QUEUE_SLOTS, SLOT_EMPTY_RATIO,
+                           PIECE_SAT_MIN, PIECE_VAL_MIN)
 
 log = logging.getLogger("queue_tracker")
 
@@ -121,7 +122,7 @@ class NextQueueTracker:
             if reg.size == 0:
                 return None
             hsv = cv2.cvtColor(reg, cv2.COLOR_BGR2HSV).reshape(-1, 3)
-            colored = (hsv[:, 1] > 120) & (hsv[:, 2] > 120)
+            colored = (hsv[:, 1] > PIECE_SAT_MIN) & (hsv[:, 2] > PIECE_VAL_MIN)
             if colored.mean() < SLOT_EMPTY_RATIO:
                 seq += "."
             else:

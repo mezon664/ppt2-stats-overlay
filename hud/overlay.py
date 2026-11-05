@@ -2216,6 +2216,8 @@ class HudWindow(QtWidgets.QWidget):
                                       ("events_left", self.events["left"]), ("events_right", self.events["right"]),
                                       ("versus", self.versus)) if w.isVisible()]
         connected = self.ws_client._ws is not None
+        if getattr(self, "_want_excluded", False) and not getattr(self, "capture_excluded", False):
+            self.hide_from_capture()   # once more (the window may have been made again)
         age = now - self._recv_t
         reason = self._away_reason()
         st = self._last_state or {}
@@ -2230,6 +2232,7 @@ class HudWindow(QtWidgets.QWidget):
             f"match_screen={st.get('match_screen')} frozen={st.get('frozen')} capture_ok={st.get('capture', {}).get('ok')}",
             f"hidden because: {reason or '-'}",
             f"parts shown: {', '.join(parts) or 'none'}",
+            f"kept out of screen captures: {getattr(self, 'capture_excluded', None)}",
         ]
         if sig != self._health_sig or raised:
             self._health_sig = sig
@@ -2662,7 +2665,17 @@ class HudWindow(QtWidgets.QWidget):
         win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex_style)
 
     def hide_from_capture(self):
-        ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), WDA_EXCLUDEFROMCAPTURE)
+        """Keeps the HUD out of screen captures (the recognition's included),
+        and notes whether Windows really did (self.capture_excluded): an old
+        Windows 10 can't, and then the recognition saw the HUD over the game —
+        the numbers over where T-SPIN banners show (a user's T-SPINs all went
+        uncounted). The server then reads the game's own window instead."""
+        self._want_excluded = True
+        hwnd = int(self.winId())
+        ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+        got = ctypes.c_uint32(0)
+        ok = ctypes.windll.user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(got))
+        self.capture_excluded = bool(ok) and got.value == WDA_EXCLUDEFROMCAPTURE
 
 
 # The app's icon (user's pick from the drafts): a T piece at the lower left
