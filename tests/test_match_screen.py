@@ -188,3 +188,23 @@ def test_parts_over_what_is_read_stay_off_where_the_hud_shows_in_captures():
     win.apply_display(overlay.display_settings({"display": d}), local=True)
     assert not win.stats["left"].isHidden() and seen[-1] == (True, [])
     assert all(len(z) == 4 for z in overlay.read_zones())
+
+
+def test_while_positioning_what_is_read_shows_red():
+    """Where the HUD shows in captures, while positioning: what is read is
+    shaded red, and a part over it stays (to drag it clear) outlined red."""
+    win = hud_with({}, show_clock=True)
+    win._want_excluded, win.capture_excluded = True, False
+    win.set_edit_mode(True)
+    assert not win.read_zones_layer.isHidden()
+    assert not win.stats["left"].isHidden() and win.stats["left"].blocked
+    assert not getattr(win.clock, "blocked", False)
+    win.set_edit_mode(False)
+    assert win.read_zones_layer.isHidden() and win.stats["left"].isHidden()
+
+
+def test_no_red_where_the_hud_is_kept_out_of_captures():
+    win = hud_with({}, show_clock=True)
+    win.set_edit_mode(True)
+    assert win.read_zones_layer.isHidden()
+    assert not getattr(win.stats["left"], "blocked", False)

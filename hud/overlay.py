@@ -111,6 +111,7 @@ UI_TEXT = {
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "パーフェクト",
            "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
            "edit_hint": "位置調整中：黄色い枠をドラッグで移動、マウスホイールで大きさ変更（設定画面の「完了」で終了）",
+           "edit_hint_zones": "位置調整中：枠をドラッグで移動、ホイールで大きさ変更。赤い場所（T-SPIN のバナーなどを読む場所）に重なる表示は、ゲーム画面に出ません（赤い枠）",
            "opener_sample": "開幕テンプレ名"},
     "en": {"frozen": "Match over", "paused": "Paused", "waiting": "Waiting for start",
            "capture_down": "Can't read the game",
@@ -119,6 +120,7 @@ UI_TEXT = {
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "Perfect clear",
            "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
            "edit_hint": "Adjusting: drag a yellow box to move it, use the mouse wheel to resize it (press Done in the settings to finish)",
+           "edit_hint_zones": "Adjusting: drag a box to move it, wheel to resize. A part over the red areas (where T-SPIN banners etc. are read) won't show on the game screen (red box)",
            "opener_sample": "Opener name"},
 }
 
@@ -203,7 +205,7 @@ class Band(QtWidgets.QWidget):
             # Some fill everywhere so the whole box can be grabbed (fully
             # transparent pixels of a layered window let clicks through).
             p.fillRect(r, QtGui.QColor(*BAND_RGB, max(alpha, 110)))
-            pen = QtGui.QPen(QtGui.QColor("#fde047"), 2, QtCore.Qt.PenStyle.DashLine)
+            pen = QtGui.QPen(QtGui.QColor(edit_color(self)), 2, QtCore.Qt.PenStyle.DashLine)
             p.setPen(pen)
             p.drawRect(r.adjusted(1, 1, -1, -1))
             return
@@ -1568,7 +1570,7 @@ class OpenerBadge(Band):
                           OPENER_NAME_THICKEN)
         if self.editing:   # position-adjust mode: outlined like the other parts
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            p.setPen(QtGui.QPen(QtGui.QColor("#fde047"), 2, QtCore.Qt.PenStyle.DashLine))
+            p.setPen(QtGui.QPen(QtGui.QColor(edit_color(self)), 2, QtCore.Qt.PenStyle.DashLine))
             p.drawRect(r.adjusted(1, 1, -1, -1))
 
 
@@ -1900,7 +1902,7 @@ class CatPopup(QtWidgets.QWidget):
         if self.editing:   # something to grab everywhere (clear pixels let clicks through), and the outline
             p = QtGui.QPainter(self)
             p.fillRect(self.rect(), QtGui.QColor(*BAND_RGB, 60))
-            p.setPen(QtGui.QPen(QtGui.QColor("#fde047"), 2, QtCore.Qt.PenStyle.DashLine))
+            p.setPen(QtGui.QPen(QtGui.QColor(edit_color(self)), 2, QtCore.Qt.PenStyle.DashLine))
             p.drawRect(self.rect().adjusted(1, 1, -1, -1))
             p.end()
         if not self.cat or self.pos is None:
@@ -1979,6 +1981,7 @@ class HudWindow(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
+        self.read_zones_layer = ReadZonesLayer(self)   # (first: under every part)
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
         self.summary = SummaryBlock(self)
@@ -2275,18 +2278,28 @@ class HudWindow(QtWidgets.QWidget):
                      ("events", self.events["left"]), ("events", self.events["right"]),
                      ("versus", self.versus), ("clock", self.clock), ("session", self.session),
                      ("summary", self.summary)]
-        if self.reading_unsafe() and not self.edit_mode:
-            s = self._scale or 1.0
-            zones = read_zones()
-            for name, w in parts:
-                if not w.isVisibleTo(self):
-                    continue
+        unsafe = self.reading_unsafe()
+        s = self._scale or 1.0
+        zones = read_zones() if unsafe else []
+        for name, w in parts:
+            over = False
+            if unsafe and w.isVisibleTo(self):
                 g = w.geometry()
                 x1, y1, x2, y2 = g.left() / s, g.top() / s, (g.left() + g.width()) / s, (g.top() + g.height()) / s
-                if any(x1 < zx2 and zx1 < x2 and y1 < zy2 and zy1 < y2 for zx1, zy1, zx2, zy2 in zones):
-                    w.setVisible(False)
-                    if name not in hidden:
-                        hidden.append(name)
+                over = any(x1 < zx2 and zx1 < x2 and y1 < zy2 and zy1 < y2 for zx1, zy1, zx2, zy2 in zones)
+            if over != getattr(w, "blocked", False):
+                w.blocked = over
+                w.update()
+            if over and not self.edit_mode:   # (while positioning: shown, outlined red)
+                w.setVisible(False)
+                if name not in hidden:
+                    hidden.append(name)
+        if not openers:
+            layer = self.read_zones_layer
+            layer.scale = s
+            layer.setGeometry(0, 0, self.width(), self.height())
+            layer.setVisible(unsafe and self.edit_mode)
+            layer.lower()
         kept = getattr(self, "_kept_out", {})
         kept["openers" if openers else "parts"] = hidden
         self._kept_out = kept
@@ -2647,7 +2660,8 @@ class HudWindow(QtWidgets.QWidget):
             band.update()
         self.edit_hint.setVisible(on)
         if on:
-            self.edit_hint.setText(UI_TEXT[self.display["language"]]["edit_hint"])
+            self.edit_hint.setText(UI_TEXT[self.display["language"]][
+                "edit_hint_zones" if self.reading_unsafe() else "edit_hint"])
             set_px(self.edit_hint, max(11, 13 * self._scale))
             self.edit_hint.adjustSize()
             self.edit_hint.move(int(self.width() / 2 - self.edit_hint.width() / 2), int(70 * self._scale))
@@ -2803,6 +2817,39 @@ def already_running():
 
 
 _READ_ZONES = None
+EDIT_YELLOW, EDIT_RED = "#fde047", "#ef4444"
+
+
+def edit_color(widget):
+    """A part's outline while positioning: red when it sits over what the
+    recognition reads on a PC where the HUD shows in captures (it then stays
+    off the game screen), else yellow."""
+    return EDIT_RED if getattr(widget, "blocked", False) else EDIT_YELLOW
+
+
+class ReadZonesLayer(QtWidgets.QWidget):
+    """While positioning, on a PC where the HUD shows in screen captures:
+    what the recognition reads (read_zones), shaded red under the parts, so
+    it's clear where a part can go and still show on the game screen."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.scale = 1.0
+        self.setVisible(False)
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        fill = QtGui.QColor(EDIT_RED)
+        fill.setAlpha(60)
+        edge = QtGui.QColor(EDIT_RED)
+        edge.setAlpha(170)
+        p.setPen(QtGui.QPen(edge, 1))
+        p.setBrush(fill)
+        s = self.scale
+        for x1, y1, x2, y2 in read_zones():
+            p.drawRect(QtCore.QRectF(x1 * s, y1 * s, (x2 - x1) * s, (y2 - y1) * s))
+        p.end()
 
 
 def read_zones():
