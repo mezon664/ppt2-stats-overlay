@@ -1956,6 +1956,8 @@ class HudWindow(QtWidgets.QWidget):
     match_screen_changed = QtCore.pyqtSignal(bool)  # the game went to / left the match screen
     opener_recorded = QtCore.pyqtSignal()           # a finished match was added to opener_stats
     session_changed = QtCore.pyqtSignal(object)     # 今日の成績 from the server changed (state["session"])
+    # (the HUD shows in screen captures, the parts kept off the game screen for it)
+    reading_overlap = QtCore.pyqtSignal(bool, list)
     language_changed = QtCore.pyqtSignal(str)
 
     def __init__(self, settings):
@@ -2218,6 +2220,8 @@ class HudWindow(QtWidgets.QWidget):
         connected = self.ws_client._ws is not None
         if getattr(self, "_want_excluded", False) and not getattr(self, "capture_excluded", False):
             self.hide_from_capture()   # once more (the window may have been made again)
+            if not self.capture_excluded:
+                self._place()
         age = now - self._recv_t
         reason = self._away_reason()
         st = self._last_state or {}
@@ -2249,6 +2253,50 @@ class HudWindow(QtWidgets.QWidget):
         return self._last_state.get("match_screen") is False
 
     def _place(self):
+        self._place_parts()
+        self._keep_out_of_reading(openers=False)
+
+    def reading_unsafe(self):
+        """The HUD is over the game in screen captures too (Windows didn't
+        keep it out: hide_from_capture), so the recognition reads it."""
+        return bool(getattr(self, "_want_excluded", False)) and getattr(self, "capture_excluded", True) is False
+
+    def _keep_out_of_reading(self, openers):
+        """Where the HUD shows in screen captures, no part of it sits on what
+        the recognition reads (read_zones): two users' numbers and event
+        history covered the T-SPIN banners at the lower left of the board, and
+        none of their T-SPINs counted. Those parts stay off the game screen
+        (OBS still shows them; the settings window says why)."""
+        hidden = []
+        if openers:
+            parts = [*(("opener", b) for b in self.badges.values()), *(("opener", c) for c in self.cats.values())]
+        else:
+            parts = [("stats", self.stats["left"]), ("stats", self.stats["right"]),
+                     ("events", self.events["left"]), ("events", self.events["right"]),
+                     ("versus", self.versus), ("clock", self.clock), ("session", self.session),
+                     ("summary", self.summary)]
+        if self.reading_unsafe() and not self.edit_mode:
+            s = self._scale or 1.0
+            zones = read_zones()
+            for name, w in parts:
+                if not w.isVisibleTo(self):
+                    continue
+                g = w.geometry()
+                x1, y1, x2, y2 = g.left() / s, g.top() / s, (g.left() + g.width()) / s, (g.top() + g.height()) / s
+                if any(x1 < zx2 and zx1 < x2 and y1 < zy2 and zy1 < y2 for zx1, zy1, zx2, zy2 in zones):
+                    w.setVisible(False)
+                    if name not in hidden:
+                        hidden.append(name)
+        kept = getattr(self, "_kept_out", {})
+        kept["openers" if openers else "parts"] = hidden
+        self._kept_out = kept
+        names = kept.get("parts", []) + [n for n in kept.get("openers", []) if n not in kept.get("parts", [])]
+        state = (self.reading_unsafe(), names)
+        if state != getattr(self, "_kept_out_said", None):
+            self._kept_out_said = state
+            self.reading_overlap.emit(*state)
+
+    def _place_parts(self):
         """Positions everything whose size depends on content: the stat blocks
         (bottom-anchored beside the score), the events stacked above them, and
         the clock (bottom-anchored above the マッチポイント banner)."""
@@ -2447,6 +2495,11 @@ class HudWindow(QtWidgets.QWidget):
             log_hud.exception("couldn't keep the finished match for the opener stats")
 
     def _place_openers(self):
+        self._place_opener_parts()
+        if self.reading_unsafe():
+            self._keep_out_of_reading(openers=True)
+
+    def _place_opener_parts(self):
         """The opener (開幕テンプレ) names, where display.opener_display says (see
         OpenerBadge), at their popup opacity. Ages come from the server only
         ~10 times a second, so the time since the last state is added here and
@@ -2749,6 +2802,37 @@ def already_running():
     return False
 
 
+_READ_ZONES = None
+
+
+def read_zones():
+    """Where the recognition reads the game screen (reference 1232x692
+    coordinates, both players): the boards, the T-SPIN / TETRIS / PERFECT
+    CLEAR banners, NEXT and HOLD, GO! and the victory
+    banner. Taken from the recognition's own constants."""
+    global _READ_ZONES
+    if _READ_ZONES is None:
+        import banner_detect
+        import board_read
+        import gameplay_gate
+        import hold_tracker
+        import match_boundary
+        zones = [board_read.LEFT_BOX, board_read.RIGHT_BOX, match_boundary.GO_REGION,
+                 match_boundary.YATTA_WINDOW_LEFT, match_boundary.YATTA_WINDOW_RIGHT,
+                 *hold_tracker.HOLD_ICON_BOXES.values()]
+        for x1, y1, x2, _ in gameplay_gate.NEXT_WINDOWS.values():   # the label and the 5 pieces under it
+            zones.append((x1, y1, x2, y1 + 330))
+        # (not BACK to BACK's or the REN digits': they're only noted, nothing
+        # is counted from them, and their wide windows reach the middle)
+        for label, cfg in banner_detect.TEMPLATES.items():
+            if label == "back_to_back" or label in banner_detect.REN_LABELS:
+                continue
+            for side in ("left", "right"):
+                zones.append(banner_detect.window_for_side(label, cfg["window"], side))
+        _READ_ZONES = [tuple(z) for z in zones]
+    return _READ_ZONES
+
+
 def native_to_logical(left, top, width, height, screens=None):
     """Where a window at these screen pixels goes in Qt's coordinates, and the
     scaling of the monitor it's on. Qt keeps each monitor's top-left in screen
@@ -2835,6 +2919,7 @@ def main():
     win.match_screen_changed.connect(settings_win.set_match_screen)
     win.opener_recorded.connect(settings_win.refresh_opener_stats)   # the opener stats follow each match
     win.session_changed.connect(settings_win.set_today)              # 今日の成績 on the stats page
+    win.reading_overlap.connect(settings_win.set_reading_overlap)    # why some parts aren't on the game screen
 
     tray = QtWidgets.QSystemTrayIcon(make_tray_icon(), app)
     tray.setToolTip("PPTetrics")

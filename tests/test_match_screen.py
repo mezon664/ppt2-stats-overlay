@@ -166,3 +166,25 @@ def test_nothing_shows_until_the_hud_is_over_the_game():
     assert not win.clock.isHidden()
     win._lost_game()                         # the game's window went away
     assert win.clock.isHidden()
+
+
+def test_parts_over_what_is_read_stay_off_where_the_hud_shows_in_captures():
+    """Two users' HUDs showed in screen captures (Windows didn't keep them
+    out) and their numbers covered the T-SPIN banners: not one T-SPIN
+    counted. There, parts over what the recognition reads stay off the game
+    screen; moved clear, they show again. Elsewhere nothing changes."""
+    import overlay
+    win = hud_with({}, show_clock=True)
+    seen = []
+    win.reading_overlap.connect(lambda unsafe, hidden: seen.append((unsafe, hidden)))
+    win._place()
+    assert not win.stats["left"].isHidden()                    # kept out of captures: as before
+    win._want_excluded, win.capture_excluded = True, False      # this PC: shows in captures
+    win._place()
+    assert win.stats["left"].isHidden() and win.stats["right"].isHidden()   # by the boards, low down
+    assert not win.clock.isHidden()                             # below the middle: clear of everything read
+    assert seen[-1] == (True, ["stats"])
+    d = dict(win.display, offset_y=120)                         # moved down, clear of the banners and boards
+    win.apply_display(overlay.display_settings({"display": d}), local=True)
+    assert not win.stats["left"].isHidden() and seen[-1] == (True, [])
+    assert all(len(z) == 4 for z in overlay.read_zones())

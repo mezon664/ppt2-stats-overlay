@@ -383,3 +383,6 @@
   （levels は試合中だけ測る: ポーズ中は画面が暗く白が 127 になり、長いポーズで白っぽい画面と勘違いして 2 倍に明るくしていた。全録画は直す前と同じ）
   対策: HUD は外れたかを `GetWindowDisplayAffinity` で確かめて hud_status に出す（外れていなければ 1 秒ごとにやり直す）。サーバーは 5 秒ごとに、ゲームに重なる自分の窓（起動元のプロセス）が外れているかを調べ、外れていなければゲームの窓そのもの（PrintWindow、約 33ms）を読む。真っ黒ならあきらめて画面を読む。診断ファイルに「read from: screen / window」。
   未確認: ぷよテト2で PrintWindow が絵を写せるか（確認時はゲーム自体が黒画面だった）。報告者の PC で本当に取り込みから外れていないか（hud_status の "kept out of screen captures"）。
+- 追記（同日）: 2 本目の動画（英語版）も認識にかけると本人の結果と同じ（送った 3・置いた 30・T-SPIN 0）。この PC でゲームが絵を出している時に PrintWindow を試すと、どのフラグでも真っ黒 → ぷよテト2では使えない（v0.2.11 の切り替えは効かない、真っ黒なら画面に戻るので無害）。
+  → A 案（ユーザー選択）: HUD が取り込みに写る PC（`HudWindow.reading_unsafe`）では、認識が読む場所（`read_zones`: 盤面・T-SPIN/TETRIS/PC のバナー窓・NEXT と下 330px・HOLD・GO!・やった!、各モジュールの定数から。B2B と REN 数字の窓は数えるのに使わず中央まで広いので除外）に重なる部品を HUD では出さない（OBS はそのまま、位置調整中は出す）。設定画面のホームに理由と隠した部品を出す（`reading_overlap` → `set_reading_overlap`）。
+  B 案（Windows Graphics Capture、`windows-capture` 等の外部部品、Win10 で黄色い枠）は保留。

@@ -363,6 +363,18 @@ TEXT = {
     "target.summary": {"ja": "試合結果", "en": "Summary"},
     "target.session": {"ja": "今日の成績", "en": "Today's results"},
     "today.title": {"ja": "今日の成績", "en": "Today's results"},
+    "overlap.title": {"ja": "⚠ 一部の表示をゲーム画面に出していません", "en": "⚠ Some parts aren't shown on the game screen"},
+    "overlap.text": {"ja": "この PC では、ゲーム画面の上の表示が認識の読む画面にも写り込みます（Windows の制限）。T-SPIN などを読む場所（盤面とその左下・右下、NEXT、HOLD、画面中央）に重なる部分は、ゲーム画面には出さないようにしています：{}。OBS には今までどおり出ます。「位置」で動かして重ならない場所に置くと、ゲーム画面にも出ます。",
+                     "en": "On this PC the overlay shows up in what the recognition reads (a Windows limit). Parts over where it reads T-SPINs and more (the boards, beside them low down, NEXT, HOLD, the middle) aren't shown on the game screen: {}. OBS still shows them. Move them clear (Position) and they show on the game screen too."},
+    "overlap.none": {"ja": "この PC では、ゲーム画面の上の表示が認識の読む画面にも写り込みます（Windows の制限）。今は読む場所に重なっていません。T-SPIN などを読む場所（盤面とその左下・右下、NEXT、HOLD、画面中央）に置いた部分は、ゲーム画面には出ません（OBS には出ます）。",
+                     "en": "On this PC the overlay shows up in what the recognition reads (a Windows limit). Nothing is over where it reads now; a part placed over it (the boards, beside them low down, NEXT, HOLD, the middle) won't show on the game screen (OBS still shows it)."},
+    "overlap.part.stats": {"ja": "数値", "en": "numbers"},
+    "overlap.part.events": {"ja": "イベント履歴", "en": "event history"},
+    "overlap.part.versus": {"ja": "中央VSバー", "en": "versus bar"},
+    "overlap.part.clock": {"ja": "試合時間", "en": "match time"},
+    "overlap.part.session": {"ja": "今日の成績", "en": "today's results"},
+    "overlap.part.summary": {"ja": "試合結果", "en": "summary"},
+    "overlap.part.opener": {"ja": "開幕テンプレ名", "en": "opener name"},
     "today.desc": {"ja": "ぷよテト2を起動してからの成績です（ゲームを閉じるとリセット）。「表示する項目」でゲーム画面や OBS にも出せます。",
                    "en": "Since Puyo Puyo Tetris 2 was started (reset when it's closed). It can also show on the game screen and in OBS (What's shown)."},
     "today.none": {"ja": "まだ試合がありません（ゲームを起動してからの試合を数えます）",
@@ -822,6 +834,13 @@ class SettingsWindow(QtWidgets.QWidget):
             where.addWidget(c)
         where.addStretch(1)
         self.power_card.add(where)
+        # the HUD shows in screen captures on this PC (set_reading_overlap)
+        self.overlap_note = QtWidgets.QLabel()
+        self.overlap_note.setWordWrap(True)
+        self.overlap_note.setStyleSheet("background:#fff4e5; color:#7a3e00; border-radius:8px; padding:8px 10px;")
+        self.overlap_note.setVisible(False)
+        self.power_card.add(self.overlap_note)
+        self._overlap = (False, [])
 
         # the design, as cards showing what each one looks like (click to switch)
         self.design_box = ui.Card()
@@ -1561,6 +1580,23 @@ class SettingsWindow(QtWidgets.QWidget):
         self.today_none = ui.muted()
         self.today_card.add(self.today_none)
 
+    def set_reading_overlap(self, unsafe, hidden):
+        """From the HUD: it shows in screen captures here, and which parts it
+        keeps off the game screen for that."""
+        self._overlap = (bool(unsafe), list(hidden))
+        self._show_overlap()
+
+    def _show_overlap(self):
+        unsafe, hidden = getattr(self, "_overlap", (False, []))
+        if not unsafe:
+            self.overlap_note.setVisible(False)
+            return
+        t = self.tr_
+        names = ("、" if self.lang == "ja" else ", ").join(t("overlap.part." + h) for h in hidden)
+        text = t("overlap.title") + "\n" + (t("overlap.text").format(names) if hidden else t("overlap.none"))
+        self.overlap_note.setText(text)
+        self.overlap_note.setVisible(True)
+
     def set_today(self, session):
         """The server's state["session"] (or None), from the HUD."""
         self._today = session
@@ -1707,6 +1743,7 @@ class SettingsWindow(QtWidgets.QWidget):
             self.label_names[key].setText(names[key])
         self._retranslate_stats()
         self._show_today()
+        self._show_overlap()
         # ホーム
         self.power_card.setTitle(t("card.power"))
         self.show_on_hud.setText(t("show_on_hud"))
