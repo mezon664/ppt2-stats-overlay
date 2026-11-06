@@ -387,6 +387,21 @@ TEXT = {
     "today.pps": {"ja": "平均 PPS", "en": "Avg PPS"},
     "today.app": {"ja": "平均 APP", "en": "Avg APP"},
     "card.session": {"ja": "今日の成績", "en": "Today's results"},
+    "card.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
+    "card.challenge_desc": {"ja": "自分の盤面に、ゲームを難しくする表示を出します。ゲーム画面だけで、OBS（配信）や認識には映りません。",
+                            "en": "Things over your own board that make the game harder. On the game screen only: not in OBS (your stream) or what the recognition reads."},
+    "challenge_next": {"ja": "NEXT を隠す", "en": "Hide NEXT"},
+    "ch.off": {"ja": "隠さない", "en": "Off"},
+    "ch.from2": {"ja": "2個目から", "en": "From the 2nd"},
+    "ch.all": {"ja": "全部", "en": "All"},
+    "challenge_cats": {"ja": "TETRIS・T-SPIN・パフェクリのたびに猫が増えて、盤面の上を歩き回る（試合が終わるといなくなる）",
+                       "en": "A cat joins for each TETRIS / T-SPIN / PERFECT CLEAR and wanders over your board (gone when the match ends)"},
+    "challenge_side": {"ja": "対象の盤面", "en": "Whose board"},
+    "cs.auto": {"ja": "自分（自動）", "en": "Yours (auto)"},
+    "cs.left": {"ja": "1P", "en": "1P"},
+    "cs.right": {"ja": "2P", "en": "2P"},
+    "challenge.blocked": {"ja": "⚠ この PC では、ゲーム画面の上の表示が認識の読む画面にも写り込みます（Windows の制限）。認識が壊れるので、縛りプレイは出していません。",
+                          "en": "⚠ On this PC the overlay shows up in what the recognition reads (a Windows limit). It would break the recognition, so challenge mode isn't shown."},
     "card.session_desc": {"ja": "ぷよテト2を起動してからの勝敗・連勝数・レートの増減・平均 APM / PPS / APP を、盤面のあいだの上に出します（ゲームを閉じるとリセット）",
                           "en": "Wins and losses, win streak, rating change and average APM / PPS / APP since the game was started, top center (reset when the game is closed)"},
     "target.opener_left": {"ja": "1P のテンプレ名", "en": "1P opener"},
@@ -685,6 +700,10 @@ def _hbox(*widgets, stretch=True):
     if stretch:
         box.addStretch(1)
     return holder
+
+
+CHALLENGE_NEXT_ORDER = ("off", "from2", "all")
+CHALLENGE_SIDE_ORDER = ("auto", "left", "right")
 
 
 class SettingsWindow(QtWidgets.QWidget):
@@ -1003,12 +1022,36 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_language.currentIndexChanged.connect(self._changed)
         self.opener_card.add(self._row("opener_language", _hbox(self.opener_language)))
 
+        # 縛りプレイ (hud/challenge.py)
+        self.challenge_card = ui.Card()
+        self.challenge_next = ui.Segmented()
+        for key in CHALLENGE_NEXT_ORDER:
+            self.challenge_next.addItem("", key)
+        self.challenge_next.currentIndexChanged.connect(self._changed)
+        next_label = QtWidgets.QLabel()
+        self._row_labels["challenge_next"] = next_label
+        self.challenge_card.add(next_label)
+        self.challenge_card.add(_hbox(self.challenge_next))
+        self.challenge_cats = QtWidgets.QCheckBox()
+        self.challenge_cats.toggled.connect(self._changed)
+        self.challenge_card.add(self.challenge_cats)
+        self.challenge_side = QtWidgets.QComboBox()
+        for key in CHALLENGE_SIDE_ORDER:
+            self.challenge_side.addItem("", key)
+        self.challenge_side.currentIndexChanged.connect(self._changed)
+        self.challenge_card.add(self._row("challenge_side", _hbox(self.challenge_side)))
+        self.challenge_note = QtWidgets.QLabel()
+        self.challenge_note.setWordWrap(True)
+        self.challenge_note.setStyleSheet("background:#fff4e5; color:#7a3e00; border-radius:8px; padding:8px 10px;")
+        self.challenge_note.setVisible(False)
+        self.challenge_card.add(self.challenge_note)
+
         for cb in (self.show_clock, self.show_event_log, self.show_summary, self.show_opener, self.show_session):
             cb.toggled.connect(self._changed)
         self.event_log_count.valueChanged.connect(self._changed)
         self.opener_display.currentIndexChanged.connect(self._changed)
         return self._page("page.items", self.players_card, self.items_box, self.clock_card, self.session_card,
-                          self.events_card, self.summary_card, self.opener_card)
+                          self.events_card, self.summary_card, self.opener_card, self.challenge_card)
 
     def _move_item(self, step):
         row = self.items.currentRow()
@@ -1588,6 +1631,7 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _show_overlap(self):
         unsafe, hidden = getattr(self, "_overlap", (False, []))
+        self.challenge_note.setVisible(unsafe)
         if not unsafe:
             self.overlap_note.setVisible(False)
             return
@@ -1793,6 +1837,14 @@ class SettingsWindow(QtWidgets.QWidget):
             it = self.summary_items.item(i)
             it.setText(t("sum." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
         self.summary_items.blockSignals(False)
+        self.challenge_card.setTitle(t("card.challenge"))
+        self.challenge_card.setDescription(t("card.challenge_desc"))
+        for i, key in enumerate(CHALLENGE_NEXT_ORDER):
+            self.challenge_next.setItemText(i, t("ch." + key))
+        self.challenge_cats.setText(t("challenge_cats"))
+        for i, key in enumerate(CHALLENGE_SIDE_ORDER):
+            self.challenge_side.setItemText(i, t("cs." + key))
+        self.challenge_note.setText(t("challenge.blocked"))
         self.opener_card.setTitle(t("card.opener"))
         self.opener_card.setDescription(t("card.opener_desc"))
         for i, key in enumerate(OPENER_DISPLAY_ORDER):
@@ -2262,6 +2314,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
         self.show_session.setChecked(d["show_session"])
+        self.challenge_next.setCurrentIndex(max(0, self.challenge_next.findData(d["challenge_next"])))
+        self.challenge_cats.setChecked(d["challenge_cats"])
+        self.challenge_side.setCurrentIndex(max(0, self.challenge_side.findData(d["challenge_side"])))
         for i in range(self.summary_items.count()):
             it = self.summary_items.item(i)
             it.setCheckState(QtCore.Qt.CheckState.Checked if it.data(QtCore.Qt.ItemDataRole.UserRole)
@@ -2307,6 +2362,9 @@ class SettingsWindow(QtWidgets.QWidget):
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
             "show_session": self.show_session.isChecked(),
+            "challenge_next": self.challenge_next.currentData(),
+            "challenge_cats": self.challenge_cats.isChecked(),
+            "challenge_side": self.challenge_side.currentData(),
             "summary_items": [self.summary_items.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
                               for i in range(self.summary_items.count())
                               if self.summary_items.item(i).checkState() == QtCore.Qt.CheckState.Checked],
@@ -2410,6 +2468,7 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.events_card, ("show_event_log", "event_log_count")),
             (self.summary_card, ("show_summary", "summary_items")),
             (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),
+            (self.challenge_card, ("challenge_next", "challenge_cats", "challenge_side")),
             (self.drag_card, ("drag_each_side",)),
             (self.placement_card, ("stats_position",)),
             (self.position_section, offsets),

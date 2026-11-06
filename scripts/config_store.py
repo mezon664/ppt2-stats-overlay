@@ -125,6 +125,14 @@ DISPLAY_DEFAULTS = {
     # whose display is shown: "both", "left" (1P only) or "right" (2P only)
     "players": "both",
     "event_log_count": 3,        # 1 - 10 (was 5; user: allow more)
+    # 縛りプレイ (hud/challenge.py): over your own board on the game screen only
+    # (not OBS). challenge_next: "off" / "from2" (NEXT from the 2nd hidden) /
+    # "all" (every NEXT hidden); challenge_cats: a cat comes over your board for
+    # each TETRIS / T-SPIN / PERFECT CLEAR this match; challenge_side: whose
+    # board, "auto" (yours, from the waiting screen's "You" card) / "left" / "right".
+    "challenge_next": "off",
+    "challenge_cats": False,
+    "challenge_side": "auto",
 }
 
 # (min, max) for numeric options; out-of-range values are clamped.
@@ -172,7 +180,8 @@ OPENER_DISPLAYS = ("board", "hold", "namebar", "top", "cat")   # cat: a cat walk
 PLAYERS = ("both", "left", "right")
 OPENER_LANGUAGES = ("auto", "ja", "en")
 DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES,
-                   "opener_display": OPENER_DISPLAYS, "players": PLAYERS, "opener_language": OPENER_LANGUAGES}
+                   "opener_display": OPENER_DISPLAYS, "players": PLAYERS, "opener_language": OPENER_LANGUAGES,
+                   "challenge_next": ("off", "from2", "all"), "challenge_side": ("auto", "left", "right")}
 
 
 def opener_language(display):

@@ -33,6 +33,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 import opener_stats
+from challenge import ChallengeLayer
 from config_store import DISPLAY_DEFAULTS, DISPLAY_RANGES, load_settings, display_settings, part_value, opener_language
 
 log_hud = logging.getLogger("hud")
@@ -2035,6 +2036,7 @@ class HudWindow(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
         self.read_zones_layer = ReadZonesLayer(self)   # (first: under every part)
+        self.challenge = ChallengeLayer(self)          # 縛りプレイ: over the boards, under the parts
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
         self.summary = SummaryBlock(self)
@@ -2311,6 +2313,27 @@ class HudWindow(QtWidgets.QWidget):
     def _place(self):
         self._place_parts()
         self._keep_out_of_reading(openers=False)
+        self._place_challenge()
+
+    def challenge_blocked(self):
+        """縛りプレイ is set, but this PC shows the HUD in screen captures:
+        the recognition would read the covers and cats, so they stay off."""
+        d = self.display
+        return (d.get("challenge_next", "off") != "off" or d.get("challenge_cats")) and self.reading_unsafe()
+
+    def _place_challenge(self):
+        """縛りプレイ (hud/challenge.py): only while a match is being played —
+        not when switched off, positioning, at the result (frozen), or where
+        the HUD shows in screen captures. It doesn't follow show_on_hud: it's
+        for the player, not the numbers."""
+        st = getattr(self, "_last_state", None) or {}
+        active = (self.display["enabled"] and not self.edit_mode and not self.reading_unsafe()
+                  and not (getattr(self, "_follows", False) and getattr(self, "_last_geom", None) is None)
+                  and st.get("match_screen") is True and not st.get("frozen"))
+        layer = self.challenge
+        if layer.geometry() != self.rect():
+            layer.setGeometry(self.rect())
+        layer.update_state(st, self.display, self._scale or 1.0, active)
 
     def reading_unsafe(self):
         """The HUD is over the game in screen captures too (Windows didn't
