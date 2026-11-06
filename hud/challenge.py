@@ -3,15 +3,18 @@ to make the game harder, drawn by the HUD only (OBS shows the game as is).
 
   challenge_next  "from2": NEXT from the 2nd piece covered; "all": every NEXT
   challenge_cats  a cat comes over your board for each TETRIS / T-SPIN /
-                  PERFECT CLEAR this match (from match_stats), and wanders
-                  about on it until the match ends
+                  PERFECT CLEAR this match (from match_stats), and stays
+                  until the match ends: real cats, the user's green-screen
+                  clips (assets/challenge_cats/, tools/cat/make_challenge_cat.py)
+                  played over the board, each at its own height and pace
 
 The HUD is kept out of screen captures, so the recognition still sees the
 whole game. Where Windows can't keep it out (HudWindow.reading_unsafe) it
 would read the covers and cats instead, so nothing here is shown there.
 """
-import math
+import json
 import random
+from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -26,14 +29,7 @@ SLOT_CENTERS_Y = (119, 169, 219, 269, 319)
 # little inside it
 BOARD = {"left": (206, 120, 421, 548), "right": (811, 120, 1026, 548)}
 MAX_CATS = 12
-CAT_COLORS = (   # body, darker (ears inside, stripes), eyes
-    ((244, 162, 97), (214, 120, 60), (60, 40, 20)),     # orange
-    ((156, 163, 175), (107, 114, 128), (30, 30, 30)),   # gray
-    ((43, 43, 48), (20, 20, 24), (250, 204, 21)),       # black, yellow eyes
-    ((245, 245, 244), (214, 211, 209), (59, 130, 246)),  # white, blue eyes
-    ((253, 230, 190), (230, 190, 140), (60, 40, 20)),   # cream
-    ((120, 85, 60), (85, 58, 40), (250, 220, 120)),     # brown
-)
+CLIPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "challenge_cats"
 FPS = 30
 
 
@@ -61,122 +57,104 @@ def next_cover(mode, side):
     return x1, NEXT_TOP[mode], x2, NEXT_BOTTOM
 
 
+_CLIPS = None
+
+
+def load_clips():
+    """The cat clips (assets/challenge_cats/*/clip.json), in name order; read
+    once. Their frame images are read when first shown (Clip.image)."""
+    global _CLIPS
+    if _CLIPS is None:
+        _CLIPS = []
+        for path in sorted(CLIPS_DIR.glob("*/clip.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                _CLIPS.append(Clip(path.parent, data))
+            except (OSError, ValueError, KeyError):
+                pass
+    return _CLIPS
+
+
+class Clip:
+    """One cat clip: frames cropped to the cat (x, y in the clip), and the
+    part the cat ever covers (span), which is fitted to the board's width."""
+
+    def __init__(self, folder, data):
+        self.folder = Path(folder)
+        self.fps = float(data["fps"])
+        self.frames = data["frames"]
+        self.span = data["span"]
+        self.first = next((i for i, f in enumerate(self.frames) if f.get("file")), 0)
+        self._images = {}
+
+    def image(self, index):
+        """Frame `index`'s image (kept while there are cats, see release), or None."""
+        if index not in self._images:
+            f = self.frames[index]
+            img = None
+            if f.get("file"):
+                img = QtGui.QImage(str(self.folder / f["file"]))
+                img = None if img.isNull() else img.convertToFormat(
+                    QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+            self._images[index] = img
+        return self._images[index]
+
+    def release(self):
+        self._images = {}
+
+
 class Cat:
-    """One cat: drops in at the top of the board, then walks from spot to
-    spot, sitting a while at each. Its moves come from its seed, so the same
-    match always gives the same cats."""
+    """One cat: plays its clip over the board, from the cat coming in to it
+    going off, again and again. Each time round it comes from a side and at a
+    height of its own (from its seed: the same match gives the same cats)."""
 
-    def __init__(self, seed, side, now):
-        self.rng = random.Random(seed)
+    def __init__(self, seed, side, now, clip):
+        self.seed = seed
         self.side = side
-        x1, y1, x2, y2 = BOARD[side]
-        self.size = self.rng.uniform(38, 54)
-        self.colors = self.rng.choice(CAT_COLORS)
-        self.speed = self.rng.uniform(55, 105)
-        self.x = self.rng.uniform(x1, x2)
-        self.y = y1 - 40                     # drops in from above
-        self.face = self.rng.choice((-1, 1))
+        self.clip = clip
+        rng = random.Random(seed)
+        self.pace = rng.uniform(0.9, 1.1)
         self.born = now
-        self.phase = self.rng.uniform(0, 6.3)
-        self._target(now)
+        self.y = 0.0   # its floor (reference px), for drawing the nearer ones last
 
-    def _target(self, now):
+    def at(self, now):
+        """(frame index, mirrored, floor y in reference px) at `now`. A new
+        cat starts as it comes in (the clip's first frame with the cat)."""
+        n = len(self.clip.frames)
+        pos = self.clip.first + (now - self.born) * self.clip.fps * self.pace
+        lap = int(pos // n)
+        rng = random.Random(f"{self.seed}|{lap}")
+        mirrored = rng.random() < 0.5
         x1, y1, x2, y2 = BOARD[self.side]
-        m = self.size / 2
-        self.tx = self.rng.uniform(x1 + m, x2 - m)
-        self.ty = self.rng.uniform(y1 + m, y2 - m * 0.6)
-        self.sit_until = None
-
-    def step(self, now, dt):
-        if self.sit_until is not None:
-            if now >= self.sit_until:
-                self._target(now)
-            return
-        dx, dy = self.tx - self.x, self.ty - self.y
-        dist = math.hypot(dx, dy)
-        go = self.speed * dt
-        if dist <= go:
-            self.x, self.y = self.tx, self.ty
-            self.sit_until = now + self.rng.uniform(1.5, 4.5)
-        else:
-            self.x += dx / dist * go
-            self.y += dy / dist * go
-            if abs(dx) > 1:
-                self.face = 1 if dx > 0 else -1
-
-    @property
-    def walking(self):
-        return self.sit_until is None
+        sx1, sy1, sx2, sy2 = self.clip.span
+        k = (x2 - x1) / (sx2 - sx1)
+        floor = rng.uniform(min(y2, y1 + (sy2 - sy1) * k), y2)
+        self.y = floor
+        return int(pos) % n, mirrored, floor
 
 
 def paint_cat(p, cat, s, now):
-    """A cat at (cat.x, cat.y) (its feet), scaled by s (reference px -> widget px)."""
-    body, dark, eye = (QtGui.QColor(*c) for c in cat.colors)
-    line = QtGui.QColor(25, 25, 30)
-    S = cat.size * s
-    t = now + cat.phase
-    bob = abs(math.sin(t * 9)) * S * 0.06 if cat.walking else 0.0
+    """A cat over its board, scaled by s (reference px -> widget px)."""
+    clip = cat.clip
+    index, mirrored, floor = cat.at(now)
+    img = clip.image(index)
+    if img is None:
+        return
+    f = clip.frames[index]
+    x1, y1, x2, y2 = BOARD[cat.side]
+    sx1, sy1, sx2, sy2 = clip.span
+    k = (x2 - x1) / (sx2 - sx1)               # clip px -> reference px
+    w, h = img.width() * k, img.height() * k
+    left = (sx2 - (f["x"] + img.width())) * k if mirrored else (f["x"] - sx1) * k
+    top = floor - (sy2 - f["y"]) * k
     p.save()
-    p.translate(cat.x * s, cat.y * s - bob)
-    p.scale(cat.face, 1)
-    pen = QtGui.QPen(line, max(1.2, S * 0.045))
-    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
-    # shadow
-    p.setPen(QtCore.Qt.PenStyle.NoPen)
-    p.setBrush(QtGui.QColor(0, 0, 0, 70))
-    p.drawEllipse(QtCore.QPointF(0, bob), S * 0.5, S * 0.1)
-    # tail: from the back, swaying
-    sway = math.sin(t * (5 if cat.walking else 2)) * S * 0.18
-    tail = QtGui.QPainterPath(QtCore.QPointF(-S * 0.38, -S * 0.25))
-    tail.cubicTo(-S * 0.7, -S * 0.3, -S * 0.62 + sway, -S * 0.75, -S * 0.45 + sway, -S * 0.85)
-    p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-    p.setPen(QtGui.QPen(line, S * 0.17, cap=QtCore.Qt.PenCapStyle.RoundCap))
-    p.drawPath(tail)
-    p.setPen(QtGui.QPen(body, S * 0.11, cap=QtCore.Qt.PenCapStyle.RoundCap))
-    p.drawPath(tail)
-    # legs (walking: stepping)
-    p.setPen(pen)
-    p.setBrush(body)
-    step = math.sin(t * 9) * S * 0.06 if cat.walking else 0.0
-    for lx, ph in ((-0.25, 1), (0.22, -1)):
-        p.drawRoundedRect(QtCore.QRectF(S * lx - S * 0.07 + step * ph, -S * 0.2, S * 0.14, S * 0.2), S * 0.05, S * 0.05)
-    # body
-    p.drawEllipse(QtCore.QRectF(-S * 0.45, -S * 0.52, S * 0.85, S * 0.42))
-    # stripes on the back
-    p.setPen(QtGui.QPen(dark, S * 0.05, cap=QtCore.Qt.PenCapStyle.RoundCap))
-    for k in (-0.18, -0.02):
-        p.drawLine(QtCore.QPointF(S * k, -S * 0.5), QtCore.QPointF(S * (k + 0.04), -S * 0.38))
-    # head
-    hx, hy, hr = S * 0.32, -S * 0.62, S * 0.27
-    p.setPen(pen)
-    p.setBrush(body)
-    for sx in (-1, 1):   # ears
-        ear = QtGui.QPolygonF([QtCore.QPointF(hx + sx * hr * 0.85, hy - hr * 0.35),
-                               QtCore.QPointF(hx + sx * hr * 0.75, hy - hr * 1.25),
-                               QtCore.QPointF(hx + sx * hr * 0.15, hy - hr * 0.8)])
-        p.drawPolygon(ear)
-    p.drawEllipse(QtCore.QPointF(hx, hy), hr * 1.08, hr)
-    p.setPen(QtCore.Qt.PenStyle.NoPen)
-    p.setBrush(dark)
-    for sx in (-1, 1):   # inside of the ears
-        p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(hx + sx * hr * 0.7, hy - hr * 0.5),
-                                       QtCore.QPointF(hx + sx * hr * 0.68, hy - hr * 1.0),
-                                       QtCore.QPointF(hx + sx * hr * 0.32, hy - hr * 0.75)]))
-    # eyes (blinking now and then), nose
-    blink = (t % 3.7) < 0.15
-    for sx in (-1, 1):
-        ex = hx + sx * hr * 0.4 + hr * 0.15
-        if blink:
-            p.setPen(QtGui.QPen(line, S * 0.035))
-            p.drawLine(QtCore.QPointF(ex - hr * 0.13, hy), QtCore.QPointF(ex + hr * 0.13, hy))
-            p.setPen(QtCore.Qt.PenStyle.NoPen)
-        else:
-            p.setBrush(eye)
-            p.drawEllipse(QtCore.QPointF(ex, hy - hr * 0.05), hr * 0.15, hr * 0.2)
-            p.setBrush(QtGui.QColor(15, 15, 15))
-            p.drawEllipse(QtCore.QPointF(ex + hr * 0.03, hy - hr * 0.05), hr * 0.07, hr * 0.15)
-    p.setBrush(QtGui.QColor(236, 112, 140))
-    p.drawEllipse(QtCore.QPointF(hx + hr * 0.15, hy + hr * 0.3), hr * 0.1, hr * 0.07)
+    p.setClipRect(QtCore.QRectF(x1 * s, 0, (x2 - x1) * s, 10000))   # comes in from the board's edge
+    target = QtCore.QRectF((x1 + left) * s, top * s, w * s, h * s)
+    if mirrored:
+        p.translate(target.center())
+        p.scale(-1, 1)
+        p.translate(-target.center())
+    p.drawImage(target, img)
     p.restore()
 
 
@@ -193,7 +171,6 @@ class ChallengeLayer(QtWidgets.QWidget):
         self._match = None
         self._clock = QtCore.QElapsedTimer()
         self._clock.start()
-        self._last_t = None
         self._timer = QtCore.QTimer(self)
         self._timer.setInterval(int(1000 / FPS))
         self._timer.timeout.connect(self._tick)
@@ -217,7 +194,11 @@ class ChallengeLayer(QtWidgets.QWidget):
         want = cat_count(state, side) if active and display.get("challenge_cats") else 0
         now = self.now()
         while len(self.cats) < want:
-            self.cats.append(Cat(f"{match}|{side}|{len(self.cats)}", side, now))
+            clips = load_clips()
+            if not clips:
+                break
+            i = len(self.cats)
+            self.cats.append(Cat(f"{match}|{side}|{i}", side, now, clips[i % len(clips)]))
         shown = cover is not None or bool(want)
         if cover != self.cover:
             self.cover = cover
@@ -225,18 +206,15 @@ class ChallengeLayer(QtWidgets.QWidget):
         self.setVisible(shown)
         if want and shown:
             if not self._timer.isActive():
-                self._last_t = None
                 self._timer.start()
         else:
             self._timer.stop()
             self.update()
+            if not self.cats:   # no cats now: their images go
+                for clip in _CLIPS or ():
+                    clip.release()
 
     def _tick(self):
-        now = self.now()
-        dt = 0.0 if self._last_t is None else min(0.1, now - self._last_t)
-        self._last_t = now
-        for cat in self.cats:
-            cat.step(now, dt)
         self.update()
 
     def paintEvent(self, event):
@@ -259,6 +237,9 @@ class ChallengeLayer(QtWidgets.QWidget):
                     p.drawText(QtCore.QRectF(x1 * s, (cy - 20) * s, (x2 - x1) * s, 40 * s),
                                QtCore.Qt.AlignmentFlag.AlignCenter, "?")
         now = self.now()
+        p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        for cat in self.cats:
+            cat.at(now)
         for cat in sorted(self.cats, key=lambda c: c.y):   # the nearer ones over the farther
             paint_cat(p, cat, s, now)
         p.end()
