@@ -33,7 +33,12 @@ CAT_SIZE = 2.2   # the part a cat covers in its clip is this many boards wide (u
 # the right; user: as if from outside the screen), at any height in here
 EDGE_X = {"left": 0, "right": 1232}
 FLOOR_Y = (40, 680)
-FADE_S = 0.35     # a cat that would leave by the inner side fades out first (not cut off mid-screen)
+FADE_S = 0.35     # a cat that turns up mid-screen fades in
+# A cat that leaves by the inner side (the go-kart) isn't cut off mid-screen:
+# it keeps going for this long, its last frames over and over, speeding up
+# to OFF_SPEEDUP times its speed, and fades out over the last OFF_FADE_S
+# (user: let it drive off before it goes)
+OFF_S, OFF_SPEEDUP, OFF_FADE_S, OFF_CYCLE = 1.5, 3.0, 0.6, 8
 MAX_CATS = 4   # on the screen at once (each comes and goes)
 CLIPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "challenge_cats"
 FPS = 30
@@ -97,6 +102,11 @@ class Clip:
         self.first, self.last = files[0], files[-1]
         self.enters = self._cut(self.frames[self.first])
         self.leaves = self._cut(self.frames[self.last])
+        # going off: the last frames with the whole cat, and its speed then (clip px a frame)
+        e = self.end
+        self.off_cycle = list(range(max(self.start, e - OFF_CYCLE + 1), e + 1))
+        back = self.frames[max(self.start, e - OFF_CYCLE)]
+        self.off_speed = (self.frames[e]["x"] - back["x"]) / max(1, e - max(self.start, e - OFF_CYCLE))
         self._images = {}
 
     def _cut(self, f):
@@ -146,7 +156,8 @@ class Visit:
         self.x0 = EDGE_X[cat.side] - push if outer == "l" else EDGE_X[cat.side] + push - w
         self.floor = rng.uniform(min(FLOOR_Y[1], FLOOR_Y[0] + (sy2 - sy1) * self.k), FLOOR_Y[1])
         self.t0 = t0
-        self.t1 = t0 + (self.b - self.a + 1) / (clip.fps * cat.pace)   # when it's gone
+        self.t_end = t0 + (self.b - self.a + 1) / (clip.fps * cat.pace)   # the clip's part played
+        self.t1 = self.t_end + (OFF_S if self.fade_out else 0.0)          # when it's gone
 
 
 class Cat:
@@ -166,19 +177,23 @@ class Cat:
         return now >= self.v.t1
 
     def at(self, now):
-        """(frame index, visit, opacity) at `now`, or None once it's gone."""
+        """(frame index, extra x (clip px), visit, opacity) at `now`, or None
+        once it's gone."""
         v = self.v
         if now >= v.t1:
             return None
         clip = self.clip
         t = max(0.0, now - v.t0)
-        index = min(v.b, v.a + int(t * clip.fps * self.pace))
-        opacity = 1.0
-        if v.fade_in:
-            opacity = min(opacity, t / FADE_S)
-        if v.fade_out:
-            opacity = min(opacity, (v.t1 - now) / FADE_S)
-        return index, v, max(0.0, min(1.0, opacity))
+        opacity = min(1.0, t / FADE_S) if v.fade_in else 1.0
+        if now < v.t_end:
+            return min(v.b, v.a + int(t * clip.fps * self.pace)), 0.0, v, max(0.0, opacity)
+        # going off by the inner side: on and on, faster, fading out
+        m = (now - v.t_end) * clip.fps * self.pace          # frames since
+        n = OFF_S * clip.fps * self.pace
+        index = clip.off_cycle[int(m) % len(clip.off_cycle)]
+        x = clip.frames[clip.end]["x"] + clip.off_speed * (m + (OFF_SPEEDUP - 1) / 2 * m * m / n)
+        opacity = min(opacity, (v.t1 - now) / OFF_FADE_S)
+        return index, x - clip.frames[index]["x"], v, max(0.0, min(1.0, opacity))
 
 
 def paint_cat(p, cat, s, now):
@@ -186,14 +201,15 @@ def paint_cat(p, cat, s, now):
     shown = cat.at(now)
     if shown is None:
         return
-    index, v, opacity = shown
+    index, dx, v, opacity = shown
     clip = cat.clip
     img = clip.image(index)
     if img is None or opacity <= 0:
         return
     f = clip.frames[index]
     k = v.k
-    x = v.x0 + ((clip.width - f["x"] - img.width()) if v.mirrored else f["x"]) * k
+    fx = f["x"] + dx
+    x = v.x0 + ((clip.width - fx - img.width()) if v.mirrored else fx) * k
     top = v.floor - (clip.span[3] - f["y"]) * k
     p.save()
     p.setOpacity(opacity)
