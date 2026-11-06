@@ -208,3 +208,18 @@ def test_no_red_where_the_hud_is_kept_out_of_captures():
     win.set_edit_mode(True)
     assert win.read_zones_layer.isHidden()
     assert not getattr(win.stats["left"], "blocked", False)
+
+
+def test_long_opener_names_take_more_lines_in_the_summary():
+    """User: opener names run long; in the summary they go over a few lines
+    (at most SummaryBlock.TEXT_LINES) and the box grows to fit."""
+    import overlay
+    s = overlay.SummaryBlock(None)
+    s.configure("band", "ja", 1.0, ["opener", "apm"])
+    s.update_match({"left": {"opener": "TKI"}, "right": {}})
+    short = s.height()
+    s.update_match({"left": {"opener": "パフェクリ開幕（ハチミツ砲派生）" * 3}, "right": {}})
+    lines = s._text_lines("left", "opener")
+    assert len(lines) == s.TEXT_LINES and lines[-1].endswith("…")
+    assert s.height() == short + (s.TEXT_LINES - 1) * s.TEXT_LINE_H
+    assert overlay.wrap_lines("TKI", 12, overlay.BOLD, 100, 3) == ["TKI"]

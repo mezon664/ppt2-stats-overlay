@@ -635,6 +635,27 @@ def elide(text, px, weight, width):
     return fm.elidedText(text, QtCore.Qt.TextElideMode.ElideRight, width)
 
 
+def wrap_lines(text, px, weight, width, max_lines):
+    """Text broken into lines that fit width, at most max_lines (the last
+    one cut with …). Breaks after a space or before a bracket when one is
+    near, else anywhere (Japanese names have no spaces). Same as the OBS
+    page's wrapLines."""
+    lines, rest = [], text
+    while rest and len(lines) < max_lines - 1 and text_width(px, weight, rest) > width:
+        n = 1
+        while n < len(rest) and text_width(px, weight, rest[:n + 1]) <= width:
+            n += 1
+        cut = max([i + 1 for i in range(n) if rest[i] == " "] +
+                  [i for i in range(1, n + 1) if i < len(rest) and rest[i] in "(（[「"] + [0])
+        if cut > n // 2:   # a nice break, not too early
+            n = cut
+        lines.append(rest[:n].rstrip())
+        rest = rest[n:].lstrip()
+    if rest:
+        lines.append(elide(rest, px, weight, width))
+    return lines
+
+
 class StatBlock(Band):
     """APM / PPS for one player, drawn in the chosen style ("band", "pop",
     "gauge", "text"). The content hugs the board side of the block (mode =
@@ -1342,6 +1363,8 @@ class SummaryBlock(Band):
     # text sizes (reference px x u); the user asked for these bigger than the stats' small labels
     TITLE_PX, LABEL_PX, VALUE_PX, TEXT_PX = 15, 12, 15, 12
     COL_X = 0.2   # center of the 1P column (2P mirrored), share of the width
+    # opener names are long: up to this many lines in their column (user's request)
+    TEXT_LINES, TEXT_LINE_H = 3, 14
 
     def __init__(self, parent):
         super().__init__(parent, fade=None, draggable=True)
@@ -1358,13 +1381,39 @@ class SummaryBlock(Band):
         """items: display.summary_items (None = every row)."""
         self.style, self.language, self.u = style, language, u
         self.rows = [r for r in SUMMARY_ROWS if items is None or r[0] in items]
-        self.setFixedSize(int(self.WIDTH * u),
-                          int((self.TITLE_H + self.ROW_H * len(self.rows) + 8) * u))
-        self.update()
+        self._resize()
 
     def update_match(self, state):
         self.duration = state.get("match_elapsed_s", 0) or 0
         self.sides = {"left": summary_side(state.get("left")), "right": summary_side(state.get("right"))}
+        self._resize()
+
+    def _text_lines(self, side, key):
+        """A text row's (opener's) lines in its column, or None for none."""
+        if self.sides[side].get("puyo"):
+            return None
+        v = self.sides[side].get(key)
+        if self.opener_language == "en":   # the English name (Japanese where there's none)
+            v = self.sides[side].get(key + "_en") or v
+        if not v:
+            return ["--"]
+        u = self.u
+        return wrap_lines(v, self.TEXT_PX * u, BOLD, 2 * self.WIDTH * u * self.COL_X - 12 * u, self.TEXT_LINES)
+
+    def _row_heights(self):
+        out = []
+        for key, _, fmt in self.rows:
+            n = 1
+            if fmt is None:
+                n = max([len(self._text_lines(sd, key) or []) for sd in ("left", "right")] + [1])
+            out.append(self.ROW_H + (n - 1) * self.TEXT_LINE_H)
+        return out
+
+    def _resize(self):
+        u = self.u
+        size = (int(self.WIDTH * u), int((self.TITLE_H + sum(self._row_heights()) + 8) * u))
+        if (self.width(), self.height()) != size:
+            self.setFixedSize(*size)
         self.update()
 
     def paintEvent(self, event):
@@ -1408,19 +1457,23 @@ class SummaryBlock(Band):
         W = r.width()
         title = f"{ui['summary']}  {fmt_clock(self.duration)}"
         draw_text(p, W / 2, 20 * u, title, self.TITLE_PX * u, BOLD, WHITE, "center", outline, a)
-        for i, (key, label_key, fmt) in enumerate(self.rows):
-            base = (self.TITLE_H + 4 + i * self.ROW_H + 15) * u
-            draw_text(p, W / 2, base, ui[label_key], self.LABEL_PX * u, SEMI, SOFT, "center", outline, a)
+        top = self.TITLE_H + 4
+        for (key, label_key, fmt), row_h in zip(self.rows, self._row_heights()):
+            base = (top + 15) * u
+            extra = (row_h - self.ROW_H) * u    # a text row of several lines
+            draw_text(p, W / 2, base + extra / 2, ui[label_key], self.LABEL_PX * u, SEMI, SOFT, "center", outline, a)
+            top += row_h
             # each player's column centered on its own side (user's request)
             for side, x in (("left", W * self.COL_X), ("right", W * (1 - self.COL_X))):
                 if self.sides[side].get("puyo"):   # a Puyo side's column stays empty
                     continue
                 v = self.sides[side].get(key)
-                if fmt is None:     # text row (opener): a little smaller, cut to its column
-                    if self.opener_language == "en":   # the English name (Japanese where there's none)
-                        v = self.sides[side].get(key + "_en") or v
-                    text = "--" if not v else elide(v, self.TEXT_PX * u, BOLD, 2 * W * self.COL_X - 12 * u)
-                    draw_text(p, x, base, text, self.TEXT_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)
+                if fmt is None:     # text row (opener): a little smaller, over lines in its column
+                    lines = self._text_lines(side, key)
+                    y = base + (extra - (len(lines) - 1) * self.TEXT_LINE_H * u) / 2
+                    for line in lines:
+                        draw_text(p, x, y, line, self.TEXT_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)
+                        y += self.TEXT_LINE_H * u
                     continue
                 text = "--" if v is None else fmt.format(v)
                 draw_text(p, x, base, text, self.VALUE_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)

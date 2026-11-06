@@ -729,10 +729,48 @@ function summarySide(side) {
   out.opener = side.opener; out.opener_en = side.opener_en || side.opener; out.puyo = isPuyo(side);
   return out;
 }
+// opener names are long: up to this many lines in their column (as the HUD)
+const SUM_TEXT_LINES = 3, SUM_TEXT_LINE_H = 14;
+// text broken into lines that fit width (hud/overlay.py wrap_lines)
+function wrapLines(text, px, weight, width, maxLines) {
+  const lines = [];
+  let rest = [...text];
+  const w = (cs) => textWidth(px, weight, cs.join(""));
+  while (rest.length && lines.length < maxLines - 1 && w(rest) > width) {
+    let n = 1;
+    while (n < rest.length && w(rest.slice(0, n + 1)) <= width) n++;
+    let cut = 0;
+    for (let i = 0; i < n; i++) if (rest[i] === " ") cut = Math.max(cut, i + 1);
+    for (let i = 1; i <= n; i++) if (i < rest.length && "(（[「".includes(rest[i])) cut = Math.max(cut, i);
+    if (cut > Math.floor(n / 2)) n = cut;
+    lines.push(rest.slice(0, n).join("").trimEnd());
+    rest = [...rest.slice(n).join("").trimStart()];
+  }
+  if (rest.length) lines.push(elide(rest.join(""), px, weight, width));
+  return lines;
+}
+function summaryTextLines(m, side, key) {
+  const data = m.sides[side] || {};
+  if (data.puyo) return null;
+  let v = data[key];
+  if (m.openerLanguage === "en") v = data[key + "_en"] || v;
+  if (!v) return ["--"];
+  return wrapLines(v, 12 * m.u, BOLD, 2 * SUM_W * m.u * SUM_COL_X - 12 * m.u, SUM_TEXT_LINES);
+}
+function summaryRowHeights(m) {
+  return m.rows.map(([key, , dec]) => {
+    const n = dec === null ? Math.max(1, ...["left", "right"].map((sd) => (summaryTextLines(m, sd, key) || []).length)) : 1;
+    return SUM_ROW_H + (n - 1) * SUM_TEXT_LINE_H;
+  });
+}
+function summaryResize(m) {
+  m.w = int(SUM_W * m.u);
+  m.h = int((SUM_TITLE_H + summaryRowHeights(m).reduce((s, h) => s + h, 0) + 8) * m.u);
+}
 function summaryConfigure(m, style, language, u, items) {
   Object.assign(m, { style, language, u });
   m.rows = SUMMARY_ROWS.filter(([k]) => !Array.isArray(items) || items.includes(k));
-  m.w = int(SUM_W * u); m.h = int((SUM_TITLE_H + SUM_ROW_H * m.rows.length + 8) * u);
+  summaryResize(m);
 }
 function summaryPaint(ctx, m) {
   useColors(m);
@@ -751,18 +789,26 @@ function summaryPaint(ctx, m) {
   const ui = UI_TEXT[m.language];
   const outline = (st === "text" || st === "minimal") ? 1.3 * u : 0;
   drawText(ctx, W / 2, 20 * u, `${ui.summary}  ${fmtClock(m.duration)}`, 15 * u, BOLD, WHITE, "center", outline, a);
+  const heights = summaryRowHeights(m);
+  let top = SUM_TITLE_H + 4;
   m.rows.forEach(([key, labelKey, dec], i) => {
-    const base = (SUM_TITLE_H + 4 + i * SUM_ROW_H + 15) * u;
-    drawText(ctx, W / 2, base, ui[labelKey], 12 * u, SEMI, SOFT, "center", outline, a);
+    const base = (top + 15) * u, extra = (heights[i] - SUM_ROW_H) * u;   // a text row of several lines
+    top += heights[i];
+    drawText(ctx, W / 2, base + extra / 2, ui[labelKey], 12 * u, SEMI, SOFT, "center", outline, a);
     for (const [side, x] of [["left", W * SUM_COL_X], ["right", W * (1 - SUM_COL_X)]]) {
       const data = m.sides[side];
       if (data.puyo) continue;   // a Puyo side's column stays empty
-      let v = data[key], text;
-      if (dec === null) {   // text row (opener): cut to its column
-        if (m.openerLanguage === "en") v = data[key + "_en"] || v;
-        text = !v ? "--" : elide(v, 12 * u, BOLD, 2 * W * SUM_COL_X - 12 * u);
-      } else text = v == null ? "--" : Number(v).toFixed(dec);
-      drawText(ctx, x, base, text, (dec === null ? 12 : 15) * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a);
+      if (dec === null) {   // text row (opener): over lines in its column
+        const lines = summaryTextLines(m, side, key);
+        let y = base + (extra - (lines.length - 1) * SUM_TEXT_LINE_H * u) / 2;
+        for (const line of lines) {
+          drawText(ctx, x, y, line, 12 * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a);
+          y += SUM_TEXT_LINE_H * u;
+        }
+        continue;
+      }
+      const v = data[key];
+      drawText(ctx, x, base, v == null ? "--" : Number(v).toFixed(dec), 15 * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a);
     }
   });
 }
@@ -1226,6 +1272,7 @@ function render(state) {
   versus.puyo = { left: isPuyo(state.left), right: isPuyo(state.right) };
   summary.duration = state.match_elapsed_s || 0;
   summary.sides = { left: summarySide(state.left), right: summarySide(state.right) };
+  summaryResize(summary);   // long opener names: more lines, a taller box
   // dim rather than hide when capture is down: the numbers are the last real measurement
   for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)]) p.dim = stale;
   layout();
