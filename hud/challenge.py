@@ -25,9 +25,13 @@ NEXT_X = {"left": (447, 517), "right": (1052, 1122)}
 NEXT_TOP = {"all": 100, "from2": 144}
 NEXT_BOTTOM = 341
 SLOT_CENTERS_Y = (119, 169, 219, 269, 319)
-# where the cats wander: each board (board_read LEFT_BOX / RIGHT_BOX), a
-# little inside it
+# each board (board_read LEFT_BOX / RIGHT_BOX), a little inside it: a cat is
+# about as wide as it's playing (its size)
 BOARD = {"left": (206, 120, 421, 548), "right": (811, 120, 1026, 548)}
+# where the cats go: that player's half of the screen, off the board too
+# (HOLD, NEXT, the score; user's request)
+AREA = {"left": (0, 40, 616, 680), "right": (616, 40, 1232, 680)}
+FADE_S = 0.35   # a cat fades in where it turns up, and out before it goes
 MAX_CATS = 12
 CLIPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "challenge_cats"
 FPS = 30
@@ -84,7 +88,7 @@ class Clip:
         self.fps = float(data["fps"])
         self.frames = data["frames"]
         self.span = data["span"]
-        self.first = next((i for i, f in enumerate(self.frames) if f.get("file")), 0)
+        self.start, self.end = int(data["start"]), int(data["end"])   # the whole cat in the picture
         self._images = {}
 
     def image(self, index):
@@ -104,52 +108,56 @@ class Clip:
 
 
 class Cat:
-    """One cat: plays its clip over the board, from the cat coming in to it
-    going off, again and again. Each time round it comes from a side and at a
-    height of its own (from its seed: the same match gives the same cats)."""
+    """One cat: plays its clip (the part with the whole cat in the picture)
+    again and again. Each time round it turns up somewhere else in its
+    player's half of the screen, facing either way and a little bigger or
+    smaller, fading in and out (from its seed: the same match gives the same
+    cats)."""
 
     def __init__(self, seed, side, now, clip):
         self.seed = seed
         self.side = side
         self.clip = clip
-        rng = random.Random(seed)
-        self.pace = rng.uniform(0.9, 1.1)
+        self.pace = random.Random(seed).uniform(0.9, 1.1)
         self.born = now
         self.y = 0.0   # its floor (reference px), for drawing the nearer ones last
 
     def at(self, now):
-        """(frame index, mirrored, floor y in reference px) at `now`. A new
-        cat starts as it comes in (the clip's first frame with the cat)."""
-        n = len(self.clip.frames)
-        pos = self.clip.first + (now - self.born) * self.clip.fps * self.pace
+        """(frame index, mirrored, k (clip px -> reference px), left, floor
+        (reference px), opacity) at `now`."""
+        clip = self.clip
+        n = clip.end - clip.start + 1
+        pos = max(0.0, now - self.born) * clip.fps * self.pace
         lap = int(pos // n)
+        index = clip.start + int(pos) % n
         rng = random.Random(f"{self.seed}|{lap}")
         mirrored = rng.random() < 0.5
-        x1, y1, x2, y2 = BOARD[self.side]
-        sx1, sy1, sx2, sy2 = self.clip.span
-        k = (x2 - x1) / (sx2 - sx1)
-        floor = rng.uniform(min(y2, y1 + (sy2 - sy1) * k), y2)
+        bx1, _, bx2, _ = BOARD[self.side]
+        sx1, sy1, sx2, sy2 = clip.span
+        k = (bx2 - bx1) / (sx2 - sx1) * rng.uniform(0.85, 1.15)
+        ax1, ay1, ax2, ay2 = AREA[self.side]
+        left = rng.uniform(ax1, max(ax1, ax2 - (sx2 - sx1) * k))
+        floor = rng.uniform(min(ay2, ay1 + (sy2 - sy1) * k), ay2)
         self.y = floor
-        return int(pos) % n, mirrored, floor
+        edge = min(pos % n, n - 1 - pos % n) / (clip.fps * self.pace)   # s from the lap's ends
+        return index, mirrored, k, left, floor, max(0.0, min(1.0, edge / FADE_S))
 
 
 def paint_cat(p, cat, s, now):
-    """A cat over its board, scaled by s (reference px -> widget px)."""
+    """A cat in its half of the screen, scaled by s (reference px -> widget px)."""
     clip = cat.clip
-    index, mirrored, floor = cat.at(now)
+    index, mirrored, k, left, floor, opacity = cat.at(now)
     img = clip.image(index)
-    if img is None:
+    if img is None or opacity <= 0:
         return
     f = clip.frames[index]
-    x1, y1, x2, y2 = BOARD[cat.side]
     sx1, sy1, sx2, sy2 = clip.span
-    k = (x2 - x1) / (sx2 - sx1)               # clip px -> reference px
     w, h = img.width() * k, img.height() * k
-    left = (sx2 - (f["x"] + img.width())) * k if mirrored else (f["x"] - sx1) * k
+    x = left + ((sx2 - (f["x"] + img.width())) if mirrored else (f["x"] - sx1)) * k
     top = floor - (sy2 - f["y"]) * k
     p.save()
-    p.setClipRect(QtCore.QRectF(x1 * s, 0, (x2 - x1) * s, 10000))   # comes in from the board's edge
-    target = QtCore.QRectF((x1 + left) * s, top * s, w * s, h * s)
+    p.setOpacity(opacity)
+    target = QtCore.QRectF(x * s, top * s, w * s, h * s)
     if mirrored:
         p.translate(target.center())
         p.scale(-1, 1)

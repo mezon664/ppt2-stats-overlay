@@ -1,10 +1,11 @@
 """Cuts a cat out of a green-screen clip for 縛りプレイ's cats (hud/challenge.py):
-the cat plays its whole clip over your board, so the clip should show the cat
-coming in, doing something, and going off again.
+the part with the whole cat in the picture plays again and again, somewhere in
+your half of the screen each time, so any clip of a cat doing something works.
 
 Writes assets/challenge_cats/<name>/: f_NNN.webp (each frame cropped to the
 cat, transparent around it) and clip.json (per frame: where the crop sits in
-the clip; for the whole clip: the part the cat ever covers, and its floor).
+the clip and its size; for the whole clip: the frames where the whole cat is in
+the picture, which are the ones shown, and the part it covers in them).
 Cats use the clips in that folder in name order, one after the other.
 
     python tools/cat/make_challenge_cat.py "C:\\path\\clip.mp4" cat1
@@ -36,7 +37,6 @@ def main(video, name):
     make_cat.calibrate_green(first)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     frames, size, k = [], None, 0
-    span = [None, None, None, None]   # x1, y1, x2, y2 the cat ever covers
     while True:
         ok, f = cap.read()
         if not ok:
@@ -49,23 +49,28 @@ def main(video, name):
             x1, x2, y1, y2 = int(xs.min()), int(xs.max()) + 1, int(ys.min()), int(ys.max()) + 1
             fname = f"f_{k:03d}.webp"
             cv2.imwrite(str(out / fname), bgra[y1:y2, x1:x2], [cv2.IMWRITE_WEBP_QUALITY, 88])
-            entry = {"file": fname, "x": x1, "y": y1}
-            span = [min(v, w) if v is not None else w for v, w in zip(span[:2], (x1, y1))] + \
-                   [max(v, w) if v is not None else w for v, w in zip(span[2:], (x2, y2))]
+            entry = {"file": fname, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
         frames.append(entry)
         k += 1
+    # the whole cat in the picture: not cut by the clip's left or right edge
+    whole = [i for i, e in enumerate(frames) if e["file"] and e["x"] > 1 and e["x"] + e["w"] < size[0] - 1]
+    start, end = whole[0], whole[-1]
+    shown = [e for e in frames[start:end + 1] if e["file"]]
+    span = [min(e["x"] for e in shown), min(e["y"] for e in shown),
+            max(e["x"] + e["w"] for e in shown), max(e["y"] + e["h"] for e in shown)]
     data = {
         "_about": "A 縛りプレイ cat (hud/challenge.py): the user's green-screen clip, cut out by "
                   "tools/cat/make_challenge_cat.py.",
         "fps": fps, "size": size,
-        # what the cat covers over the whole clip: x1..x2 is fitted to the board's width,
-        # y2 (its feet at the lowest) is the floor
+        # shown: start..end, where the whole cat is in the picture (it fades in and out)
+        "start": start, "end": end,
+        # what the cat covers in those frames; y2 (its feet at the lowest) is the floor
         "span": span,
         "frames": frames,
     }
     (out / "clip.json").write_text(json.dumps(data, indent=0), encoding="utf-8")
     total = sum(f.stat().st_size for f in out.glob("f_*.webp"))
-    print(f"{len(frames)} frames, span {span}, {total // 1024} KB")
+    print(f"{len(frames)} frames, shown {start}-{end}, span {span}, {total // 1024} KB")
 
 
 if __name__ == "__main__":
