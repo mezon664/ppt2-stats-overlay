@@ -36,19 +36,29 @@ def test_whose_board_and_how_many_cats():
     assert challenge.challenge_side({"challenge_side": "left"}, match()) == "left"
     assert challenge.challenge_side({"challenge_side": "auto"}, {}) == "left"
     assert challenge.cat_count(match(tetris=2, tspin=3, pc=1), "right") == 6
-    assert challenge.cat_count(match(tetris=50), "right") == challenge.MAX_CATS
     assert challenge.next_cover("off", "left") is None
     assert challenge.next_cover("all", "left")[1] < challenge.next_cover("from2", "left")[1]
 
 
 def test_layer_follows_the_match():
     layer = challenge.ChallengeLayer(None)
+    t = [0.0]
+    layer.now = lambda: t[0]
     d = {"challenge_next": "from2", "challenge_cats": True, "challenge_side": "auto"}
-    layer.update_state(match(tetris=1, tspin=1), d, 1.0, True)
+    layer.update_state(match(tetris=3), d, 1.0, True)
+    assert layer.cats == []                                         # already 3 when first seen: no flood
+    layer.update_state(match(tetris=4, tspin=1), d, 1.0, True)
     assert not layer.isHidden() and len(layer.cats) == 2 and layer.cover[0] == challenge.NEXT_X["right"][0]
+    assert layer.cats[0].clip is not layer.cats[1].clip             # the clips in turn
     first = layer.cats[0]
-    layer.update_state(match(tetris=2, tspin=1), d, 1.0, True)
-    assert len(layer.cats) == 3 and layer.cats[0] is first          # one more, the others stay
+    t[0] = 1.0
+    layer.update_state(match(tetris=4, tspin=1), d, 1.0, True)
+    assert layer.cats[0] is first and len(layer.cats) == 2          # nothing new: no new cat
+    t[0] = 30.0                                                     # their visits are over
+    layer._tick()
+    assert layer.cats == []
+    layer.update_state(match(tetris=5, tspin=1), d, 1.0, True)
+    assert len(layer.cats) == 1                                     # one more TETRIS: one cat
     layer.update_state(match(start=99.0), d, 1.0, True)
     assert layer.cats == []                                         # a new match: no cats
     layer.update_state(match(tetris=1), d, 1.0, False)              # not now (result, positioning...)
@@ -61,9 +71,11 @@ def test_layer_follows_the_match():
 
 def test_not_shown_where_the_hud_shows_in_captures():
     from test_match_screen import hud_with
-    st = match(tetris=2, you="left")
+    st = match(tetris=0, you="left")
     st["left"], st["right"] = st["right"], st["left"]
     win = hud_with(st, challenge_next="all", challenge_cats=True)
+    win._place()
+    st["left"]["match_stats"]["tetris"] = 2
     win._place()
     assert not win.challenge.isHidden() and len(win.challenge.cats) == 2
     win._want_excluded, win.capture_excluded = True, False

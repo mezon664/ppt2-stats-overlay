@@ -2,11 +2,11 @@
 to make the game harder, drawn by the HUD only (OBS shows the game as is).
 
   challenge_next  "from2": NEXT from the 2nd piece covered; "all": every NEXT
-  challenge_cats  a cat comes over your board for each TETRIS / T-SPIN /
-                  PERFECT CLEAR this match (from match_stats), and stays
-                  until the match ends: real cats, the user's green-screen
-                  clips (assets/challenge_cats/, tools/cat/make_challenge_cat.py)
-                  played over the board, each at its own height and pace
+  challenge_cats  each TETRIS / T-SPIN / PERFECT CLEAR (a rise in
+                  match_stats), a cat comes in from the screen's edge on your
+                  side, over your board, and goes: real cats, the user's
+                  green-screen clips (assets/challenge_cats/,
+                  tools/cat/make_challenge_cat.py), taken in turn
 
 The HUD is kept out of screen captures, so the recognition still sees the
 whole game. Where Windows can't keep it out (HudWindow.reading_unsafe) it
@@ -28,14 +28,13 @@ SLOT_CENTERS_Y = (119, 169, 219, 269, 319)
 # each board (board_read LEFT_BOX / RIGHT_BOX), a little inside it: what a
 # cat's size is measured against
 BOARD = {"left": (206, 120, 421, 548), "right": (811, 120, 1026, 548)}
-CAT_SIZE = 1.35   # the part a cat covers in its clip is this many boards wide (user: bigger)
+CAT_SIZE = 2.2   # the part a cat covers in its clip is this many boards wide (user: big enough to hide the board)
 # cats come in from the screen's edge on that player's side (1P the left, 2P
 # the right; user: as if from outside the screen), at any height in here
 EDGE_X = {"left": 0, "right": 1232}
 FLOOR_Y = (40, 680)
 FADE_S = 0.35     # a cat that would leave by the inner side fades out first (not cut off mid-screen)
-PAUSE_S = (0.8, 3.0)   # off the screen between its visits
-MAX_CATS = 12
+MAX_CATS = 4   # on the screen at once (each comes and goes)
 CLIPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "challenge_cats"
 FPS = 30
 
@@ -50,10 +49,9 @@ def challenge_side(display, state):
 
 
 def cat_count(state, side):
-    """One cat for each TETRIS / T-SPIN / PERFECT CLEAR of that side this match."""
+    """That side's TETRIS + T-SPIN + PERFECT CLEAR this match: a cat comes each time it goes up."""
     stats = ((state or {}).get(side) or {}).get("match_stats") or {}
-    n = sum(int(stats.get(k) or 0) for k in ("tetris", "tspin", "perfect_clear"))
-    return max(0, min(MAX_CATS, n))
+    return max(0, sum(int(stats.get(k) or 0) for k in ("tetris", "tspin", "perfect_clear")))
 
 
 def next_cover(mode, side):
@@ -129,7 +127,7 @@ def _flip(side, mirrored):
 
 
 class Visit:
-    """One time a cat comes on: which frames, which way round, how big, where."""
+    """How a cat comes on: which frames, which way round, how big, where."""
 
     def __init__(self, cat, rng, t0):
         clip = cat.clip
@@ -143,44 +141,33 @@ class Visit:
         bx1, _, bx2, _ = BOARD[cat.side]
         sx1, sy1, sx2, sy2 = clip.span
         self.k = (bx2 - bx1) / (sx2 - sx1) * CAT_SIZE * rng.uniform(0.9, 1.1)
-        push = rng.uniform(0, 0.15) * clip.width * self.k   # sometimes stops short of the board
+        push = rng.uniform(0, 0.05) * clip.width * self.k   # sometimes stops a little short
         w = clip.width * self.k
         self.x0 = EDGE_X[cat.side] - push if outer == "l" else EDGE_X[cat.side] + push - w
         self.floor = rng.uniform(min(FLOOR_Y[1], FLOOR_Y[0] + (sy2 - sy1) * self.k), FLOOR_Y[1])
         self.t0 = t0
         self.t1 = t0 + (self.b - self.a + 1) / (clip.fps * cat.pace)   # when it's gone
-        self.t_next = self.t1 + rng.uniform(*PAUSE_S)
 
 
 class Cat:
     """One cat: comes on from the screen's edge on its player's side, does
-    what its clip shows, goes, and after a moment comes again, at another
-    height and size (from its seed: the same match gives the same cats). A
-    new cat comes on at once."""
+    what its clip shows, and goes (from its seed: the same match gives the
+    same cats)."""
 
     def __init__(self, seed, side, now, clip):
-        self.seed = seed
         self.side = side
         self.clip = clip
-        self.pace = random.Random(seed).uniform(0.9, 1.1)
-        self.born = now
-        self.y = 0.0   # its floor (reference px), for drawing the nearer ones last
-        self._visit = None
+        rng = random.Random(seed)
+        self.pace = rng.uniform(0.9, 1.1)
+        self.v = Visit(self, rng, now)
+        self.y = self.v.floor   # its floor (reference px), for drawing the nearer ones last
 
-    def visit(self, now):
-        """The visit at `now` (it may be over: then the cat is away)."""
-        v = self._visit
-        if v is None or now < v.t0:
-            v = Visit(self, random.Random(f"{self.seed}|0"), self.born)
-        while now >= v.t_next:
-            v = Visit(self, random.Random(f"{self.seed}|{v.t_next:.3f}"), v.t_next)
-        self._visit = v
-        self.y = v.floor
-        return v
+    def gone(self, now):
+        return now >= self.v.t1
 
     def at(self, now):
-        """(frame index, visit, opacity) at `now`, or None while away."""
-        v = self.visit(now)
+        """(frame index, visit, opacity) at `now`, or None once it's gone."""
+        v = self.v
         if now >= v.t1:
             return None
         clip = self.clip
@@ -230,6 +217,8 @@ class ChallengeLayer(QtWidgets.QWidget):
         self.cover = None
         self.cats = []
         self._match = None
+        self._seen = None    # the count (cat_count) cats have come for
+        self._sent = 0       # cats sent this match (which clip is next)
         self._clock = QtCore.QElapsedTimer()
         self._clock.start()
         self._timer = QtCore.QTimer(self)
@@ -252,15 +241,28 @@ class ChallengeLayer(QtWidgets.QWidget):
         match = (state or {}).get("match_start_t")
         if match != self._match or side != self.side:
             self._match, self.side, self.cats = match, side, []
-        want = cat_count(state, side) if active and display.get("challenge_cats") else 0
+            self._seen, self._sent = None, 0
+        count = cat_count(state, side)
+        # the first count seen is where it starts (the app opened mid-match: no flood of cats)
+        new = 0 if self._seen is None else max(0, count - self._seen)
+        self._seen = count
         now = self.now()
-        while len(self.cats) < want:
+        if not (active and display.get("challenge_cats")):
+            self.cats = []
+        else:
+            self.cats = [c for c in self.cats if not c.gone(now)]
             clips = load_clips()
-            if not clips:
-                break
-            i = len(self.cats)
-            self.cats.append(Cat(f"{match}|{side}|{i}", side, now, clips[i % len(clips)]))
-        shown = cover is not None or bool(want)
+            for _ in range(new if clips else 0):
+                if len(self.cats) >= MAX_CATS:
+                    break
+                self.cats.append(Cat(f"{match}|{side}|{self._sent}", side, now,
+                                     clips[self._sent % len(clips)]))
+                self._sent += 1
+        self._refresh(cover)
+
+    def _refresh(self, cover):
+        want = bool(self.cats)
+        shown = cover is not None or want
         if cover != self.cover:
             self.cover = cover
             self.update()
@@ -276,6 +278,10 @@ class ChallengeLayer(QtWidgets.QWidget):
                     clip.release()
 
     def _tick(self):
+        now = self.now()
+        if any(c.gone(now) for c in self.cats):
+            self.cats = [c for c in self.cats if not c.gone(now)]
+            self._refresh(self.cover)
         self.update()
 
     def paintEvent(self, event):
@@ -299,8 +305,6 @@ class ChallengeLayer(QtWidgets.QWidget):
                                QtCore.Qt.AlignmentFlag.AlignCenter, "?")
         now = self.now()
         p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
-        for cat in self.cats:
-            cat.visit(now)
         for cat in sorted(self.cats, key=lambda c: c.y):   # the nearer ones over the farther
             paint_cat(p, cat, s, now)
         p.end()
