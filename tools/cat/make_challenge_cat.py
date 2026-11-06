@@ -1,6 +1,7 @@
 """Cuts a cat out of a green-screen clip for 縛りプレイ's cats (hud/challenge.py):
-the part with the whole cat in the picture plays again and again, somewhere in
-your half of the screen each time, so any clip of a cat doing something works.
+the cat comes in from the screen's edge on your side, does what the clip
+shows and goes, again and again: a clip of a cat coming in by one side works
+best (leaving by the other side, it fades out instead of being cut off).
 
 Writes assets/challenge_cats/<name>/: f_NNN.webp (each frame cropped to the
 cat, transparent around it) and clip.json (per frame: where the crop sits in

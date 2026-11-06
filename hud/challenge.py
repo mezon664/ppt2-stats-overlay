@@ -25,13 +25,16 @@ NEXT_X = {"left": (447, 517), "right": (1052, 1122)}
 NEXT_TOP = {"all": 100, "from2": 144}
 NEXT_BOTTOM = 341
 SLOT_CENTERS_Y = (119, 169, 219, 269, 319)
-# each board (board_read LEFT_BOX / RIGHT_BOX), a little inside it: a cat is
-# about as wide as it's playing (its size)
+# each board (board_read LEFT_BOX / RIGHT_BOX), a little inside it: what a
+# cat's size is measured against
 BOARD = {"left": (206, 120, 421, 548), "right": (811, 120, 1026, 548)}
-# where the cats go: that player's half of the screen, off the board too
-# (HOLD, NEXT, the score; user's request)
-AREA = {"left": (0, 40, 616, 680), "right": (616, 40, 1232, 680)}
-FADE_S = 0.35   # a cat fades in where it turns up, and out before it goes
+CAT_SIZE = 1.35   # the part a cat covers in its clip is this many boards wide (user: bigger)
+# cats come in from the screen's edge on that player's side (1P the left, 2P
+# the right; user: as if from outside the screen), at any height in here
+EDGE_X = {"left": 0, "right": 1232}
+FLOOR_Y = (40, 680)
+FADE_S = 0.35     # a cat that would leave by the inner side fades out first (not cut off mid-screen)
+PAUSE_S = (0.8, 3.0)   # off the screen between its visits
 MAX_CATS = 12
 CLIPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "challenge_cats"
 FPS = 30
@@ -80,16 +83,30 @@ def load_clips():
 
 
 class Clip:
-    """One cat clip: frames cropped to the cat (x, y in the clip), and the
-    part the cat ever covers (span), which is fitted to the board's width."""
+    """One cat clip: frames cropped to the cat (x, y, w, h in the clip); the
+    frames with the whole cat in the picture (start..end) and the part it
+    covers in them (span); and which side of the picture the cat comes in by
+    and leaves by ("l", "r", or None: it's there from the start / to the end)."""
 
     def __init__(self, folder, data):
         self.folder = Path(folder)
         self.fps = float(data["fps"])
         self.frames = data["frames"]
+        self.width = int(data["size"][0])
         self.span = data["span"]
-        self.start, self.end = int(data["start"]), int(data["end"])   # the whole cat in the picture
+        self.start, self.end = int(data["start"]), int(data["end"])
+        files = [i for i, f in enumerate(self.frames) if f.get("file")]
+        self.first, self.last = files[0], files[-1]
+        self.enters = self._cut(self.frames[self.first])
+        self.leaves = self._cut(self.frames[self.last])
         self._images = {}
+
+    def _cut(self, f):
+        if f["x"] <= 1:
+            return "l"
+        if f["x"] + f["w"] >= self.width - 1:
+            return "r"
+        return None
 
     def image(self, index):
         """Frame `index`'s image (kept while there are cats, see release), or None."""
@@ -107,12 +124,39 @@ class Clip:
         self._images = {}
 
 
+def _flip(side, mirrored):
+    return {"l": "r", "r": "l"}.get(side) if mirrored else side
+
+
+class Visit:
+    """One time a cat comes on: which frames, which way round, how big, where."""
+
+    def __init__(self, cat, rng, t0):
+        clip = cat.clip
+        outer = "l" if cat.side == "left" else "r"
+        # turned so it comes in by the screen's edge
+        self.mirrored = (clip.enters != outer) if clip.enters else rng.random() < 0.5
+        self.fade_in = _flip(clip.enters, self.mirrored) != outer
+        self.fade_out = _flip(clip.leaves, self.mirrored) != outer
+        self.a = clip.start if self.fade_in else clip.first
+        self.b = clip.end if self.fade_out else clip.last
+        bx1, _, bx2, _ = BOARD[cat.side]
+        sx1, sy1, sx2, sy2 = clip.span
+        self.k = (bx2 - bx1) / (sx2 - sx1) * CAT_SIZE * rng.uniform(0.9, 1.1)
+        push = rng.uniform(0, 0.15) * clip.width * self.k   # sometimes stops short of the board
+        w = clip.width * self.k
+        self.x0 = EDGE_X[cat.side] - push if outer == "l" else EDGE_X[cat.side] + push - w
+        self.floor = rng.uniform(min(FLOOR_Y[1], FLOOR_Y[0] + (sy2 - sy1) * self.k), FLOOR_Y[1])
+        self.t0 = t0
+        self.t1 = t0 + (self.b - self.a + 1) / (clip.fps * cat.pace)   # when it's gone
+        self.t_next = self.t1 + rng.uniform(*PAUSE_S)
+
+
 class Cat:
-    """One cat: plays its clip (the part with the whole cat in the picture)
-    again and again. Each time round it turns up somewhere else in its
-    player's half of the screen, facing either way and a little bigger or
-    smaller, fading in and out (from its seed: the same match gives the same
-    cats)."""
+    """One cat: comes on from the screen's edge on its player's side, does
+    what its clip shows, goes, and after a moment comes again, at another
+    height and size (from its seed: the same match gives the same cats). A
+    new cat comes on at once."""
 
     def __init__(self, seed, side, now, clip):
         self.seed = seed
@@ -121,44 +165,53 @@ class Cat:
         self.pace = random.Random(seed).uniform(0.9, 1.1)
         self.born = now
         self.y = 0.0   # its floor (reference px), for drawing the nearer ones last
+        self._visit = None
+
+    def visit(self, now):
+        """The visit at `now` (it may be over: then the cat is away)."""
+        v = self._visit
+        if v is None or now < v.t0:
+            v = Visit(self, random.Random(f"{self.seed}|0"), self.born)
+        while now >= v.t_next:
+            v = Visit(self, random.Random(f"{self.seed}|{v.t_next:.3f}"), v.t_next)
+        self._visit = v
+        self.y = v.floor
+        return v
 
     def at(self, now):
-        """(frame index, mirrored, k (clip px -> reference px), left, floor
-        (reference px), opacity) at `now`."""
+        """(frame index, visit, opacity) at `now`, or None while away."""
+        v = self.visit(now)
+        if now >= v.t1:
+            return None
         clip = self.clip
-        n = clip.end - clip.start + 1
-        pos = max(0.0, now - self.born) * clip.fps * self.pace
-        lap = int(pos // n)
-        index = clip.start + int(pos) % n
-        rng = random.Random(f"{self.seed}|{lap}")
-        mirrored = rng.random() < 0.5
-        bx1, _, bx2, _ = BOARD[self.side]
-        sx1, sy1, sx2, sy2 = clip.span
-        k = (bx2 - bx1) / (sx2 - sx1) * rng.uniform(0.85, 1.15)
-        ax1, ay1, ax2, ay2 = AREA[self.side]
-        left = rng.uniform(ax1, max(ax1, ax2 - (sx2 - sx1) * k))
-        floor = rng.uniform(min(ay2, ay1 + (sy2 - sy1) * k), ay2)
-        self.y = floor
-        edge = min(pos % n, n - 1 - pos % n) / (clip.fps * self.pace)   # s from the lap's ends
-        return index, mirrored, k, left, floor, max(0.0, min(1.0, edge / FADE_S))
+        t = max(0.0, now - v.t0)
+        index = min(v.b, v.a + int(t * clip.fps * self.pace))
+        opacity = 1.0
+        if v.fade_in:
+            opacity = min(opacity, t / FADE_S)
+        if v.fade_out:
+            opacity = min(opacity, (v.t1 - now) / FADE_S)
+        return index, v, max(0.0, min(1.0, opacity))
 
 
 def paint_cat(p, cat, s, now):
-    """A cat in its half of the screen, scaled by s (reference px -> widget px)."""
+    """A cat on its player's side of the screen, scaled by s (reference px -> widget px)."""
+    shown = cat.at(now)
+    if shown is None:
+        return
+    index, v, opacity = shown
     clip = cat.clip
-    index, mirrored, k, left, floor, opacity = cat.at(now)
     img = clip.image(index)
     if img is None or opacity <= 0:
         return
     f = clip.frames[index]
-    sx1, sy1, sx2, sy2 = clip.span
-    w, h = img.width() * k, img.height() * k
-    x = left + ((sx2 - (f["x"] + img.width())) if mirrored else (f["x"] - sx1)) * k
-    top = floor - (sy2 - f["y"]) * k
+    k = v.k
+    x = v.x0 + ((clip.width - f["x"] - img.width()) if v.mirrored else f["x"]) * k
+    top = v.floor - (clip.span[3] - f["y"]) * k
     p.save()
     p.setOpacity(opacity)
-    target = QtCore.QRectF(x * s, top * s, w * s, h * s)
-    if mirrored:
+    target = QtCore.QRectF(x * s, top * s, img.width() * k * s, img.height() * k * s)
+    if v.mirrored:
         p.translate(target.center())
         p.scale(-1, 1)
         p.translate(-target.center())
@@ -247,7 +300,7 @@ class ChallengeLayer(QtWidgets.QWidget):
         now = self.now()
         p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         for cat in self.cats:
-            cat.at(now)
+            cat.visit(now)
         for cat in sorted(self.cats, key=lambda c: c.y):   # the nearer ones over the farther
             paint_cat(p, cat, s, now)
         p.end()
