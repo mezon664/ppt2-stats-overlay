@@ -8,6 +8,10 @@ cat, transparent around it) and clip.json (per frame: where the crop sits in
 the clip and its size; for the whole clip: the frames where the whole cat is in
 the picture, which are the ones shown, and the part it covers in them).
 Cats use the clips in that folder in name order, one after the other.
+Also writes assets/challenge_cats/clips.js, every clip for the OBS page
+(obs/overlay.html loads it as a script: a page opened from a file can't
+read the clip.json files). After deleting a clip, run it with no arguments
+to write clips.js again.
 
     python tools/cat/make_challenge_cat.py "C:\\path\\clip.mp4" cat1
 """
@@ -72,7 +76,25 @@ def main(video, name):
     (out / "clip.json").write_text(json.dumps(data, indent=0), encoding="utf-8")
     total = sum(f.stat().st_size for f in out.glob("f_*.webp"))
     print(f"{len(frames)} frames, shown {start}-{end}, span {span}, {total // 1024} KB")
+    write_page_list()
+
+
+def write_page_list():
+    """assets/challenge_cats/clips.js: the clips in name order, as hud/challenge.py load_clips."""
+    folder = ROOT / "assets" / "challenge_cats"
+    clips = []
+    for path in sorted(folder.glob("*/clip.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.pop("_about", None)
+        clips.append({"name": path.parent.name, **data})
+    (folder / "clips.js").write_text(
+        "// 縛りプレイ's cats for obs/overlay.html, written by tools/cat/make_challenge_cat.py\n"
+        "window.CHALLENGE_CATS = " + json.dumps(clips, separators=(",", ":")) + ";\n", encoding="utf-8")
+    print(f"clips.js: {len(clips)} clips")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "cat1")
+    if len(sys.argv) > 1:
+        main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "cat1")
+    else:
+        write_page_list()

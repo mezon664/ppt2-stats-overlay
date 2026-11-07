@@ -84,3 +84,26 @@ def test_not_shown_where_the_hud_shows_in_captures():
     win._want_excluded, win.capture_excluded = False, None
     win.set_edit_mode(True)                                         # positioning: out of the way
     assert win.challenge.isHidden()
+
+
+def test_obs_page_has_every_clip():
+    """obs/overlay.html reads the clips from assets/challenge_cats/clips.js
+    (tools/cat/make_challenge_cat.py writes it): the same clips, in the same order."""
+    import json
+    text = (challenge.CLIPS_DIR / "clips.js").read_text(encoding="utf-8")
+    page = json.loads(text.split("window.CHALLENGE_CATS = ", 1)[1].rstrip().rstrip(";"))
+    clips = challenge.load_clips()
+    assert [c["name"] for c in page] == [c.folder.name for c in clips]
+    for data, clip in zip(page, clips):
+        assert data["frames"] == clip.frames and data["span"] == clip.span
+        assert (data["start"], data["end"]) == (clip.start, clip.end)
+
+
+def test_cat_draws_match_the_obs_page():
+    """The OBS page draws the same cats (challengeMix in obs/overlay.html):
+    these numbers came out of the page."""
+    assert challenge._mix("a") == 0.10352621669881046
+    assert challenge._mix("17300000001|left|0|1") == 0.4548068596050143
+    assert challenge.cat_seed(1730000000.15, "left", 3) == "17300000002|left|3"
+    r = challenge.Rand("x")
+    assert (r.random(), r.uniform(0.9, 1.1)) == (0.6570503213442862, 0.9083663875702769)

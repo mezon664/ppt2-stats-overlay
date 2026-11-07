@@ -125,8 +125,8 @@ DISPLAY_DEFAULTS = {
     # whose display is shown: "both", "left" (1P only) or "right" (2P only)
     "players": "both",
     "event_log_count": 3,        # 1 - 10 (was 5; user: allow more)
-    # 縛りプレイ (hud/challenge.py): over your own board on the game screen only
-    # (not OBS). challenge_next: "off" / "from2" (NEXT from the 2nd hidden) /
+    # 縛りプレイ (hud/challenge.py): over your own board on the game screen and in
+    # OBS (obs/overlay.html). challenge_next: "off" / "from2" (NEXT from the 2nd hidden) /
     # "all" (every NEXT hidden); challenge_cats: a cat comes over your board for
     # each TETRIS / T-SPIN / PERFECT CLEAR this match; challenge_side: whose
     # board, "auto" (yours, from the waiting screen's "You" card) / "left" / "right".

@@ -1,5 +1,7 @@
 """縛りプレイ (challenge mode): things over your own board on the game screen
-to make the game harder, drawn by the HUD only (OBS shows the game as is).
+to make the game harder. The OBS page draws the same (obs/overlay.html
+challenge*: the same numbers and steps, keep the two in sync), so viewers
+see them too.
 
   challenge_next  "from2": NEXT from the 2nd piece covered; "all": every NEXT
   challenge_cats  each TETRIS / T-SPIN / PERFECT CLEAR (a rise in
@@ -13,7 +15,6 @@ whole game. Where Windows can't keep it out (HudWindow.reading_unsafe) it
 would read the covers and cats instead, so nothing here is shown there.
 """
 import json
-import random
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -65,6 +66,39 @@ def next_cover(mode, side):
         return None
     x1, x2 = NEXT_X[side]
     return x1, NEXT_TOP[mode], x2, NEXT_BOTTOM
+
+
+def _mix(text):
+    """A number in [0, 1) from text: FNV-1a then murmur3's finish (the same in
+    obs/overlay.html challengeMix, so the page picks the same cats)."""
+    h = 0x811C9DC5
+    for b in text.encode("utf-8"):
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    h ^= h >> 16
+    h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+    h ^= h >> 16
+    return h / 2 ** 32
+
+
+class Rand:
+    """random.Random's random / uniform, from a seed text (see _mix)."""
+
+    def __init__(self, seed):
+        self.seed, self.n = seed, 0
+
+    def random(self):
+        self.n += 1
+        return _mix(f"{self.seed}|{self.n}")
+
+    def uniform(self, a, b):
+        return a + (b - a) * self.random()
+
+
+def cat_seed(match, side, sent):
+    """A cat's seed: the match, the side and how many came before it this match."""
+    return f"{round(float(match or 0) * 10)}|{side}|{sent}"
 
 
 _CLIPS = None
@@ -168,7 +202,7 @@ class Cat:
     def __init__(self, seed, side, now, clip):
         self.side = side
         self.clip = clip
-        rng = random.Random(seed)
+        rng = Rand(seed)
         self.pace = rng.uniform(0.9, 1.1)
         self.v = Visit(self, rng, now)
         self.y = self.v.floor   # its floor (reference px), for drawing the nearer ones last
@@ -271,7 +305,7 @@ class ChallengeLayer(QtWidgets.QWidget):
             for _ in range(new if clips else 0):
                 if len(self.cats) >= MAX_CATS:
                     break
-                self.cats.append(Cat(f"{match}|{side}|{self._sent}", side, now,
+                self.cats.append(Cat(cat_seed(match, side, self._sent), side, now,
                                      clips[self._sent % len(clips)]))
                 self._sent += 1
         self._refresh(cover)

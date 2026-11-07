@@ -15,11 +15,14 @@
 </style>
 </head>
 <body>
+  <!-- 縛りプレイ (hud/challenge.py): the NEXT cover and the cats, under the parts -->
+  <canvas id="challenge"></canvas>
   <canvas id="hud"></canvas>
   <!-- the 「猫」 opener display: a cat over each player's board holding up the name -->
   <canvas class="cat hidden" id="cat-left"></canvas>
   <canvas class="cat hidden" id="cat-right"></canvas>
 <script src="../assets/cat/cat.js"></script>
+<script src="../assets/challenge_cats/clips.js"></script>
 
 <script>
 "use strict";
@@ -1254,6 +1257,174 @@ function drawCat(side, pos, name, u, cat = window.CAT, folder = "cat") {
 }
 
 // ======================================================================
+// 縛りプレイ (hud/challenge.py): the same numbers and steps — keep the two
+// in sync. The cats are picked the same way (challengeMix = _mix), so the
+// stream shows the cat the player sees, the same size and place.
+// ======================================================================
+const CH_NEXT_X = { left: [447, 517], right: [1052, 1122] };
+const CH_NEXT_TOP = { all: 100, from2: 144 }, CH_NEXT_BOTTOM = 341;
+const CH_SLOT_CENTERS_Y = [119, 169, 219, 269, 319];
+const CH_BOARD = { left: [206, 120, 421, 548], right: [811, 120, 1026, 548] };
+const CH_CAT_SIZE = 2.2, CH_EDGE_X = { left: 0, right: 1232 }, CH_FLOOR_Y = [40, 680], CH_FADE_S = 0.35;
+const CH_OFF_S = 1.5, CH_OFF_SPEEDUP = 3.0, CH_OFF_FADE_S = 0.6, CH_OFF_CYCLE = 8, CH_MAX_CATS = 4;
+
+function challengeSide(d, st) {
+  const side = d.challenge_side || "auto";
+  if (side === "left" || side === "right") return side;
+  return st.you_side === "left" || st.you_side === "right" ? st.you_side : "left";
+}
+function challengeCatCount(st, side) {
+  const m = ((st || {})[side] || {}).match_stats || {};
+  return Math.max(0, ["tetris", "tspin", "perfect_clear"].reduce((n, k) => n + int(Number(m[k]) || 0), 0));
+}
+function challengeNextCover(mode, side) {
+  if (!(mode in CH_NEXT_TOP)) return null;
+  const [x1, x2] = CH_NEXT_X[side];
+  return [x1, CH_NEXT_TOP[mode], x2, CH_NEXT_BOTTOM];
+}
+function challengeMix(text) {   // as hud/challenge.py _mix: FNV-1a, then murmur3's finish
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(text)) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0; h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0; h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
+function challengeRand(seed) {
+  let n = 0;
+  const random = () => challengeMix(`${seed}|${++n}`);
+  return { random, uniform: (a, b) => a + (b - a) * random() };
+}
+const challengeSeed = (match, side, sent) => `${pyRound((Number(match) || 0) * 10)}|${side}|${sent}`;
+
+let CH_CLIPS = null;
+function challengeClips() {   // window.CHALLENGE_CATS (assets/challenge_cats/clips.js), as challenge.py Clip
+  if (CH_CLIPS) return CH_CLIPS;
+  CH_CLIPS = (window.CHALLENGE_CATS || []).map((data) => {
+    const frames = data.frames, width = data.size[0];
+    const files = frames.map((f, i) => (f.file ? i : -1)).filter((i) => i >= 0);
+    const cut = (f) => (f.x <= 1 ? "l" : f.x + f.w >= width - 1 ? "r" : null);
+    const e = data.end, from = Math.max(data.start, e - CH_OFF_CYCLE + 1), back = Math.max(data.start, e - CH_OFF_CYCLE);
+    const offCycle = [];
+    for (let i = from; i <= e; i++) offCycle.push(i);
+    return { name: data.name, fps: data.fps, frames, width, span: data.span, start: data.start, end: e,
+             first: files[0], last: files[files.length - 1], enters: cut(frames[files[0]]), leaves: cut(frames[files[files.length - 1]]),
+             offCycle, offSpeed: (frames[e].x - frames[back].x) / Math.max(1, e - back), images: null };
+  }).filter((c) => c.first != null);
+  return CH_CLIPS;
+}
+function challengeLoadImages(clip) {   // all its frames, loaded ahead so none is missing when shown
+  if (clip.images) return;
+  clip.images = clip.frames.map((f) => {
+    if (!f.file) return null;
+    const im = new Image();
+    im.src = `../assets/challenge_cats/${clip.name}/${f.file}`;
+    return im;
+  });
+}
+const chFlip = (side, mirrored) => (mirrored ? ({ l: "r", r: "l" }[side] ?? null) : side);
+function challengeCat(seed, side, now, clip) {   // as challenge.py Cat + Visit (the same draws, in the same order)
+  const rng = challengeRand(seed);
+  const pace = rng.uniform(0.9, 1.1);
+  const outer = side === "left" ? "l" : "r";
+  const mirrored = clip.enters ? clip.enters !== outer : rng.random() < 0.5;
+  const fadeIn = chFlip(clip.enters, mirrored) !== outer, fadeOut = chFlip(clip.leaves, mirrored) !== outer;
+  const a = fadeIn ? clip.start : clip.first, b = fadeOut ? clip.end : clip.last;
+  const [bx1, , bx2] = CH_BOARD[side], [sx1, sy1, sx2, sy2] = clip.span;
+  const k = (bx2 - bx1) / (sx2 - sx1) * CH_CAT_SIZE * rng.uniform(0.9, 1.1);
+  const push = rng.uniform(0, 0.05) * clip.width * k, w = clip.width * k;
+  const x0 = outer === "l" ? CH_EDGE_X[side] - push : CH_EDGE_X[side] + push - w;
+  const floor = rng.uniform(Math.min(CH_FLOOR_Y[1], CH_FLOOR_Y[0] + (sy2 - sy1) * k), CH_FLOOR_Y[1]);
+  const tEnd = now + (b - a + 1) / (clip.fps * pace);
+  return { side, clip, pace, mirrored, fadeIn, fadeOut, a, b, k, x0, floor, t0: now, tEnd, t1: tEnd + (fadeOut ? CH_OFF_S : 0) };
+}
+function challengeCatAt(cat, now) {   // [frame, extra x (clip px), opacity], or null once it's gone
+  if (now >= cat.t1) return null;
+  const clip = cat.clip, t = Math.max(0, now - cat.t0);
+  let opacity = cat.fadeIn ? Math.min(1, t / CH_FADE_S) : 1;
+  if (now < cat.tEnd) return [Math.min(cat.b, cat.a + int(t * clip.fps * cat.pace)), 0, Math.max(0, opacity)];
+  const m = (now - cat.tEnd) * clip.fps * cat.pace, n = CH_OFF_S * clip.fps * cat.pace;   // going off by the inner side
+  const index = clip.offCycle[int(m) % clip.offCycle.length];
+  const x = clip.frames[clip.end].x + clip.offSpeed * (m + (CH_OFF_SPEEDUP - 1) / 2 * m * m / n);
+  opacity = Math.min(opacity, (cat.t1 - now) / CH_OFF_FADE_S);
+  return [index, x - clip.frames[index].x, clamp01(opacity)];
+}
+
+const challenge = { side: "left", cover: null, cats: [], match: undefined, seen: null, sent: 0, ticking: false };
+const chNow = () => performance.now() / 1000;
+function challengeUpdate() {   // as challenge.py ChallengeLayer.update_state
+  const st = lastState || {}, d = display, ch = challenge;
+  const side = challengeSide(d, st);
+  // shown here whenever the page shows (OBS isn't what the recognition reads)
+  const active = d.enabled !== false && d.show_on_obs !== false && st.match_screen === true && !st.frozen
+    && !((st[side] || {}).puyo);
+  ch.cover = active ? challengeNextCover(d.challenge_next, side) : null;
+  const match = st.match_start_t ?? null;
+  if (match !== ch.match || side !== ch.side) { ch.match = match; ch.side = side; ch.cats = []; ch.seen = null; ch.sent = 0; }
+  const count = challengeCatCount(st, side);
+  const fresh = ch.seen === null ? 0 : Math.max(0, count - ch.seen);   // the first count seen: no flood of cats
+  ch.seen = count;
+  const now = chNow(), clips = challengeClips();
+  if (!(active && d.challenge_cats)) ch.cats = [];
+  else {
+    clips.forEach(challengeLoadImages);
+    ch.cats = ch.cats.filter((c) => now < c.t1);
+    for (let i = 0; i < (clips.length ? fresh : 0) && ch.cats.length < CH_MAX_CATS; i++) {
+      ch.cats.push(challengeCat(challengeSeed(match, side, ch.sent), side, now, clips[ch.sent % clips.length]));
+      ch.sent++;
+    }
+  }
+  challengePaint();
+}
+function challengeTick() {
+  challenge.ticking = false;
+  const now = chNow();
+  challenge.cats = challenge.cats.filter((c) => now < c.t1);
+  challengePaint();
+}
+const chCanvas = $("challenge"), chCtx = chCanvas.getContext("2d");
+function challengePaint() {
+  const dpr = window.devicePixelRatio || 1, ch = challenge;
+  const cw = Math.round(window.innerWidth * dpr), chh = Math.round(window.innerHeight * dpr);
+  if (chCanvas.width !== cw || chCanvas.height !== chh) {
+    chCanvas.width = cw; chCanvas.height = chh;
+    chCanvas.style.width = window.innerWidth + "px"; chCanvas.style.height = window.innerHeight + "px";
+  }
+  const ctx = chCtx, s = scale;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cw, chh);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (ch.cover) {
+    const [x1, y1, x2, y2] = ch.cover;
+    roundRectPath(ctx, x1 * s, y1 * s, (x2 - x1) * s, (y2 - y1) * s, 6 * s);
+    ctx.fillStyle = rgba([18, 20, 28], 250 / 255); ctx.fill();
+    ctx.strokeStyle = rgba([255, 255, 255], 60 / 255); ctx.lineWidth = Math.max(1, 1.5 * s); ctx.stroke();
+    ctx.font = `bold ${Math.max(6, int(26 * s))}px ${FONT_CSS}`;
+    ctx.fillStyle = rgba([255, 255, 255], 70 / 255); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const cy of CH_SLOT_CENTERS_Y) if (y1 < cy && cy < y2) ctx.fillText("?", (x1 + x2) / 2 * s, cy * s);
+  }
+  const now = chNow();
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+  for (const cat of [...ch.cats].sort((a, b) => a.floor - b.floor)) {   // the nearer ones over the farther
+    const shown = challengeCatAt(cat, now);
+    if (!shown) continue;
+    const [index, dx, opacity] = shown, clip = cat.clip, f = clip.frames[index];
+    const im = clip.images && clip.images[index];
+    if (!im || !im.complete || !im.naturalWidth || opacity <= 0) continue;
+    const k = cat.k, fx = f.x + dx;
+    const x = cat.x0 + (cat.mirrored ? clip.width - fx - im.naturalWidth : fx) * k;
+    const top = cat.floor - (clip.span[3] - f.y) * k;
+    const w = im.naturalWidth * k * s, h = im.naturalHeight * k * s;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    if (cat.mirrored) { ctx.translate(x * s + w, top * s); ctx.scale(-1, 1); ctx.drawImage(im, 0, 0, w, h); }
+    else ctx.drawImage(im, x * s, top * s, w, h);
+    ctx.restore();
+  }
+  if (ch.cats.length && !ch.ticking) { ch.ticking = true; requestAnimationFrame(challengeTick); }
+}
+
+// ======================================================================
 // State from the server
 // ======================================================================
 function render(state) {
@@ -1276,6 +1447,7 @@ function render(state) {
   // dim rather than hide when capture is down: the numbers are the last real measurement
   for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)]) p.dim = stale;
   layout();
+  challengeUpdate();
 }
 
 let lastMessage = null;
@@ -1297,7 +1469,7 @@ function connect() {
     render(state);
   };
 }
-window.addEventListener("resize", layout);
+window.addEventListener("resize", () => { layout(); challengePaint(); });
 document.fonts && document.fonts.ready.then(() => { widthCache.clear(); layout(); });
 render({});
 connect();
