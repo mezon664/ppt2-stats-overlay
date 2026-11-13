@@ -2204,11 +2204,21 @@ class HudWindow(QtWidgets.QWidget):
             return True
         if self._follows and self._last_geom is None:   # not over the game (yet)
             return True
+        if self._hidden_in_rated():
+            return True
         return (not self.display["always_show"] and not self.display["force_show"] and not self.edit_mode
                 and self._last_state.get("match_screen") is False)
 
+    def _hidden_in_rated(self):
+        """A rated match on screen and display.hide_in_rated (not while positioning)."""
+        st = self._last_state
+        return (bool(self.display.get("hide_in_rated")) and not self.edit_mode and bool(st.get("rated_match"))
+                and st.get("match_screen") is not False)
+
     def _away_reason(self):
         """Why nothing is shown right now, in words ("" = it should show)."""
+        if self._hidden_in_rated():
+            return "a rated match (hide_in_rated)"
         if not self.display["enabled"]:
             return "switched off"
         if not self.display["show_on_hud"] and not self.edit_mode:

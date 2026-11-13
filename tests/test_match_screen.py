@@ -223,3 +223,15 @@ def test_long_opener_names_take_more_lines_in_the_summary():
     assert len(lines) == s.TEXT_LINES and lines[-1].endswith("…")
     assert s.height() == short + (s.TEXT_LINES - 1) * s.TEXT_LINE_H
     assert overlay.wrap_lines("TKI", 12, overlay.BOLD, 100, 3) == ["TKI"]
+
+
+def test_hidden_in_rated_matches_when_asked():
+    rated = {"match_screen": True, "rated_match": True}
+    on = hud_with(rated, hide_in_rated=True)
+    assert on.stats["left"].isHidden()
+    off = hud_with(rated)
+    assert not off.stats["left"].isHidden()                                   # off by default
+    casual = hud_with({"match_screen": True, "rated_match": False}, hide_in_rated=True)
+    assert not casual.stats["left"].isHidden()
+    on.set_edit_mode(True)
+    assert not on.stats["left"].isHidden()                                    # positioning: shown

@@ -125,6 +125,9 @@ class RatingReader:
         self.session_value = {}   # league -> the last value read in this run (UNLIKELY_STEP)
         self.you_side = None   # the side your "You" card was on, last time the まちうけ screen showed
         self.you_seen_t = None
+        # True after a club / free play screen, False after a league menu,
+        # None before either (data_server.follow_session: a rated match)
+        self.club = None
 
     # --- where's my rating on this screen? ---
     def _found(self, frame, key, spec, k):
@@ -248,6 +251,7 @@ class RatingReader:
             return None
         self._last_t = now
         if self.in_club(frame):
+            self.club = True
             if self.league is not None:
                 log.info("club room: the league is forgotten until a league menu shows again")
             self.league, self._pending = None, None
@@ -258,6 +262,7 @@ class RatingReader:
             # title isn't known yet, so its rating isn't put down as the
             # league seen before (all four menus look alike but for the title)
             self.league = self.league_on_screen(frame)
+            self.club = False
         if found is None or self.league is None:
             self._pending = None
             return None

@@ -215,3 +215,22 @@ def test_the_english_games_standby_and_free_play():
     assert kind == "wait" and r.read_number(standby[y1:y2, x1:x2]) == 2633
     assert r.in_club(frame("rating_en_lobby.jpg")) and r.in_club(frame("rating_en_freeplay.jpg"))
     assert not any(r.in_club(frame(n)) for n in ("rating_en_standby.jpg", "rating_en_menu_puzzle.jpg"))
+
+
+def test_rated_matches_are_told_from_club_ones(monkeypatch):
+    """display.hide_in_rated (user's request): a match after the まちうけ
+    screen is rated, unless the club room (same card) was the last seen."""
+    import data_server
+    r = rating.RatingReader()
+    monkeypatch.setattr(r, "read_number", lambda crop: 2633)
+    menu, wait, club = frame("rating_menu.jpg"), frame("rating_wait_1p.jpg"), frame("rating_club_room.jpg")
+    assert r.club is None
+    r.update(wait, now=1)                       # the app started in the league's matchmaking
+    assert data_server.rated_match(r.you_seen_t is not None, r.club)
+    r.update(club, now=2)
+    r.update(wait, now=3)                       # a club match's card
+    assert r.club is True and not data_server.rated_match(True, r.club)
+    r.update(menu, now=4)
+    r.update(wait, now=5)                       # back in the league
+    assert r.club is False and data_server.rated_match(True, r.club)
+    assert not data_server.rated_match(False, False)   # no まちうけ just before (CPU, local)

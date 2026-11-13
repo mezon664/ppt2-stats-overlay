@@ -121,7 +121,8 @@ _RATING = {"reader": None, "failed": False}
 
 # 今日の成績 (scripts/session_stats.py): since the game process started, and
 # which side was you in the match under way
-SESSION = {"since": None, "pid": None, "match_you": None, "resets": None, "key": None, "out": None}
+SESSION = {"since": None, "pid": None, "match_you": None, "match_rated": False, "resets": None, "key": None,
+           "out": None}
 # the "You" card on the まちうけ screen counts for a match starting this soon after
 YOU_SEEN_S = 90.0
 
@@ -209,6 +210,15 @@ def follow_session(cap):
         seen = getattr(reader, "you_seen_t", None)
         recent = seen is not None and time.monotonic() - seen <= YOU_SEEN_S
         SESSION["match_you"] = getattr(reader, "you_side", None) if recent else None
+        SESSION["match_rated"] = rated_match(recent, getattr(reader, "club", None))
+
+
+def rated_match(you_seen_recently, club):
+    """A rated (league) match: the まちうけ screen with your "You" card came
+    just before it, and not from a club room (which shows the same card).
+    A club room seen before nothing else (club None: the app started there
+    without a club screen yet) can't be told: counted as rated."""
+    return bool(you_seen_recently) and club is not True
 
 
 def session_state():
@@ -403,6 +413,7 @@ async def broadcaster():
         state["display"] = display
         state["page_rev"] = PAGE_REV
         state["you_side"] = SESSION["match_you"] or "left"   # kept with the match (opener_stats.match_record)
+        state["rated_match"] = SESSION["match_rated"]         # (display.hide_in_rated)
         try:
             state["session"] = session_state()
         except Exception:

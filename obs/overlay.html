@@ -976,6 +976,8 @@ function statsMode(d, side) {
 
 function awayFromMatch() {
   if (display.enabled === false || display.show_on_obs === false) return true;   // off, or shown on the game screen only
+  // a rated match and "not in rated matches" (hide_in_rated, as the HUD's _hidden_in_rated)
+  if (display.hide_in_rated && lastState.rated_match && lastState.match_screen !== false) return true;
   return !display.always_show && !display.force_show && lastState.match_screen === false;
 }
 

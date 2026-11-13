@@ -306,6 +306,10 @@ TEXT = {
     "always_show": {"ja": "ホーム画面やメニューでも表示する（オフ＝試合画面のときだけ）",
                     "en": "Always show, also on the home screen and menus (off = only on the match screen)"},
     "players": {"ja": "表示するプレイヤー", "en": "Players shown"},
+    "hide_in_rated": {"ja": "レート戦（リーグ）のときは表示しない（ゲーム画面・OBS とも）",
+                      "en": "Hide during rated (league) matches (game screen and OBS)"},
+    "hide_in_rated_tip": {"ja": "試合前の「まちうけ」画面が出た試合をレート戦とみなします。クラブ（ルーム）の試合は対象外です。",
+                          "en": "A match that came after the waiting screen (STANDBY) counts as rated. Club / free play matches don't."},
     "pl.both": {"ja": "両方", "en": "Both"},
     "pl.left": {"ja": "1P だけ", "en": "1P only"},
     "pl.right": {"ja": "2P だけ", "en": "2P only"},
@@ -422,8 +426,6 @@ TEXT = {
     "today.app": {"ja": "平均 APP", "en": "Avg APP"},
     "card.session": {"ja": "今日の成績", "en": "Today's results"},
     "card.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
-    "card.challenge_desc": {"ja": "自分の盤面に、ゲームを難しくする表示を出します。ゲーム画面と OBS（配信）に出て、認識には映りません。",
-                            "en": "Things over your own board that make the game harder. On the game screen and in OBS (your stream), not in what the recognition reads."},
     "challenge_next": {"ja": "見える NEXT の数（残りを隠します）", "en": "NEXT pieces you can see (the rest are hidden)"},
     "ch.off": {"ja": "5（隠さない）", "en": "5 (none hidden)"},
     "ch.from5": {"ja": "4", "en": "4"},
@@ -982,6 +984,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.always_show = QtWidgets.QCheckBox()
         self.always_show.toggled.connect(self._changed)
         self.players_card.add(self.always_show)
+        self.hide_in_rated = QtWidgets.QCheckBox()
+        self.hide_in_rated.toggled.connect(self._changed)
+        self.players_card.add(self.hide_in_rated)
 
         # the numbers beside the boards, in order (drag or ▲▼ to reorder)
         self.items_box = ui.Card()
@@ -1875,6 +1880,8 @@ class SettingsWindow(QtWidgets.QWidget):
         for i, key in enumerate(PLAYER_ORDER):
             self.players.setItemText(i, t("pl." + key))
         self.always_show.setText(t("always_show"))
+        self.hide_in_rated.setText(t("hide_in_rated"))
+        self.hide_in_rated.setToolTip(t("hide_in_rated_tip"))
         self.items_box.setTitle(t("items"))
         self.items_box.setDescription(t("items_hint"))
         self.items.blockSignals(True)   # renaming rows isn't an edit
@@ -1900,7 +1907,6 @@ class SettingsWindow(QtWidgets.QWidget):
             it.setText(t("sum." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
         self.summary_items.blockSignals(False)
         self.challenge_card.setTitle(t("card.challenge"))
-        self.challenge_card.setDescription(t("card.challenge_desc"))
         for i, key in enumerate(CHALLENGE_NEXT_ORDER):
             self.challenge_next.setItemText(i, t("ch." + key))
         self.challenge_cats.setText(t("challenge_cats"))
@@ -2371,6 +2377,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.font_box.setCurrentIndex(i)
         self.show_clock.setChecked(d["show_clock"])
         self.always_show.setChecked(d["always_show"])
+        self.hide_in_rated.setChecked(d["hide_in_rated"])
         self._enabled, self._force = d["enabled"], d["force_show"]
         self.show_on_hud.setChecked(d["show_on_hud"])
         self.show_on_obs.setChecked(d["show_on_obs"])
@@ -2425,6 +2432,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "font_file": self._font_file,
             "show_clock": self.show_clock.isChecked(),
             "always_show": self.always_show.isChecked(),
+            "hide_in_rated": self.hide_in_rated.isChecked(),
             "enabled": self._enabled,
             "force_show": self._enabled and self._force,
             "show_on_hud": self.show_on_hud.isChecked(),
@@ -2534,7 +2542,7 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.design_box, ("style",)),
             (self.text_box, ("text_weight", "text_outline", "text_outline_width", "font_family", "font_file")),
             (self.player_box, ("player_color_left", "player_color_right")),
-            (self.players_card, ("players", "always_show")),
+            (self.players_card, ("players", "always_show", "hide_in_rated")),
             (self.items_box, ("stat_items", "labels")),
             (self.clock_card, ("show_clock",)),
             (self.session_card, ("show_session",)),

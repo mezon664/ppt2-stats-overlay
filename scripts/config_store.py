@@ -90,6 +90,9 @@ DISPLAY_DEFAULTS = {
     # select; hidden again back at the home screen / menus — see
     # live_pipeline.MATCH_SCREEN_HIDE_S). True: always shown.
     "always_show": False,
+    # nothing shown (game screen and OBS) during a rated (league) match
+    # (user's request); the server says which ones are (state["rated_match"])
+    "hide_in_rated": False,
     # dragging on the game screen moves 1P's and 2P's numbers / opener name
     # separately (off: both together)
     "drag_each_side": False,
