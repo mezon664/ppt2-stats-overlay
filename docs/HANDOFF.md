@@ -386,3 +386,10 @@
 - 追記（同日）: 2 本目の動画（英語版）も認識にかけると本人の結果と同じ（送った 3・置いた 30・T-SPIN 0）。この PC でゲームが絵を出している時に PrintWindow を試すと、どのフラグでも真っ黒 → ぷよテト2では使えない（v0.2.11 の切り替えは効かない、真っ黒なら画面に戻るので無害）。
   → A 案（ユーザー選択）: HUD が取り込みに写る PC（`HudWindow.reading_unsafe`）では、認識が読む場所（`read_zones`: 盤面・T-SPIN/TETRIS/PC のバナー窓・NEXT と下 330px・HOLD・GO!・やった!、各モジュールの定数から。B2B と REN 数字の窓は数えるのに使わず中央まで広いので除外）に重なる部品を HUD では出さない（OBS はそのまま、位置調整中は出す）。設定画面のホームに理由と隠した部品を出す（`reading_overlap` → `set_reading_overlap`）。
   B 案（Windows Graphics Capture、`windows-capture` 等の外部部品、Win10 で黄色い枠）は保留。
+
+### 2026-11-13 v0.2.14（縛りプレイは NEXT だけ・1P/2P 別の置き場所・設定画面のスクショ）
+- 縛りプレイは専用のページ（左のメニュー「縛りプレイ」、「OBSに映す」と「その他」の間。レートのページは `tabs.widget(5)` で決め打ちなので前には入れない）。見える NEXT の数 5〜0 = `challenge_next` "off" / "from5"〜"from2" / "all"（隠す範囲の上端 294 / 244 / 194 / 144 / 100、NEXT の箱のすき間）。
+- 猫はまだ出さない（ユーザー: v0.2.14 は NEXT だけ）: `challenge.CATS_ENABLED = False`・OBS は `CH_CATS_ENABLED = false` で clips.js を読まない・設定画面のチェックは隠す（値はファイルのまま）・配布 zip に assets/challenge_cats を入れない（`make_release.SKIP_DIRS`）。素材とコードは残してあり、テストは有効にして試している。
+- 数値の置き場所（盤面の左下／右下）を 1P・2P 別に: `stats_position_left` / `stats_position_right`（"" なら共通の `stats_position`、`config_store.stats_mode`）。両方同じなら設定画面は共通の値だけを書く。HUD と OBS（`statsMode`）。
+- 設定画面は、ゲームの絵に重なっているあいだだけ画面の取り込みから外す（0.3 秒ごと＋動かしたとき、`exclude_when`）。ほかでは普通のスクショに写る（ユーザー: レートの推移をスクショしたい）。フッターに「画像で保存」（ピクチャ\PPTetrics とクリップボード）。
+- 置きミス認識の試作（作業用フォルダのみ、アプリには未搭載）: 盤面の枠 `LEFT_BOX`/`RIGHT_BOX` は上の帯まで含んでいて、本当の盤面の上端は y1+11（基準サイズ）、1 マス 23.0px。上の段ほど色を読む場所がマスの上の縁にずれる。直すと録画 23 本で置き場所の読み取りが 85.7% → 95.7%。組み込むときは新しい読み取りだけに正しい枠を持たせる（既存の機能は今の枠のまま）。

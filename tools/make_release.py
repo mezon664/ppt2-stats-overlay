@@ -25,7 +25,7 @@ INCLUDE = ["launch.py", "start.bat", "README.md", "LICENSE", "requirements.txt",
            "config/attack_table.json"]   # the game's attack table (the settings file next to it is each user's own)
 SKIP_PARTS = {"__pycache__", "user_fonts", ".pytest_cache"}
 # the second cat clip (6 MB) is held back for now (hud/overlay.py CAT2_EVERY)
-SKIP_DIRS = {("assets", "cat2")}
+SKIP_DIRS = {("assets", "cat2"), ("assets", "challenge_cats")}   # (challenge cats: not released yet)
 # Libraries added after the bundled runtime (requirements-vendor.txt), shipped
 # in the zip as vendor/: an update from the settings window brings them, no
 # new full package needed (the runtime is Python 3.12 on 64-bit Windows).

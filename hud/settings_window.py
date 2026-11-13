@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from config_store import (load_settings, save_settings, display_settings, preset_of, preset_file,
                           read_preset_file, part_value, DISPLAY_DEFAULTS, DISPLAY_RANGES, STAT_ITEMS, PARTS,
-                          SUMMARY_ITEMS, OPENER_LANGUAGES)
+                          SUMMARY_ITEMS, OPENER_LANGUAGES, stats_mode)
 import opener_stats
 import rating
 
@@ -43,17 +43,49 @@ NUDGE_STEP = 2   # reference px per arrow click (held down: repeats)
 WDA_EXCLUDEFROMCAPTURE = 0x11
 
 
-def exclude_from_capture(widget):
+WDA_NONE = 0
+
+
+def set_capture_excluded(widget, on):
     """Recognition reads the game from a screen capture of the game window's
     area, so any window on top of the game gets read as part of it. Live:
     this window sat over the right player's NEXT queue, its slots read as "I"
     and that player's placements (PPS) weren't counted. Excluded windows stay
-    visible on the monitor but the capture sees what's behind them."""
+    visible on the monitor but the capture sees what's behind them. True when
+    Windows took it."""
     try:
         import ctypes
-        ctypes.windll.user32.SetWindowDisplayAffinity(int(widget.winId()), WDA_EXCLUDEFROMCAPTURE)
+        return bool(ctypes.windll.user32.SetWindowDisplayAffinity(
+            int(widget.winId()), WDA_EXCLUDEFROMCAPTURE if on else WDA_NONE))
     except Exception:
-        pass  # not on Windows (e.g. tests)
+        return False  # not on Windows (e.g. tests)
+
+
+def rects_overlap(a, b):
+    """(left, top, right, bottom) screen rectangles: do they share any pixel?"""
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def exclude_when(window_rect, game_rect, game_running):
+    """Kept out of screen captures only while over the game's picture (user:
+    screenshots of the rating history came out empty). Game running but its
+    picture or this window's place not known: kept out, to be safe."""
+    if not game_running:
+        return False
+    if game_rect is None or window_rect is None:
+        return True
+    return rects_overlap(window_rect, game_rect)
+
+
+def screenshot_path(folder, now=None):
+    """folder/PPTetrics_20261113_153000.png (a number added if taken twice in a second)"""
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
+    path = Path(folder) / f"PPTetrics_{stamp}.png"
+    n = 2
+    while path.exists():
+        path = Path(folder) / f"PPTetrics_{stamp}_{n}.png"
+        n += 1
+    return path
 
 
 # What the position controls can move, and the display keys each one owns
@@ -350,6 +382,8 @@ TEXT = {
     "position": {"ja": "数値の置き場所", "en": "Where the numbers go"},
     "pos.left": {"ja": "盤面の左下", "en": "Lower left of each board"},
     "pos.right": {"ja": "盤面の右下", "en": "Lower right of each board"},
+    "pos.p1": {"ja": "1P", "en": "1P"},
+    "pos.p2": {"ja": "2P", "en": "2P"},
     "adjust": {"ja": "細かい調整（1px ずつ）", "en": "Fine steps (1 px)"},
     "move_what": {"ja": "動かすもの", "en": "Move"},
     "target.stats": {"ja": "数値（1P と 2P 一緒に）", "en": "Numbers (1P and 2P together)"},
@@ -390,10 +424,15 @@ TEXT = {
     "card.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
     "card.challenge_desc": {"ja": "自分の盤面に、ゲームを難しくする表示を出します。ゲーム画面と OBS（配信）に出て、認識には映りません。",
                             "en": "Things over your own board that make the game harder. On the game screen and in OBS (your stream), not in what the recognition reads."},
-    "challenge_next": {"ja": "NEXT を隠す", "en": "Hide NEXT"},
-    "ch.off": {"ja": "隠さない", "en": "Off"},
-    "ch.from2": {"ja": "2個目から", "en": "From the 2nd"},
-    "ch.all": {"ja": "全部", "en": "All"},
+    "challenge_next": {"ja": "見える NEXT の数（残りを隠します）", "en": "NEXT pieces you can see (the rest are hidden)"},
+    "ch.off": {"ja": "5（隠さない）", "en": "5 (none hidden)"},
+    "ch.from5": {"ja": "4", "en": "4"},
+    "ch.from4": {"ja": "3", "en": "3"},
+    "ch.from3": {"ja": "2", "en": "2"},
+    "ch.from2": {"ja": "1", "en": "1"},
+    "ch.all": {"ja": "0", "en": "0"},
+    "tab.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
+    "page.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
     "challenge_cats": {"ja": "TETRIS・T-SPIN・パフェクリのたびに、画面の端から猫が出てきて盤面を隠す",
                        "en": "Each TETRIS / T-SPIN / PERFECT CLEAR, a cat comes in from the edge of the screen and hides your board"},
     "challenge_side": {"ja": "対象の盤面", "en": "Whose board"},
@@ -421,6 +460,11 @@ TEXT = {
              "en": "Changes show on the HUD and in OBS right away and are saved automatically."},
     "reset_all": {"ja": "初期設定に戻す", "en": "Reset to defaults"},
     "close": {"ja": "閉じる", "en": "Close"},
+    "shot": {"ja": "画像で保存", "en": "Save as image"},
+    "shot_tip": {"ja": "この画面を画像にして「ピクチャ」の PPTetrics フォルダに保存し、クリップボードにもコピーします",
+                 "en": "Saves this window as a picture in Pictures\\PPTetrics and copies it to the clipboard"},
+    "shot_done": {"ja": "保存しました（クリップボードにもコピー済み）: {}", "en": "Saved (also copied to the clipboard): {}"},
+    "shot_failed": {"ja": "画像を保存できませんでした: {}", "en": "Couldn't save the picture: {}"},
     "settings_on_top": {"ja": "設定画面を常に最前面に表示", "en": "Keep the settings window on top"},
     "show_on_hud": {"ja": "ゲーム画面に表示", "en": "On the game screen"},
     "show_on_obs": {"ja": "OBS に表示", "en": "In OBS"},
@@ -702,7 +746,8 @@ def _hbox(*widgets, stretch=True):
     return holder
 
 
-CHALLENGE_NEXT_ORDER = ("off", "from2", "all")
+# how many NEXT still show: 5 (none hidden) .. 0 (all hidden)
+CHALLENGE_NEXT_ORDER = ("off", "from5", "from4", "from3", "from2", "all")
 CHALLENGE_SIDE_ORDER = ("auto", "left", "right")
 
 
@@ -770,6 +815,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.tabs.addTab(self._build_stats_tab(), "", "stats")
         self.tabs.addTab(self._build_rating_page(), "", "rating")
         self.tabs.addTab(self._build_obs_tab(), "", "obs")
+        # 縛りプレイ: its own page (user's request; built with the items page)
+        self.tabs.addTab(self._page("page.challenge", self.challenge_card), "", "challenge")
         self.tabs.addTab(self._build_other_page(), "", "other")
         self._update_info = None
         self._update_silent = False
@@ -781,12 +828,15 @@ class SettingsWindow(QtWidgets.QWidget):
         self.reset_button.clicked.connect(self._reset)
         self.close_button = QtWidgets.QPushButton()
         self.close_button.clicked.connect(self.close)
+        self.shot_button = QtWidgets.QPushButton()
+        self.shot_button.clicked.connect(self.save_screenshot)
         self.note = ui.muted()
         footer = QtWidgets.QWidget()
         footer.setObjectName("footer")
         fl = QtWidgets.QHBoxLayout(footer)
         fl.setContentsMargins(24, 8, 24, 12)
         fl.addWidget(self.note, 1)
+        fl.addWidget(self.shot_button)
         fl.addWidget(self.reset_button)
         fl.addWidget(self.close_button)
         self.tabs.set_footer(footer)
@@ -794,6 +844,13 @@ class SettingsWindow(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.tabs)
+        # out of screen captures only while over the game (_check_capture)
+        self._capture_excluded = None
+        self._game_hwnd = None
+        self._game_looked = 0.0
+        self._capture_timer = QtCore.QTimer(self)
+        self._capture_timer.setInterval(300)
+        self._capture_timer.timeout.connect(self._check_capture)
         # taller than wide (user's request), but never past the screen; a
         # little smaller than at first (user: 880 x up to 980 felt big)
         screen = QtGui.QGuiApplication.primaryScreen()
@@ -1032,9 +1089,11 @@ class SettingsWindow(QtWidgets.QWidget):
         self._row_labels["challenge_next"] = next_label
         self.challenge_card.add(next_label)
         self.challenge_card.add(_hbox(self.challenge_next))
+        # the cats: not in the release yet (challenge.CATS_ENABLED); the
+        # setting is kept as it is in the file
         self.challenge_cats = QtWidgets.QCheckBox()
         self.challenge_cats.toggled.connect(self._changed)
-        self.challenge_card.add(self.challenge_cats)
+        self.challenge_cats.setVisible(False)
         self.challenge_side = QtWidgets.QComboBox()
         for key in CHALLENGE_SIDE_ORDER:
             self.challenge_side.addItem("", key)
@@ -1051,7 +1110,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.event_log_count.valueChanged.connect(self._changed)
         self.opener_display.currentIndexChanged.connect(self._changed)
         return self._page("page.items", self.players_card, self.items_box, self.clock_card, self.session_card,
-                          self.events_card, self.summary_card, self.opener_card, self.challenge_card)
+                          self.events_card, self.summary_card, self.opener_card)
 
     def _move_item(self, step):
         row = self.items.currentRow()
@@ -1164,11 +1223,14 @@ class SettingsWindow(QtWidgets.QWidget):
         self.drag_card.add(self.drag_each_side)
 
         self.placement_card = ui.Card()
-        self.position = ui.Segmented()
-        self.position.addItem("", "left")
-        self.position.addItem("", "right")
-        self.position.currentIndexChanged.connect(self._changed)
-        self.placement_card.add(_hbox(self.position))
+        self.positions = {}   # each player's own (user: 1P and 2P each)
+        for side, key in (("left", "pos.p1"), ("right", "pos.p2")):
+            seg = ui.Segmented()
+            seg.addItem("", "left")
+            seg.addItem("", "right")
+            seg.currentIndexChanged.connect(self._changed)
+            self.positions[side] = seg
+            self.placement_card.add(self._row(key, _hbox(seg), 60))
         self.position_section = self._build_offset_controls()
         return self._page("page.place", self.drag_card, self.placement_card, self.position_section)
 
@@ -1777,7 +1839,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.setWindowTitle(t("title"))
         self._paint_enabled()
         for i, key in enumerate(("tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.rating",
-                                 "tab.obs", "tab.other")):
+                                 "tab.obs", "tab.challenge", "tab.other")):
             self.tabs.setTabText(i, t(key))
         for key, lab in self._page_titles.items():
             lab.setText(t(key))
@@ -1879,8 +1941,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.hint.setText(t("hint_drag").strip())
         self.drag_each_side.setText(t("drag_each_side"))
         self.placement_card.setTitle(t("position"))
-        self.position.setItemText(0, t("pos.left"))
-        self.position.setItemText(1, t("pos.right"))
+        for seg in self.positions.values():
+            seg.setItemText(0, t("pos.left"))
+            seg.setItemText(1, t("pos.right"))
         self.position_section.setTitle(t("adjust"))
         self.move_label.setText(t("move_what"))
         for i, key in enumerate(TARGET_ORDER):
@@ -1921,6 +1984,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.note.setText(t("note"))
         self.reset_button.setText(t("reset_all"))
         self.close_button.setText(t("close"))
+        self.shot_button.setText(t("shot"))
+        self.shot_button.setToolTip(t("shot_tip"))
         self._update_offset_label()
         self._show_look()
 
@@ -2258,7 +2323,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self._refresh_presets()
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, not activate)
         self.show()
-        exclude_from_capture(self)
+        self._check_capture()
+        self._capture_timer.start()
         if activate:
             self.raise_()
             self.activateWindow()
@@ -2269,7 +2335,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.lang = d["language"]
         self._style = d["style"]
         self._show_style()
-        self.position.setCurrentIndex(self.position.findData(d["stats_position"]))
+        for side, seg in self.positions.items():
+            seg.setCurrentIndex(seg.findData(stats_mode(d, side)))
         for key, (kx, ky) in TARGET_KEYS.items():
             self._set_offset(key, d[kx], d[ky])
         self.drag_each_side.setChecked(d["drag_each_side"])
@@ -2338,7 +2405,13 @@ class SettingsWindow(QtWidgets.QWidget):
         d = {
             "language": self.language.currentData(),
             "style": self._style,
-            "stats_position": self.position.currentData(),
+            # the same for both: the shared one only; else each its own (the
+            # shared one kept as 1P's, for files read by older versions)
+            "stats_position": self.positions["left"].currentData(),
+            **({"stats_position_left": "", "stats_position_right": ""}
+               if self.positions["left"].currentData() == self.positions["right"].currentData() else
+               {"stats_position_left": self.positions["left"].currentData(),
+                "stats_position_right": self.positions["right"].currentData()}),
             **self._overall,
             "parts": {p: dict(v) for p, v in self._parts.items()},
             "stat_items": [it.data(QtCore.Qt.ItemDataRole.UserRole) for it in items
@@ -2470,7 +2543,7 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),
             (self.challenge_card, ("challenge_next", "challenge_cats", "challenge_side")),
             (self.drag_card, ("drag_each_side",)),
-            (self.placement_card, ("stats_position",)),
+            (self.placement_card, ("stats_position", "stats_position_left", "stats_position_right")),
             (self.position_section, offsets),
         )
         self._card_reset_cards = []
@@ -2530,6 +2603,75 @@ class SettingsWindow(QtWidgets.QWidget):
         settings = load_settings()  # keep everything else in the file (presets included) as it is
         settings["display"] = self.values()
         save_settings(settings)
+
+    # --- screen captures: out of them only while over the game ---
+    def _game_state(self):
+        """(game running, its picture on the screen or None); the window is
+        looked for again every 2 s while not found"""
+        try:
+            import win32gui
+            from live_capture import find_game_hwnd
+        except Exception:
+            return False, None
+        hwnd = self._game_hwnd
+        if hwnd and not win32gui.IsWindow(hwnd):
+            hwnd = self._game_hwnd = None
+        if hwnd is None and time.monotonic() - self._game_looked > 2.0:
+            self._game_looked = time.monotonic()
+            try:
+                hwnd = self._game_hwnd = find_game_hwnd()
+            except Exception:
+                hwnd = None
+        if not hwnd:
+            return False, None
+        try:
+            if win32gui.IsIconic(hwnd) or not win32gui.IsWindowVisible(hwnd):
+                return False, None   # nothing of it on the screen
+            _, _, cw, ch = win32gui.GetClientRect(hwnd)
+            gx, gy = win32gui.ClientToScreen(hwnd, (0, 0))
+            return True, (gx, gy, gx + cw, gy + ch)
+        except Exception:
+            return True, None
+
+    def _window_rect(self):
+        try:
+            import win32gui
+            return win32gui.GetWindowRect(int(self.winId()))   # screen pixels, like the game's
+        except Exception:
+            return None
+
+    def _check_capture(self):
+        if not self.isVisible():
+            self._capture_timer.stop()
+            return
+        running, game = self._game_state()
+        want = exclude_when(self._window_rect(), game, running)
+        if want != self._capture_excluded and set_capture_excluded(self, want):
+            self._capture_excluded = want
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if self.isVisible():
+            self._check_capture()   # dragged onto the game: out of captures at once
+
+    def save_screenshot(self):
+        """The window as it is now, to Pictures/PPTetrics and the clipboard
+        (screen captures may not show it: see _check_capture)"""
+        pix = self.grab()
+        try:
+            pictures = QtCore.QStandardPaths.writableLocation(
+                QtCore.QStandardPaths.StandardLocation.PicturesLocation) or str(Path.home())
+            folder = Path(pictures) / "PPTetrics"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = screenshot_path(folder)
+            if not pix.save(str(path), "PNG"):
+                raise OSError(str(path))
+        except Exception as e:
+            self.note.setText(self.tr_("shot_failed").format(e))
+            return None
+        QtWidgets.QApplication.clipboard().setPixmap(pix)
+        self.note.setText(self.tr_("shot_done").format(path))
+        return path
 
     def closeEvent(self, event):
         self.drag_button.setChecked(False)  # leave drag mode with the window

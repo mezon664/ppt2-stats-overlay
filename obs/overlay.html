@@ -22,7 +22,6 @@
   <canvas class="cat hidden" id="cat-left"></canvas>
   <canvas class="cat hidden" id="cat-right"></canvas>
 <script src="../assets/cat/cat.js"></script>
-<script src="../assets/challenge_cats/clips.js"></script>
 
 <script>
 "use strict";
@@ -73,7 +72,7 @@ const SUMMARY_ROWS = [   // [key, label, decimals; null = text] (hud/overlay.py 
   ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];
 const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enabled: true, opener_language: "auto",
   opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, text_outline_width: 10, bg_color: "#000000", text_color: "#ffffff",
-  line_color: "#ffffff", font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", scale: 1.0,
+  line_color: "#ffffff", font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", stats_position_left: "", stats_position_right: "", scale: 1.0,
   offset_x: 0, offset_y: 0, clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
   summary_offset_x: 0, summary_offset_y: 0, session_offset_x: 0, session_offset_y: 0,
   stats_left_offset_x: 0, stats_left_offset_y: 0,
@@ -946,9 +945,9 @@ function layout() {
   setLabels(d.labels, d.language);
   setPlayerColors(d.player_color_left, d.player_color_right);
   const pu = (part) => s * partValue(part, "scale");
-  const mode = d.stats_position === "right" ? "right" : "left";
   const shown = (Array.isArray(d.stat_items) ? d.stat_items : []).filter((k) => STAT_KEYS.includes(k));
   for (const side of ["left", "right"]) {
+    const mode = statsMode(d, side);
     look(stats[side], "stats"); look(events[side], "events");
     if (shown.length && d.style !== "versus") statConfigure(stats[side], d.style, mode, shown, pu("stats"));
     events[side].language = d.language; events[side].openerLanguage = openerLanguage();
@@ -968,6 +967,13 @@ function layout() {
   place();
 }
 
+// where this player's numbers go: their own setting, or the shared one (config_store.stats_mode)
+function statsMode(d, side) {
+  const own = d[`stats_position_${side}`];
+  if (own === "left" || own === "right") return own;
+  return d.stats_position === "right" ? "right" : "left";
+}
+
 function awayFromMatch() {
   if (display.enabled === false || display.show_on_obs === false) return true;   // off, or shown on the game screen only
   return !display.always_show && !display.force_show && lastState.match_screen === false;
@@ -978,10 +984,10 @@ function place() {
   const all = [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)];
   if (awayFromMatch()) { all.forEach((p) => { p.visible = false; }); hideCats(); paint(); return; }
   const u = s * partValue("stats", "scale");   // the gaps next to the stat block go with its size
-  const mode = d.stats_position === "right" ? "right" : "left";
   const anyStat = (d.stat_items || []).length > 0, isVersus = d.style === "versus", shown = anyStat && !isVersus;
-  if (shown) for (const side of ["left", "right"]) statConfigure(stats[side], stats[side].style, mode, stats[side].shown, stats[side].u);
+  if (shown) for (const side of ["left", "right"]) statConfigure(stats[side], stats[side].style, statsMode(d, side), stats[side].shown, stats[side].u);
   for (const side of ["left", "right"]) {
+    const mode = statsMode(d, side);
     const stat = stats[side], ev = events[side];
     const other = st[side === "left" ? "right" : "left"] || {};
     const vsPuyo = other.puyo ? VS_PUYO_SHIFT_X[mode] : 0;
@@ -1262,7 +1268,8 @@ function drawCat(side, pos, name, u, cat = window.CAT, folder = "cat") {
 // stream shows the cat the player sees, the same size and place.
 // ======================================================================
 const CH_NEXT_X = { left: [447, 517], right: [1052, 1122] };
-const CH_NEXT_TOP = { all: 100, from2: 144 }, CH_NEXT_BOTTOM = 341;
+const CH_NEXT_TOP = { all: 100, from2: 144, from3: 194, from4: 244, from5: 294 }, CH_NEXT_BOTTOM = 341;
+const CH_CATS_ENABLED = false;   // as challenge.py CATS_ENABLED (not in the release yet; clips.js not loaded)
 const CH_SLOT_CENTERS_Y = [119, 169, 219, 269, 319];
 const CH_BOARD = { left: [206, 120, 421, 548], right: [811, 120, 1026, 548] };
 const CH_CAT_SIZE = 2.2, CH_EDGE_X = { left: 0, right: 1232 }, CH_FLOOR_Y = [40, 680], CH_FADE_S = 0.35;
@@ -1365,7 +1372,7 @@ function challengeUpdate() {   // as challenge.py ChallengeLayer.update_state
   const fresh = ch.seen === null ? 0 : Math.max(0, count - ch.seen);   // the first count seen: no flood of cats
   ch.seen = count;
   const now = chNow(), clips = challengeClips();
-  if (!(active && d.challenge_cats)) ch.cats = [];
+  if (!(active && CH_CATS_ENABLED && d.challenge_cats)) ch.cats = [];
   else {
     clips.forEach(challengeLoadImages);
     ch.cats = ch.cats.filter((c) => now < c.t1);

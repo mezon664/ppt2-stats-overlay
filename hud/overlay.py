@@ -34,7 +34,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 import opener_stats
 from challenge import ChallengeLayer
-from config_store import DISPLAY_DEFAULTS, DISPLAY_RANGES, load_settings, display_settings, part_value, opener_language
+from config_store import DISPLAY_DEFAULTS, DISPLAY_RANGES, load_settings, display_settings, part_value, opener_language, stats_mode
 
 log_hud = logging.getLogger("hud")
 
@@ -2148,10 +2148,10 @@ class HudWindow(QtWidgets.QWidget):
             widget.colors = (part_value(d, part, "bg_color"), part_value(d, part, "text_color"),
                              part_value(d, part, "line_color"))
 
-        mode = d["stats_position"]
         shown = list(d["stat_items"])
         self.resize(int(w), int(h))
         for side in ("left", "right"):
+            mode = stats_mode(d, side)
             stat, ev = self.stats[side], self.events[side]
             look(stat, "stats")
             look(ev, "events")
@@ -2399,11 +2399,11 @@ class HudWindow(QtWidgets.QWidget):
             self._fade.stop()
             return
         u = s * part_value(d, "stats", "scale")   # the gaps next to the stat block go with its size
-        mode = d["stats_position"]
         any_stat = bool(d["stat_items"])
         versus = d["style"] == "versus"
         shown = any_stat and not versus
         for side in ("left", "right"):
+            mode = stats_mode(d, side)
             stat, ev = self.stats[side], self.events[side]
             other = self._last_state.get("right" if side == "left" else "left") or {}
             vs_puyo = VS_PUYO_SHIFT_X[mode] if other.get("puyo") else 0   # (really Puyo, not just hidden)

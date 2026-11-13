@@ -23,7 +23,8 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 # finds it (gameplay_gate NEXT_WINDOWS: (455, 83) / (1060, 83) on the
 # recordings), the five pieces below it (QUEUE_SLOTS)
 NEXT_X = {"left": (447, 517), "right": (1052, 1122)}
-NEXT_TOP = {"all": 100, "from2": 144}
+# the gaps between the five boxes are at 144, 194, 244, 294 (user: choose how many show)
+NEXT_TOP = {"all": 100, "from2": 144, "from3": 194, "from4": 244, "from5": 294}
 NEXT_BOTTOM = 341
 SLOT_CENTERS_Y = (119, 169, 219, 269, 319)
 # each board (board_read LEFT_BOX / RIGHT_BOX), a little inside it: what a
@@ -41,6 +42,9 @@ FADE_S = 0.35     # a cat that turns up mid-screen fades in
 # (user: let it drive off before it goes)
 OFF_S, OFF_SPEEDUP, OFF_FADE_S, OFF_CYCLE = 1.5, 3.0, 0.6, 8
 MAX_CATS = 4   # on the screen at once (each comes and goes)
+# The cats aren't in the release yet (user, v0.2.14: NEXT only): off whatever
+# the setting says, and their clips aren't in the zip (make_release.SKIP_DIRS).
+CATS_ENABLED = False
 CLIPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "challenge_cats"
 FPS = 30
 
@@ -297,7 +301,7 @@ class ChallengeLayer(QtWidgets.QWidget):
         new = 0 if self._seen is None else max(0, count - self._seen)
         self._seen = count
         now = self.now()
-        if not (active and display.get("challenge_cats")):
+        if not (active and CATS_ENABLED and display.get("challenge_cats")):
             self.cats = []
         else:
             self.cats = [c for c in self.cats if not c.gone(now)]

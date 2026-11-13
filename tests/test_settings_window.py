@@ -213,7 +213,8 @@ def test_the_new_layout(tmp_path, monkeypatch):
     """The menu down the left and its pages (the mockup of 2026-11-04); a
     part's details only while it's switched on; the outline's thickness."""
     w = window(tmp_path, monkeypatch)
-    assert w.tabs.count() == 8
+    assert w.tabs.count() == 9
+    assert w.tabs.tabText(7) == "縛りプレイ" and w.tabs.tabText(8).startswith("その他")
     assert [w.tabs.tabText(i) for i in range(3)] == ["ホーム", "表示する項目", "見た目"]
     w._show_values(display_settings({"display": {"show_event_log": False, "show_summary": True}}))
     assert w.events_card.body.isHidden() and not w.summary_card.body.isHidden()
@@ -225,3 +226,58 @@ def test_the_new_layout(tmp_path, monkeypatch):
     assert not w.outline_width.isEnabled()
     w.players.setCurrentIndex(w.players.findData("left"))   # a row of buttons answering like a dropdown
     assert w.values()["players"] == "left"
+
+
+# --- screenshots (user: a picture of the rating history came out empty) ---
+def test_out_of_captures_only_over_the_game():
+    import settings_window as sw
+    game = (100, 100, 1332, 792)
+    assert sw.exclude_when((1400, 100, 2280, 900), game, True) is False    # beside the game: shows
+    assert sw.exclude_when((1000, 100, 1880, 900), game, True) is True     # over part of it
+    assert sw.exclude_when((1332, 100, 2000, 900), game, True) is False    # touching the edge only
+    assert sw.exclude_when((1000, 100, 1880, 900), game, False) is False   # no game: nothing to misread
+    assert sw.exclude_when((1000, 100, 1880, 900), None, True) is True     # game there, place unknown: safe side
+    assert sw.exclude_when(None, game, True) is True
+
+
+def test_window_follows_the_game(tmp_path, monkeypatch):
+    import settings_window as sw
+    w = window(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(sw, "set_capture_excluded", lambda widget, on: calls.append(on) or True)
+    monkeypatch.setattr(w, "isVisible", lambda: True)
+    state = {"game": (True, (0, 0, 1000, 600)), "win": (900, 0, 1700, 800)}
+    monkeypatch.setattr(w, "_game_state", lambda: state["game"])
+    monkeypatch.setattr(w, "_window_rect", lambda: state["win"])
+    w._check_capture(); w._check_capture()
+    state["win"] = (1100, 0, 1900, 800); w._check_capture()
+    state["game"] = (False, None); state["win"] = (0, 0, 800, 800); w._check_capture()
+    assert calls == [True, False]   # set once on, once off; not again while unchanged
+
+
+def test_save_as_image(tmp_path, monkeypatch):
+    from PyQt6 import QtCore
+    import settings_window as sw
+    w = window(tmp_path, monkeypatch)
+    monkeypatch.setattr(QtCore.QStandardPaths, "writableLocation", lambda *_: str(tmp_path))
+    first = w.save_screenshot()
+    second = w.save_screenshot()
+    assert first.parent == tmp_path / "PPTetrics" and first.exists() and second.exists() and first != second
+    assert str(second) in w.note.text()
+    assert not QtWidgets.QApplication.clipboard().pixmap().isNull()
+
+
+def test_each_players_numbers_left_or_right(tmp_path, monkeypatch):
+    from config_store import stats_mode
+    w = window(tmp_path, monkeypatch)
+    old = display_settings({"display": {"stats_position": "right"}})       # a file from before
+    assert (stats_mode(old, "left"), stats_mode(old, "right")) == ("right", "right")
+    w._show_values(old)
+    assert w.values() == old
+    w.positions["left"].setCurrentIndex(0)                                 # 1P lower left, 2P stays lower right
+    d = w.values()
+    assert (d["stats_position_left"], d["stats_position_right"], d["stats_position"]) == ("left", "right", "left")
+    assert (stats_mode(d, "left"), stats_mode(d, "right")) == ("left", "right")
+    w._show_values(d)
+    assert w.values() == d
+    assert display_settings({"display": {"stats_position_left": "up"}})["stats_position_left"] == ""

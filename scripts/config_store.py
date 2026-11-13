@@ -44,6 +44,9 @@ DISPLAY_DEFAULTS = {
     "text_outline_width": 10,    # its thickness, % of the text size (user: make it adjustable)
     "language": "ja",           # "ja" / "en": overlay text (states, events) and the settings window
     "stats_position": "left",    # "left": each board's lower-left, "right": lower-right
+    # each player's own (user: 1P and 2P each): "" follows stats_position
+    "stats_position_left": "",
+    "stats_position_right": "",
     "scale": 1.0,                # size of everything shown (0.5 - 2.0)
     "offset_x": 0,               # move the APM / PPS blocks: + = right
     "offset_y": 0,               # + = down
@@ -126,8 +129,9 @@ DISPLAY_DEFAULTS = {
     "players": "both",
     "event_log_count": 3,        # 1 - 10 (was 5; user: allow more)
     # 縛りプレイ (hud/challenge.py): over your own board on the game screen and in
-    # OBS (obs/overlay.html). challenge_next: "off" / "from2" (NEXT from the 2nd hidden) /
-    # "all" (every NEXT hidden); challenge_cats: a cat comes over your board for
+    # OBS (obs/overlay.html). challenge_next: "off" / "fromN" (NEXT from the Nth hidden,
+    # N 2-5) / "all" (every NEXT hidden); challenge_cats (not in the release yet,
+    # hud/challenge.py CATS_ENABLED): a cat comes over your board for
     # each TETRIS / T-SPIN / PERFECT CLEAR this match; challenge_side: whose
     # board, "auto" (yours, from the waiting screen's "You" card) / "left" / "right".
     "challenge_next": "off",
@@ -180,8 +184,19 @@ OPENER_DISPLAYS = ("board", "hold", "namebar", "top", "cat")   # cat: a cat walk
 PLAYERS = ("both", "left", "right")
 OPENER_LANGUAGES = ("auto", "ja", "en")
 DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES,
+                   "stats_position_left": ("",) + STATS_POSITIONS, "stats_position_right": ("",) + STATS_POSITIONS,
                    "opener_display": OPENER_DISPLAYS, "players": PLAYERS, "opener_language": OPENER_LANGUAGES,
-                   "challenge_next": ("off", "from2", "all"), "challenge_side": ("auto", "left", "right")}
+                   "challenge_next": ("off", "from5", "from4", "from3", "from2", "all"), "challenge_side": ("auto", "left", "right")}
+
+
+def stats_mode(display, side):
+    """Where this player's numbers go, "left" / "right" of their board: their
+    own setting, or the shared stats_position while that's empty."""
+    own = display.get(f"stats_position_{side}") or ""
+    if own in STATS_POSITIONS:
+        return own
+    shared = display.get("stats_position", "left")
+    return shared if shared in STATS_POSITIONS else "left"
 
 
 def opener_language(display):

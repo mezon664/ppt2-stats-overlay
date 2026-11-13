@@ -40,7 +40,8 @@ def test_whose_board_and_how_many_cats():
     assert challenge.next_cover("all", "left")[1] < challenge.next_cover("from2", "left")[1]
 
 
-def test_layer_follows_the_match():
+def test_layer_follows_the_match(monkeypatch):
+    monkeypatch.setattr(challenge, "CATS_ENABLED", True)   # (the cats: off in the release, tested here)
     layer = challenge.ChallengeLayer(None)
     t = [0.0]
     layer.now = lambda: t[0]
@@ -69,7 +70,8 @@ def test_layer_follows_the_match():
     assert layer.isHidden()
 
 
-def test_not_shown_where_the_hud_shows_in_captures():
+def test_not_shown_where_the_hud_shows_in_captures(monkeypatch):
+    monkeypatch.setattr(challenge, "CATS_ENABLED", True)
     from test_match_screen import hud_with
     st = match(tetris=0, you="left")
     st["left"], st["right"] = st["right"], st["left"]
@@ -107,3 +109,15 @@ def test_cat_draws_match_the_obs_page():
     assert challenge.cat_seed(1730000000.15, "left", 3) == "17300000002|left|3"
     r = challenge.Rand("x")
     assert (r.random(), r.uniform(0.9, 1.1)) == (0.6570503213442862, 0.9083663875702769)
+
+
+def test_no_cats_in_the_release_and_next_counts():
+    """v0.2.14 ships the NEXT cover only (user); how many NEXT show is chosen 5..0"""
+    layer = challenge.ChallengeLayer(None)
+    d = {"challenge_next": "off", "challenge_cats": True, "challenge_side": "auto"}
+    layer.update_state(match(tetris=0), d, 1.0, True)
+    layer.update_state(match(tetris=3), d, 1.0, True)
+    assert layer.cats == []
+    tops = [challenge.next_cover(m, "left") for m in ("from5", "from4", "from3", "from2", "all")]
+    assert [t[1] for t in tops] == [294, 244, 194, 144, 100]
+    assert challenge.next_cover("off", "left") is None
