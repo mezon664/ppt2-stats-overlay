@@ -408,3 +408,7 @@
 - 演出強化（`hud/dopamine.py`、OBS は dopa*）: 普通・派手・超派手。音は QSoundEffect（配信には OBS のデスクトップ音声で載る）。読み上げは assets/announcer（Kokoro で作成、`tools/sound/make_announcer.py`）。4 秒より前の技は演出も読み上げもしない（`challenge.FRESH_S`）。読み上げたら logs/hud.log に残る。
 - テストは音を出さない（`tests/conftest.py`）: 前はテストのたびに本物の効果音が 29 回鳴っていて、ユーザーには「何もしてないのに鳴る」と聞こえていた。
 - 未確認: 大火力・ポーズのコメント、重ならない段決めは本物の試合では未確認。6 月の古い録画では名前が「めそん」になる。
+
+### 2026-11-14 v0.2.17（レート戦では縛りプレイをオフ）
+- 設定 `challenge_off_in_rated`（縛りプレイのページ「対象の盤面」のカード）: レート戦（`state["rated_match"]`）のあいだ、縛りプレイの値をすべてオフにして使う（`config_store.challenge_display` / `CHALLENGE_OFF`）。サーバー（コメント・名前・モザイク・お邪魔）、HUD（`ChallengeLayer.update_state`）、OBS（`challengeDisplay`）が同じ形で使う。
+  未確認: 本物のレート戦では試していない。

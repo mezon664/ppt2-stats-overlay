@@ -196,3 +196,21 @@ def test_the_comments_go_over_the_huds_parts():
     kids = [w for w in win.children() if isinstance(w, QtWidgets.QWidget)]
     assert kids.index(win.comment_view) > kids.index(win.summary) > kids.index(win.challenge)
     assert win.challenge.view is win.comment_view
+
+
+def test_challenge_mode_off_in_rated_matches_if_asked():
+    """challenge_off_in_rated: a rated match turns all of 縛りプレイ off (the
+    HUD, OBS and the server's comments / mosaic all go by challenge_display)."""
+    from config_store import challenge_display, display_settings
+    d = display_settings({"display": {"challenge_next": "all", "challenge_cats": True, "challenge_comments": "many",
+                                      "challenge_dopamine": "max", "challenge_announcer": True,
+                                      "challenge_bottom_rows": 5, "challenge_off_in_rated": True}})
+    rated = {"match_screen": True, "rated_match": True}
+    off = challenge_display(d, rated)
+    assert (off["challenge_next"], off["challenge_cats"], off["challenge_comments"], off["challenge_dopamine"],
+            off["challenge_announcer"], off["challenge_bottom_rows"]) == ("off", False, "off", "off", False, 0)
+    assert challenge_display(d, {"match_screen": True, "rated_match": False}) is d        # not rated: as it is
+    assert challenge_display({**d, "challenge_off_in_rated": False}, rated)["challenge_next"] == "all"   # not asked
+    assert display_settings({"display": {}})["challenge_off_in_rated"] is False
+    html = (Path(__file__).resolve().parent.parent / "obs" / "overlay.html").read_text(encoding="utf-8")
+    assert "challenge_off_in_rated" in html and "challengeDisplay(display" in html

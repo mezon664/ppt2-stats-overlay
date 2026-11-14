@@ -1858,8 +1858,14 @@ function dopaUpdate(st, d, side, playing, now) {   // as challenge.py ChallengeL
 
 const challenge = { bursts: [], burstSeen: null, side: "left", cover: null, cats: [], match: undefined, seen: {}, sent: {}, ticking: false, comments: {}, mosaic: null, mosaicNext: null, picture: null, pictureSide: "left", pictureAlpha: 0 };
 const chNow = () => performance.now() / 1000;
+// 縛りプレイ all off during a rated match, if asked (as config_store.challenge_display)
+const CH_OFF = { challenge_next: "off", challenge_mosaic: "off", challenge_cats: false, challenge_garbage: false,
+                 challenge_bottom_rows: 0, challenge_comments: "off", challenge_dopamine: "off", challenge_announcer: false };
+function challengeDisplay(d, st) {
+  return d.challenge_off_in_rated && st.rated_match && st.match_screen !== false ? { ...d, ...CH_OFF } : d;
+}
 function challengeUpdate() {   // as challenge.py ChallengeLayer.update_state
-  const st = lastState || {}, d = display, ch = challenge;
+  const st = lastState || {}, d = challengeDisplay(display, lastState || {}), ch = challenge;
   const side = challengeSide(d, st);
   // shown here whenever the page shows (OBS isn't what the recognition reads)
   const active = d.enabled !== false && d.show_on_obs !== false && st.match_screen === true && !st.frozen

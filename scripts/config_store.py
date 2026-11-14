@@ -167,6 +167,9 @@ DISPLAY_DEFAULTS = {
     "challenge_announcer_voice": "heart",  # "heart" (female) / "adam" (male): assets/announcer
     "challenge_cats_side": "both",   # whose TETRIS / T-SPIN / PC bring cats: "both" / "left" / "right"
     "challenge_side": "auto",
+    # 縛りプレイ all off during a rated (league) match (user's request; the
+    # server says which ones are: state["rated_match"]) — see challenge_display
+    "challenge_off_in_rated": False,
 }
 
 # (min, max) for numeric options; out-of-range values are clamped.
@@ -299,6 +302,25 @@ def load_settings(persist_defaults=True):
     if persist_defaults:
         save_settings(DEFAULTS)
     return json.loads(json.dumps(DEFAULTS))
+
+
+# what 縛りプレイ is, all off (challenge_display)
+CHALLENGE_OFF = {"challenge_next": "off", "challenge_mosaic": "off", "challenge_cats": False,
+                 "challenge_garbage": False, "challenge_bottom_rows": 0, "challenge_comments": "off",
+                 "challenge_dopamine": "off", "challenge_announcer": False}
+
+
+def challenge_off_now(display, state):
+    """A rated match on screen and challenge_off_in_rated: 縛りプレイ is off."""
+    st = state or {}
+    return bool((display or {}).get("challenge_off_in_rated")) and bool(st.get("rated_match")) \
+        and st.get("match_screen") is not False
+
+
+def challenge_display(display, state):
+    """The display as 縛りプレイ uses it now: all of it off during a rated
+    match when asked (challenge_off_in_rated), else as it is."""
+    return {**display, **CHALLENGE_OFF} if challenge_off_now(display, state) else display
 
 
 def display_settings(settings):

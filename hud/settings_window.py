@@ -509,6 +509,10 @@ TEXT = {
     "challenge_cats": {"ja": "猫：TETRIS・T-SPIN・パフェのたびに、猫が出てきて盤面を隠す",
                        "en": "Each TETRIS / T-SPIN / PERFECT CLEAR, a cat comes in from the edge of the screen and hides your board"},
     "challenge_side": {"ja": "対象の盤面", "en": "Whose board"},
+    "challenge_off_in_rated": {"ja": "レート戦（リーグ）のときは縛りプレイをすべてオフにする",
+                               "en": "Turn all of challenge mode off during rated (league) matches"},
+    "challenge_off_in_rated_tip": {"ja": "試合前の「まちうけ」画面が出た試合をレート戦とみなします。クラブ（ルーム）の試合は対象外です。",
+                                   "en": "A match that came after the waiting screen (STANDBY) counts as rated. Club / free play matches don't."},
     "cs.auto": {"ja": "自分（自動）", "en": "Yours (auto)"},
     "cs.left": {"ja": "1P", "en": "1P"},
     "cs.right": {"ja": "2P", "en": "2P"},
@@ -1227,6 +1231,9 @@ class SettingsWindow(QtWidgets.QWidget):
             self.challenge_side.addItem("", key)
         self.challenge_side.currentIndexChanged.connect(self._changed)
         self.ch_target_card.add(self._row("challenge_side", _hbox(self.challenge_side)))
+        self.challenge_off_in_rated = QtWidgets.QCheckBox()
+        self.challenge_off_in_rated.toggled.connect(self._changed)
+        self.ch_target_card.add(self.challenge_off_in_rated)
         self.challenge_note = QtWidgets.QLabel()
         self.challenge_note.setWordWrap(True)
         self.challenge_note.setStyleSheet("background:#fff4e5; color:#7a3e00; border-radius:8px; padding:8px 10px;")
@@ -2236,6 +2243,8 @@ class SettingsWindow(QtWidgets.QWidget):
             self.challenge_next.setItemText(i, t("ch." + key))
         for i, key in enumerate(CHALLENGE_SIDE_ORDER):
             self.challenge_side.setItemText(i, t("cs." + key))
+        self.challenge_off_in_rated.setText(t("challenge_off_in_rated"))
+        self.challenge_off_in_rated.setToolTip(t("challenge_off_in_rated_tip"))
         for i, key in enumerate(("both", "left", "right")):
             self.cats_side.setItemText(i, t("cats." + key))
         for i, key in enumerate(("few", "normal", "many")):
@@ -2751,6 +2760,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.bottom_rows.setSuffix(" 段" if self.lang == "ja" else "")
         self.cats_side.setCurrentIndex(max(0, self.cats_side.findData(d["challenge_cats_side"])))
         self.challenge_side.setCurrentIndex(max(0, self.challenge_side.findData(d["challenge_side"])))
+        self.challenge_off_in_rated.setChecked(d["challenge_off_in_rated"])
         self.mosaic_switch.setChecked(d["challenge_mosaic"] != "off")
         self.mosaic_metric.setCurrentIndex(max(0, self.mosaic_metric.findData(d["challenge_mosaic"])))
         top = float(d["challenge_mosaic_max"] or 0)
@@ -2826,6 +2836,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "challenge_announcer_volume": self.announcer_volume.value(),
             "challenge_cats_side": self.cats_side.currentData(),
             "challenge_side": self.challenge_side.currentData(),
+            "challenge_off_in_rated": self.challenge_off_in_rated.isChecked(),
             "challenge_mosaic": self.mosaic_metric.currentData() if self.mosaic_switch.isChecked() else "off",
             "challenge_mosaic_max": float(self.mosaic_max.value())
             if (self.mosaic_metric.currentData() == "time" or not self.mosaic_auto.isChecked()) else 0.0,
@@ -2934,7 +2945,7 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.events_card, ("show_event_log", "event_log_count")),
             (self.summary_card, ("show_summary", "summary_items")),
             (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),
-            (self.ch_target_card, ("challenge_side",)),
+            (self.ch_target_card, ("challenge_side", "challenge_off_in_rated")),
             (self.ch_next_card, ("challenge_next",)),
             (self.ch_garbage_card, ("challenge_garbage",)),
             (self.ch_bottom_card, ("challenge_bottom_rows",)),

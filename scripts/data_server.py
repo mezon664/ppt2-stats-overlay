@@ -501,27 +501,30 @@ async def broadcaster():
         state["page_rev"] = PAGE_REV
         state["you_side"] = SESSION["match_you"] or "left"   # kept with the match (opener_stats.match_record)
         state["rated_match"] = SESSION["match_rated"]         # (display.hide_in_rated)
+        # 縛りプレイ as it is now (all off in a rated match, if asked: challenge_off_in_rated)
+        from config_store import challenge_display
+        ch_display = challenge_display(display, state)
         try:   # the players' names (for the comments), read off the screen
             state["names"] = name_reader().update(state, LAST_FRAME["frame"]) \
-                if display.get("challenge_comments", "off") != "off" else {}
+                if ch_display.get("challenge_comments", "off") != "off" else {}
         except Exception:
             log.exception("reading the players' names failed")
             state["names"] = {}
         try:
-            state["comments"] = comment_stream().update(display, state, time.monotonic(), usual_numbers(),
-                                                        your_board(display, state))
+            state["comments"] = comment_stream().update(ch_display, state, time.monotonic(), usual_numbers(),
+                                                        your_board(ch_display, state))
         except Exception:
             log.exception("the comments failed")
             state["comments"] = None
         try:
             import mosaic
-            state["challenge_garbage"] = mosaic.garbage_state(display, state, LAST_FRAME["frame"], garbage_rows_of,
+            state["challenge_garbage"] = mosaic.garbage_state(ch_display, state, LAST_FRAME["frame"], garbage_rows_of,
                                                               _garbage_hold())
         except Exception:
             log.exception("counting the garbage rows failed")
             state["challenge_garbage"] = None
         try:
-            state["challenge_mosaic"] = mosaic_state(display, state)
+            state["challenge_mosaic"] = mosaic_state(ch_display, state)
         except Exception:
             log.exception("the challenge mosaic failed")
             state["challenge_mosaic"] = None

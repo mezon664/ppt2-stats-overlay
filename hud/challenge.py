@@ -571,6 +571,8 @@ class ChallengeLayer(QtWidgets.QWidget):
     def update_state(self, state, display, scale, active):
         """active: shown at all now (a match on screen, the HUD kept out of
         captures, not positioning)."""
+        from config_store import challenge_display
+        display = challenge_display(display, state)   # (all off in a rated match, if asked)
         self.scale = scale
         side = challenge_side(display, state)
         player = (state or {}).get(side) or {}
