@@ -5,7 +5,8 @@
     "fetched_at": "2026-10-24",
     "source_note": "ページ内「送れるお邪魔の段数(火力数)」>「対テトリス」セクション。ぷよぷよテトリス2はTetris99と同じ基本火力・BtB表を共有するが、RENボーナスとPerfect Clearのルールが異なるため、ぷよぷよテトリス2専用の値のみを採用している。",
     "change_log": [
-      {"date": "2026-10-24", "change": "初版作成。ユーザー提示の仮REN表と出典ページの値が完全一致することを確認し、正式値として採用。"}
+      {"date": "2026-10-24", "change": "初版作成。ユーザー提示の仮REN表と出典ページの値が完全一致することを確認し、正式値として採用。"},
+      {"date": "2026-11-14", "change": "T-SPIN Mini Double を追加（基本 1 段、BtB 対象）。出典ページには Mini Double の行がないため、ユーザーの実機確認（BtB つきで 2 段）による。"}
     ]
   },
   "base_clear": {
@@ -16,13 +17,14 @@
   },
   "tspin": {
     "mini": 0,
+    "mini_double": 1,
     "single": 2,
     "double": 4,
     "triple": 6
   },
   "back_to_back": {
     "bonus": 1,
-    "eligible_clears": ["clear_4", "tspin_mini", "tspin_single", "tspin_double", "tspin_triple"],
+    "eligible_clears": ["clear_4", "tspin_mini", "tspin_mini_double", "tspin_single", "tspin_double", "tspin_triple"],
     "min_consecutive_for_bonus": 2,
     "assumption_note": "出典ページは『+1段』としか書いておらず、何連続目から発動するかは明記されていない。対戦Tetrisの一般的な慣例（2連続目のBtB対象クリアから+1）を仮採用。実機での挙動確認が必要（未検証・要修正の可能性あり）。"
   },

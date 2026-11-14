@@ -138,12 +138,43 @@ DISPLAY_DEFAULTS = {
     # each TETRIS / T-SPIN / PERFECT CLEAR this match; challenge_side: whose
     # board, "auto" (yours, from the waiting screen's "You" card) / "left" / "right".
     "challenge_next": "off",
+    # a mosaic over your board, coarser as this number goes up (scripts/mosaic.py):
+    # "off" / "events" (each TETRIS / T-SPIN / PC: stronger, then fading) /
+    # "apm" / "pps" / "attack" / "b2b" / "ren"; a number is coarsest at
+    # challenge_mosaic_max, or (0) at your usual / a default
+    "challenge_mosaic": "off",
+    "challenge_mosaic_max": 0.0,
+    # how it hides the board: "mosaic", or "image" (a picture over the board, the
+    # darker the higher the number); challenge_image: "" = the cat
+    # (assets/challenge_image/cat.jpg), or one the user picked, copied to
+    # assets/user_images/ (where the OBS page can load it too)
+    "challenge_mosaic_style": "mosaic",
+    "challenge_image": "",
     "challenge_cats": False,
+    # the garbage rows at the bottom of the board covered, holes and all (user:
+    # hide the garbage's holes); the server counts them (state["challenge_garbage"])
+    "challenge_garbage": False,
+    # the bottom this many rows of the board covered (0: off; user: hide the
+    # bottom of the board, so many rows)
+    "challenge_bottom_rows": 0,
+    # comments flowing over the game screen as you play (scripts/comments.py):
+    # "off" / "few" / "normal" / "many"
+    "challenge_comments": "off",
+    "challenge_dopamine": "off",     # 演出強化モード: "off" / "lite" 普通 / "on" 派手 / "max" 超派手 (hud/dopamine.py)
+    "challenge_dopamine_volume": 70,  # its sounds, 0-100 (0: none)
+    "challenge_announcer": False,     # the clear's name read out ("T-Spin Double!"), recorded (Kokoro)
+    "challenge_announcer_volume": 100,  # its own volume, 0-200
+    "challenge_announcer_voice": "heart",  # "heart" (female) / "adam" (male): assets/announcer
+    "challenge_cats_side": "both",   # whose TETRIS / T-SPIN / PC bring cats: "both" / "left" / "right"
     "challenge_side": "auto",
 }
 
 # (min, max) for numeric options; out-of-range values are clamped.
 DISPLAY_RANGES = {
+    "challenge_bottom_rows": (0, 19),
+    "challenge_dopamine_volume": (0, 100),
+    "challenge_announcer_volume": (0, 200),   # (above 100: a louder copy, hud/dopamine.py play_level)
+    "challenge_mosaic_max": (0.0, 1000.0),
     "scale": (0.5, 2.0),
     # Offsets: anywhere on the game screen (reference size 1232x692), so a
     # part can be moved from its default spot to any edge.
@@ -189,7 +220,12 @@ OPENER_LANGUAGES = ("auto", "ja", "en")
 DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language": LANGUAGES,
                    "stats_position_left": ("",) + STATS_POSITIONS, "stats_position_right": ("",) + STATS_POSITIONS,
                    "opener_display": OPENER_DISPLAYS, "players": PLAYERS, "opener_language": OPENER_LANGUAGES,
-                   "challenge_next": ("off", "from5", "from4", "from3", "from2", "all"), "challenge_side": ("auto", "left", "right")}
+                   "challenge_next": ("off", "from5", "from4", "from3", "from2", "all"), "challenge_mosaic": ("off", "events", "time", "apm", "pps", "attack", "b2b", "ren"),
+                   "challenge_mosaic_style": ("mosaic", "image"),
+                   "challenge_cats_side": ("both", "left", "right"),
+                   "challenge_comments": ("off", "few", "normal", "many"),
+                   "challenge_dopamine": ("off", "lite", "on", "max"),
+                   "challenge_announcer_voice": ("heart", "adam"), "challenge_side": ("auto", "left", "right")}
 
 
 def stats_mode(display, side):
@@ -212,7 +248,8 @@ COLOR_PATTERN = r"#[0-9a-fA-F]{6}"
 DISPLAY_PATTERNS = {"bg_color": COLOR_PATTERN, "text_color": COLOR_PATTERN, "line_color": COLOR_PATTERN,
                     "player_color_left": COLOR_PATTERN, "player_color_right": COLOR_PATTERN,
                     "font_family": r"[^\x00-\x1f]{0,100}",
-                    "font_file": r"user_fonts/[^/\\\x00-\x1f]{1,120}\.(ttf|otf|ttc)"}
+                    "font_file": r"user_fonts/[^/\\\x00-\x1f]{1,120}\.(ttf|otf|ttc)",
+                    "challenge_image": r"(user_images/[^/\\\x00-\x1f]{1,120}\.(png|jpg|jpeg|webp|bmp|gif))?"}
 # What the stat block can show (see stat_items):
 #   apm / pps / app  as before; attack = lines sent this match; pieces = pieces placed;
 #   ren = the current REN; b2b = the current Back-to-Back chain

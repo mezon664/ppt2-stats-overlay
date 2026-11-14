@@ -397,3 +397,14 @@
 ### 2026-11-13 v0.2.15（レート戦では表示しない）
 - 設定 `hide_in_rated`（「表示する項目」の一番上のカード）: レート戦のあいだ、ゲーム画面と OBS の表示を全部消す（位置調整中は出す）。サーバーが試合の始まりに `state["rated_match"]` を決める（`data_server.rated_match`）: 90 秒以内に「まちうけ」の You カードが見えていて（`rating.RatingReader.you_seen_t`）、最後に見たのがクラブ（ルーム・FREE PLAY・GAME LOBBY）の画面でない（`RatingReader.club`: クラブ画面で True、リーグのメニューで False、どちらも見ていなければ None＝レート戦扱い）。
   未確認: 本物のレート戦では試していない。起動してすぐルームにいると、最初の 1 試合だけレート戦と間違えることがある。
+
+### 2026-11-14 v0.2.16（縛りプレイ: 猫・モザイク／画像・お邪魔の穴・盤面の下・コメント・演出強化・読み上げ）
+- 猫を出すようにした（`CATS_ENABLED = True`・OBS `CH_CATS_ENABLED = true`・zip に assets/challenge_cats を入れる。webp は品質 75 で作り直し）。
+- コメント（`scripts/comments.py`、サーバーで作って state["comments"]、HUD は `challenge.CommentView`・OBS は #comments の canvas、一番上）:
+  種類ごとの言葉は POOL、数は COUNT、勝ち・負け・ピンチ・パフェ・大火力（6 秒で 10 ライン、`BURST_*`）のあとは BUZZ_S のあいだ流れ続ける。ポーズ中は "pause" の言葉、戻ったら "resume"。
+  同じ段で重ならない（`_place`: 文字の幅を `text_width` で見積もり、追いつかれない段だけ。空きがなければ最大 2 秒待ち、なければ出さない）。
+  プレイヤー名は `scripts/player_names.py`（Windows の文字認識、同じ読みが 3 回で決定）。名前の札は色の薄さで読む（青い札の後ろを水色の光が通ると、明るさだけでは「ぞ」が消えて「めん」になっていた）。
+- 途中テンプレ（`scripts/midgame.py`、assets/midgame_setups.json の 36 種）: 空いている形で見る（`relax`）。T-SPIN のときに直前まで盤面にあったものだけ名前を出す。名前が出ない／出た T-SPIN は盤面つきで server.log に残る。STSD は下の段を問わない（ユーザーの STSD が下に 1 列空いていて外れていた）。
+- 演出強化（`hud/dopamine.py`、OBS は dopa*）: 普通・派手・超派手。音は QSoundEffect（配信には OBS のデスクトップ音声で載る）。読み上げは assets/announcer（Kokoro で作成、`tools/sound/make_announcer.py`）。4 秒より前の技は演出も読み上げもしない（`challenge.FRESH_S`）。読み上げたら logs/hud.log に残る。
+- テストは音を出さない（`tests/conftest.py`）: 前はテストのたびに本物の効果音が 29 回鳴っていて、ユーザーには「何もしてないのに鳴る」と聞こえていた。
+- 未確認: 大火力・ポーズのコメント、重ならない段決めは本物の試合では未確認。6 月の古い録画では名前が「めそん」になる。

@@ -44,6 +44,9 @@ _ROOT = Path(__file__).resolve().parent.parent
 PAGE_REV = "-".join(str(int((_ROOT / f).stat().st_mtime)) if (_ROOT / f).exists() else "0" for f in _PAGE_FILES)
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+if "pytest" in sys.modules:   # (the tests' made-up matches kept out of the real log: they were read as play)
+    import tempfile
+    _LOG_DIR = Path(tempfile.gettempdir()) / "pptetrics-test-logs"
 _LOG_DIR.mkdir(exist_ok=True)
 _server_log_handler = RotatingFileHandler(
     _LOG_DIR / "server.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
@@ -200,6 +203,89 @@ def follow_overlay(cap):
         cap.window_only = inside
 
 
+LAST_FRAME = {"frame": None}
+_COMMENTS = None
+
+
+_NAMES = None
+
+
+def name_reader():
+    """The players' names (scripts/player_names.py), kept across states."""
+    global _NAMES
+    if _NAMES is None:
+        import player_names
+        _NAMES = player_names.NameReader()
+    return _NAMES
+
+
+def comment_stream():
+    """縛りプレイ's comments (scripts/comments.py), kept across states."""
+    global _COMMENTS
+    if _COMMENTS is None:
+        import comments
+        _COMMENTS = comments.CommentStream()
+    return _COMMENTS
+_GARBAGE_HOLD = None
+
+
+def _garbage_hold():
+    global _GARBAGE_HOLD
+    if _GARBAGE_HOLD is None:
+        import mosaic
+        _GARBAGE_HOLD = mosaic.GarbageHold()
+    return _GARBAGE_HOLD
+
+
+def garbage_rows_of(frame, side, prev=0):
+    """That side's garbage rows at the bottom of the board (mosaic.count_garbage,
+    as the HUD reads them itself)."""
+    import mosaic
+    k = frame.shape[1] / mosaic.REFERENCE_W
+    x1, y1, x2, y2 = (int(round(v * k)) for v in mosaic.GRID[side])
+    return mosaic.count_garbage(frame[y1:y2, x1:x2], prev)
+_MOSAIC_BASE = {"key": None, "usual": None, "events": None}
+
+
+def your_board(display, state):
+    """Your board now ({"garbage", "height"}), for the comments; None when they're off."""
+    if display.get("challenge_comments", "off") == "off" or LAST_FRAME["frame"] is None:
+        return None
+    if state.get("match_screen") is not True or state.get("frozen"):
+        return None
+    import mosaic
+    you = state.get("you_side") if state.get("you_side") in ("left", "right") else "left"
+    return mosaic.board_now(LAST_FRAME["frame"], you)
+
+
+def usual_numbers():
+    """Your usual APM / PPS / attack over your last matches (mosaic.usual), worked
+    out again when the kept matches change (the mosaic and the comments)."""
+    import mosaic
+    import opener_stats
+    try:
+        key = opener_stats.HISTORY_PATH.stat().st_mtime
+    except OSError:
+        key = None
+    if key != _MOSAIC_BASE["key"] or _MOSAIC_BASE["usual"] is None:
+        _MOSAIC_BASE["key"] = key
+        _MOSAIC_BASE["usual"] = mosaic.usual(opener_stats.load())
+    return _MOSAIC_BASE["usual"]
+
+
+def mosaic_state(display, state):
+    """縛りプレイ: the mosaic's strength over your board and, for OBS, its
+    coarse picture (scripts/mosaic.py). Your usual numbers come from the
+    kept matches, worked out again when that file changes."""
+    import mosaic
+    if display.get("challenge_mosaic", "off") == "off":
+        return None
+    usual_numbers()
+    if _MOSAIC_BASE["events"] is None:
+        _MOSAIC_BASE["events"] = mosaic.EventLevel()   # ("events": goes up and fades over time)
+    return mosaic.state_for(display, state, LAST_FRAME["frame"], _MOSAIC_BASE["usual"], _MOSAIC_BASE["events"])
+
+
 def follow_session(cap):
     """The game's start time, and at each new match which side is you."""
     SESSION["since"] = game_started_at(cap)
@@ -301,6 +387,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
             if ok:
                 PIPELINE.rebuild_for_profile(profile)
                 PIPELINE.process_frame(frame, time.monotonic() - t0)
+                LAST_FRAME["frame"] = frame   # (縛りプレイのモザイク: mosaic_state)
                 read_rating(frame, cap)
                 CAPTURE_STATUS = {
                     "ok": True, "message": "capturing",
@@ -414,6 +501,30 @@ async def broadcaster():
         state["page_rev"] = PAGE_REV
         state["you_side"] = SESSION["match_you"] or "left"   # kept with the match (opener_stats.match_record)
         state["rated_match"] = SESSION["match_rated"]         # (display.hide_in_rated)
+        try:   # the players' names (for the comments), read off the screen
+            state["names"] = name_reader().update(state, LAST_FRAME["frame"]) \
+                if display.get("challenge_comments", "off") != "off" else {}
+        except Exception:
+            log.exception("reading the players' names failed")
+            state["names"] = {}
+        try:
+            state["comments"] = comment_stream().update(display, state, time.monotonic(), usual_numbers(),
+                                                        your_board(display, state))
+        except Exception:
+            log.exception("the comments failed")
+            state["comments"] = None
+        try:
+            import mosaic
+            state["challenge_garbage"] = mosaic.garbage_state(display, state, LAST_FRAME["frame"], garbage_rows_of,
+                                                              _garbage_hold())
+        except Exception:
+            log.exception("counting the garbage rows failed")
+            state["challenge_garbage"] = None
+        try:
+            state["challenge_mosaic"] = mosaic_state(display, state)
+        except Exception:
+            log.exception("the challenge mosaic failed")
+            state["challenge_mosaic"] = None
         try:
             state["session"] = session_state()
         except Exception:

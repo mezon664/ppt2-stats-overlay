@@ -23,9 +23,9 @@ LEGACY_NAME = "ppt2-stats-overlay"   # the app's name up to v0.1.0
 INCLUDE = ["launch.py", "start.bat", "README.md", "LICENSE", "requirements.txt", "requirements-vendor.txt",
            "scripts", "hud", "obs", "assets",
            "config/attack_table.json"]   # the game's attack table (the settings file next to it is each user's own)
-SKIP_PARTS = {"__pycache__", "user_fonts", ".pytest_cache"}
+SKIP_PARTS = {"__pycache__", "user_fonts", "user_images", ".pytest_cache"}
 # the second cat clip (6 MB) is held back for now (hud/overlay.py CAT2_EVERY)
-SKIP_DIRS = {("assets", "cat2"), ("assets", "challenge_cats")}   # (challenge cats: not released yet)
+SKIP_DIRS = {("assets", "cat2")}
 # Libraries added after the bundled runtime (requirements-vendor.txt), shipped
 # in the zip as vendor/: an update from the settings window brings them, no
 # new full package needed (the runtime is Python 3.12 on 64-bit Windows).

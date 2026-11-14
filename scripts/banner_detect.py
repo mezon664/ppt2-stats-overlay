@@ -87,6 +87,13 @@ TEMPLATES = {
     # up, to tell the two kinds apart (see MINI_SINGLE_THRESHOLD). Not a
     # clear-type label on its own.
     "tspin_mini_single": {"file": "../assets/templates/t_tspin_mini_single.png", "window": (15, 395, 240, 535), "side_native": "left"},
+    # The small "Double" under a Mini badge (T-SPIN Mini Double, as T-SPIN NEO
+    # gives): same place as "Single", cut from the user's recording
+    # tsmd_20261114_024420.mp4 (t=185.75, left). Measured there: up to 0.93
+    # while it was up, 0.45 at most on every other frame (the plain T-SPIN
+    # Double's big yellow "Double" included); "Single" scored 0.56 on it, so
+    # the higher of the two decides (MINI_DOUBLE_THRESHOLD).
+    "tspin_mini_double": {"file": "../assets/templates/t_tspin_mini_double.png", "window": (15, 395, 240, 535), "side_native": "left"},
     # A T-SPIN that cleared no line: the badge says only "T-SPIN", on a shorter
     # ribbon than the Single / Double / Triple ones. The template is its
     # "-SPIN" letters (48x17, on the badge's own navy), cut from burst_tspin_zero
@@ -210,7 +217,7 @@ EXIT_GRACE_FRAMES_OVERRIDES = {"back_to_back": 45}
 # reading a frame, on a slow PC so much that too few frames a second were read
 # (users: PPS stuck near 0). The no-line T-SPIN and Mini come with no flash
 # and are always matched.
-CLEAR_GATED = {"tetris", "tspin_single", "tspin_double", "tspin_triple", "tspin_mini_single",
+CLEAR_GATED = {"tetris", "tspin_single", "tspin_double", "tspin_triple", "tspin_mini_single", "tspin_mini_double",
                "perfect_clear", "back_to_back"}
 
 RAW_CLEAR_LABELS = {"tetris", "tspin_double", "tspin_single", "tspin_triple", "tspin_mini"}  # mutually-exclusive clear-type banners
@@ -221,6 +228,7 @@ CLEAR_TYPE_MAP = {"tetris": "clear_4", "tspin_double": "tspin_double", "tspin_si
 # (same frame, fade-in included). Below this it's a Mini with no line: not a
 # clear (no attack, no REN/BtB change), reported in mini_no_line_events instead.
 MINI_SINGLE_THRESHOLD = 0.5
+MINI_DOUBLE_THRESHOLD = 0.7   # "Double" under "Mini", and above "Single": a Mini Double (2 lines)
 
 MERGE_WINDOW_S = 0.5  # banners starting within this many seconds of each other -> one attack event
 
@@ -396,7 +404,11 @@ class BannerTracker:
                     st.best_conf = conf
                     st.best_pos = pos
                     st.below_exit_run = 0
-                    if label == "tspin_mini" and raw_scores.get("tspin_mini_single", 0.0) < MINI_SINGLE_THRESHOLD:
+                    mini_double = (label == "tspin_mini"
+                                   and raw_scores.get("tspin_mini_double", 0.0) >= MINI_DOUBLE_THRESHOLD
+                                   and raw_scores.get("tspin_mini_double", 0.0) > raw_scores.get("tspin_mini_single", 0.0))
+                    if label == "tspin_mini" and not mini_double and \
+                            raw_scores.get("tspin_mini_single", 0.0) < MINI_SINGLE_THRESHOLD:
                         self.mini_no_line_events.append(round(t, 2))
                     elif label == "tspin_zero":
                         if all(raw_scores.get(w, 0.0) < TSPIN_ZERO_WORD_MAX and not self.states[w].active
@@ -405,7 +417,7 @@ class BannerTracker:
                     elif label in RAW_CLEAR_LABELS and t <= self._expected_banners.get(label, -1.0):
                         del self._expected_banners[label]   # already counted from its flash
                     elif label in RAW_CLEAR_LABELS:
-                        clear_type = CLEAR_TYPE_MAP[label]
+                        clear_type = "tspin_mini_double" if mini_double else CLEAR_TYPE_MAP[label]
                         # BtB is derived from our OWN count of consecutive eligible
                         # clear banners, not from the B2B badge's live visual state.
                         # The badge is a *reaction* to the clear that just happened,

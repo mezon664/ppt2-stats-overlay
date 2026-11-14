@@ -13,6 +13,7 @@ CLEAR_TYPE_LABEL_EN = {
     "tspin_single": "T-SPIN Single",
     "tspin_triple": "T-SPIN Triple",
     "tspin_mini": "T-SPIN Mini Single",
+    "tspin_mini_double": "T-SPIN Mini Double",
 }
 
 REN_BREAK_EN = "Combo ended (no clear)"   # the English game says "Combo" for REN

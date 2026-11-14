@@ -68,6 +68,9 @@ QFrame#card {{ background: #ffffff; border: 1px solid {c['card_border']}; border
 QFrame#card QLabel {{ background: transparent; }}
 QWidget#settingsRoot QLabel#pageTitle {{ font-size: 20px; font-weight: 700; }}
 QWidget#settingsRoot QLabel#cardTitle {{ font-size: 15px; font-weight: 700; }}
+QWidget#settingsRoot QLabel#sectionTitle {{ font-size: 16px; font-weight: 700; color: {c['muted']}; padding-top: 10px; }}
+QPushButton#sectionToggle {{ background: transparent; border: none; text-align: left; font-size: 16px; font-weight: 700; color: {c['muted']}; padding: 10px 0 0 0; }}
+QPushButton#sectionToggle:hover {{ color: {c['accent']}; }}
 QWidget#settingsRoot QLabel#muted {{ color: {c['muted']}; font-size: 12px; }}
 QPushButton {{ background: #ffffff; border: 1px solid {c['line']}; border-radius: {r2}px; padding: 6px 12px; }}
 QPushButton:hover {{ border-color: {c['accent']}; }}
@@ -308,6 +311,14 @@ class Card(QtWidgets.QFrame):
         self.body_layout.setContentsMargins(0, 0, 0, 0)
         self.body_layout.setSpacing(10)
         outer.addWidget(self.body)
+        # rows shown whatever the switch (add_always): their own on/off inside
+        self.foot = QtWidgets.QWidget()
+        self.foot.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.foot_layout = QtWidgets.QVBoxLayout(self.foot)
+        self.foot_layout.setContentsMargins(0, 0, 0, 0)
+        self.foot_layout.setSpacing(10)
+        self.foot.setVisible(False)
+        outer.addWidget(self.foot)
         self._collapse = collapse and switch is not None
 
     def setTitle(self, text):      # (named as a QGroupBox's, which these cards replace)
@@ -335,6 +346,15 @@ class Card(QtWidgets.QFrame):
             self.body_layout.addLayout(widget_or_layout, stretch)
         else:
             self.body_layout.addWidget(widget_or_layout, stretch)
+        return widget_or_layout
+
+    def add_always(self, widget_or_layout):
+        """A row that stays shown while the card's switch is off."""
+        if isinstance(widget_or_layout, QtWidgets.QLayout):
+            self.foot_layout.addLayout(widget_or_layout)
+        else:
+            self.foot_layout.addWidget(widget_or_layout)
+        self.foot.setVisible(True)
         return widget_or_layout
 
     def sync(self):

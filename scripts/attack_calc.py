@@ -11,7 +11,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "attack_table.
 
 CLEAR_TYPES = (
     "clear_1", "clear_2", "clear_3", "clear_4",
-    "tspin_mini", "tspin_single", "tspin_double", "tspin_triple",
+    "tspin_mini", "tspin_mini_double", "tspin_single", "tspin_double", "tspin_triple",
 )
 
 

@@ -1,0 +1,5 @@
+The announcer's lines in this folder (af_heart/, am_adam/) were made with
+Kokoro-82M (https://huggingface.co/hexgrad/Kokoro-82M), a text-to-speech
+model released by hexgrad under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). Made by
+tools/sound/make_announcer.py.

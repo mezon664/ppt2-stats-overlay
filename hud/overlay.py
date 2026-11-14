@@ -2063,6 +2063,10 @@ class HudWindow(QtWidgets.QWidget):
         # the summary over every other part where they overlap (user's request;
         # only a cat popup, raised when it shows, goes over it)
         self.summary.raise_()
+        # the flowing comments over all of them, the result too (user)
+        from challenge import CommentView
+        self.comment_view = CommentView(self, self.challenge)
+        self.comment_view.raise_()
         self.edit_hint.raise_()
         self._hwnd = None
         self._last_geom = None
@@ -2329,7 +2333,10 @@ class HudWindow(QtWidgets.QWidget):
         """縛りプレイ is set, but this PC shows the HUD in screen captures:
         the recognition would read the covers and cats, so they stay off."""
         d = self.display
-        return (d.get("challenge_next", "off") != "off" or d.get("challenge_cats")) and self.reading_unsafe()
+        return ((d.get("challenge_next", "off") != "off" or d.get("challenge_cats") or d.get("challenge_garbage")
+                 or d.get("challenge_bottom_rows") or d.get("challenge_comments", "off") != "off"
+                 or d.get("challenge_dopamine", "off") != "off"
+                 or d.get("challenge_mosaic", "off") != "off") and self.reading_unsafe())
 
     def _place_challenge(self):
         """縛りプレイ (hud/challenge.py): only while a match is being played —
@@ -2339,10 +2346,17 @@ class HudWindow(QtWidgets.QWidget):
         st = getattr(self, "_last_state", None) or {}
         active = (self.display["enabled"] and not self.edit_mode and not self.reading_unsafe()
                   and not (getattr(self, "_follows", False) and getattr(self, "_last_geom", None) is None)
-                  and st.get("match_screen") is True and not st.get("frozen"))
+                  and st.get("match_screen") is True)   # (frozen: the layer keeps only its cats)
         layer = self.challenge
         if layer.geometry() != self.rect():
             layer.setGeometry(self.rect())
+        view = getattr(self, "comment_view", None)
+        if view is not None and view.geometry() != self.rect():
+            view.setGeometry(self.rect())
+        layer.geom = getattr(self, "_last_geom", None)   # (the mosaic grabs the board from the screen)
+        # the comments flow through the set and a little after (off the match screen too)
+        layer.comments_ok = (self.display["enabled"] and not self.edit_mode and not self.reading_unsafe()
+                             and not (getattr(self, "_follows", False) and getattr(self, "_last_geom", None) is None))
         layer.update_state(st, self.display, self._scale or 1.0, active)
 
     def reading_unsafe(self):
@@ -2689,6 +2703,8 @@ class HudWindow(QtWidgets.QWidget):
             cat_w.move(int(x + dx * s), int(CAT_BOTTOM_Y * s - h + dy * s))
             cat_w.setVisible(True)
             cat_w.raise_()
+            if getattr(self, "comment_view", None) is not None:   # (the comments over the cat too)
+                self.comment_view.raise_()
             any_up = True
         if any_up and not self._fade.isActive():
             self._fade.start()
@@ -2997,6 +3013,19 @@ def _hud_note(text):
         pass
 
 
+def _note_challenge_log():
+    """hud/challenge.py's notes (what the announcer said, and why not) into
+    logs/hud.log: a sound heard with nothing done can be looked up there."""
+    import logging
+
+    class ToNote(logging.Handler):
+        def emit(self, record):
+            _hud_note(record.getMessage())
+    lg = logging.getLogger("challenge")
+    lg.setLevel(logging.INFO)
+    lg.addHandler(ToNote())
+
+
 def log_errors():
     """An unhandled Python exception in a paint, timer or signal handler makes
     PyQt6 end the whole app (user: it closed as an opener name came up; Windows
@@ -3025,6 +3054,7 @@ def main():
     from settings_window import SettingsWindow
 
     log_errors()
+    _note_challenge_log()
     settings = load_settings()
     app = QtWidgets.QApplication(sys.argv)
     app.setWindowIcon(make_tray_icon())   # the settings window's title bar and taskbar button

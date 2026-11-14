@@ -21,7 +21,10 @@
   <!-- the 「猫」 opener display: a cat over each player's board holding up the name -->
   <canvas class="cat hidden" id="cat-left"></canvas>
   <canvas class="cat hidden" id="cat-right"></canvas>
+  <!-- 縛りプレイ's flowing comments: over everything, the numbers and the result too (user) -->
+  <canvas id="comments"></canvas>
 <script src="../assets/cat/cat.js"></script>
+<script src="../assets/challenge_cats/clips.js"></script>
 
 <script>
 "use strict";
@@ -1271,10 +1274,30 @@ function drawCat(side, pos, name, u, cat = window.CAT, folder = "cat") {
 // ======================================================================
 const CH_NEXT_X = { left: [447, 517], right: [1052, 1122] };
 const CH_NEXT_TOP = { all: 100, from2: 144, from3: 194, from4: 244, from5: 294 }, CH_NEXT_BOTTOM = 341;
-const CH_CATS_ENABLED = false;   // as challenge.py CATS_ENABLED (not in the release yet; clips.js not loaded)
+const CH_CATS_ENABLED = true;   // as challenge.py CATS_ENABLED
+// the mosaic (scripts/mosaic.py BOARD): the server sends your board, coarse, as state.challenge_mosaic
+// the board's cells (scripts/mosaic.py GRID) and a garbage block's colors (challenge.py)
+const CH_GRID = { left: [198, 103, 429, 563], right: [803, 103, 1034, 563] };
+function challengePaintGarbage(ctx, side, rows, s) {   // as challenge.py paint_garbage
+  const [x1, , x2, y2] = CH_GRID[side], cw = (x2 - x1) / 10, chh = (y2 - CH_GRID[side][1]) / 20;
+  ctx.save();
+  ctx.fillStyle = "rgb(196,198,204)"; ctx.strokeStyle = "rgb(150,152,160)"; ctx.lineWidth = Math.max(1, 1.2 * s);
+  for (let r = 0; r < rows; r++) {
+    const y = y2 - (r + 1) * chh;
+    for (let c = 0; c < 10; c++) {
+      ctx.fillRect((x1 + c * cw + 0.5) * s, (y + 0.5) * s, (cw - 1) * s, (chh - 1) * s);
+      ctx.strokeRect((x1 + c * cw + 0.5) * s, (y + 0.5) * s, (cw - 1) * s, (chh - 1) * s);
+    }
+  }
+  ctx.restore();
+}
+const CH_MOSAIC_BOARD = { left: [198, 92, 429, 563], right: [803, 92, 1034, 563] };
 const CH_SLOT_CENTERS_Y = [119, 169, 219, 269, 319];
 const CH_BOARD = { left: [206, 120, 421, 548], right: [811, 120, 1026, 548] };
+const CH_ANCHORED_SIZE = 1.5, CH_ANCHORED_SHIFT = 0.2, CH_SCREEN_H = 692;   // (challenge.py ANCHORED_SIZE, ANCHORED_SHIFT, SCREEN_H)
 const CH_CAT_SIZE = 2.2, CH_EDGE_X = { left: 0, right: 1232 }, CH_FLOOR_Y = [40, 680], CH_FADE_S = 0.35;
+const CH_COMMENT_FLOW_S = 6.0;   // (comments.FLOW_S)
+const CH_END_FADE_S = 0.3, CH_PLAY_OUT_FADE_S = 0.8, CH_WALK_FADE_S = 0.7;   // (challenge.py END_FADE_S, PLAY_OUT_FADE_S, WALK_FADE_S)
 const CH_OFF_S = 1.5, CH_OFF_SPEEDUP = 3.0, CH_OFF_FADE_S = 0.6, CH_OFF_CYCLE = 8, CH_MAX_CATS = 4;
 
 function challengeSide(d, st) {
@@ -1304,21 +1327,41 @@ function challengeRand(seed) {
   const random = () => challengeMix(`${seed}|${++n}`);
   return { random, uniform: (a, b) => a + (b - a) * random() };
 }
+const CH_RARE_CHANCE = 0.1;
+function challengePick(clips, seed, sent) {   // as challenge.py pick_clip: in turn, now and then a rare one
+  const common = clips.filter((c) => !c.rare), rare = clips.filter((c) => c.rare);
+  const pool = common.length ? common : clips;
+  if (rare.length && challengeMix(seed + "|rare") < CH_RARE_CHANCE) return rare[Math.floor(challengeMix(seed + "|which") * rare.length) % rare.length];
+  // each round: all of them, shuffled anew (as challenge.py pick_clip)
+  const base = seed.slice(0, seed.lastIndexOf("|")), n = pool.length, round = Math.floor(sent / n);
+  const key = (c) => challengeMix(`${base}|${round}|${c.name}`);
+  const order = [...pool].sort((x, y) => key(x) - key(y));
+  return order[sent % n];
+}
 const challengeSeed = (match, side, sent) => `${pyRound((Number(match) || 0) * 10)}|${side}|${sent}`;
 
 let CH_CLIPS = null;
+function challengeCenterX(data) {   // as challenge.py Clip.center_x: the cat's middle across the shown frames
+  const mids = data.frames.slice(data.start, data.end + 1).filter((f) => f.file)
+    .map((f) => (f.cx ?? f.x) + (f.cw ?? f.w ?? 0) / 2).sort((a, b) => a - b);
+  return mids.length ? mids[Math.floor(mids.length / 2)] : (data.span[0] + data.span[2]) / 2;
+}
 function challengeClips() {   // window.CHALLENGE_CATS (assets/challenge_cats/clips.js), as challenge.py Clip
   if (CH_CLIPS) return CH_CLIPS;
   CH_CLIPS = (window.CHALLENGE_CATS || []).map((data) => {
     const frames = data.frames, width = data.size[0];
     const files = frames.map((f, i) => (f.file ? i : -1)).filter((i) => i >= 0);
-    const cut = (f) => (f.x <= 1 ? "l" : f.x + f.w >= width - 1 ? "r" : null);
+    const cut = (f) => {   // (cx / cw: the cat alone, when the picture has glass)
+      const x = f.cx ?? f.x, w = f.cw ?? f.w;
+      return x <= 1 ? "l" : x + w >= width - 1 ? "r" : null;
+    };
     const e = data.end, from = Math.max(data.start, e - CH_OFF_CYCLE + 1), back = Math.max(data.start, e - CH_OFF_CYCLE);
     const offCycle = [];
     for (let i = from; i <= e; i++) offCycle.push(i);
-    return { name: data.name, fps: data.fps, frames, width, span: data.span, start: data.start, end: e,
+    return { name: data.name, fps: data.fps, frames, width, span: data.span, start: data.start, end: e, anchor: data.anchor || null, rare: !!data.rare, mirror: data.mirror !== false, playOut: !!data.play_out,
+             scale: Number(data.scale) || 1, centerX: challengeCenterX(data),
              first: files[0], last: files[files.length - 1], enters: cut(frames[files[0]]), leaves: cut(frames[files[files.length - 1]]),
-             offCycle, offSpeed: (frames[e].x - frames[back].x) / Math.max(1, e - back), images: null };
+             offCycle, offSpeed: ((frames[e].cx ?? frames[e].x) - (frames[back].cx ?? frames[back].x)) / Math.max(1, e - back), images: null };
   }).filter((c) => c.first != null);
   return CH_CLIPS;
 }
@@ -1336,30 +1379,484 @@ function challengeCat(seed, side, now, clip) {   // as challenge.py Cat + Visit 
   const rng = challengeRand(seed);
   const pace = rng.uniform(0.9, 1.1);
   const outer = side === "left" ? "l" : "r";
-  const mirrored = clip.enters ? clip.enters !== outer : rng.random() < 0.5;
+  let mirrored = clip.enters ? clip.enters !== outer : rng.random() < 0.5;
+  if (clip.playOut && clip.leaves) mirrored = clip.leaves !== outer;   // leaves by the screen's edge
+  if (!clip.mirror) mirrored = false;   // words on it (the がんばれ cat): never turned round
   const fadeIn = chFlip(clip.enters, mirrored) !== outer, fadeOut = chFlip(clip.leaves, mirrored) !== outer;
-  const a = fadeIn ? clip.start : clip.first, b = fadeOut ? clip.end : clip.last;
+  // one leaving by the inner side plays to its last whole frame and fades out walking (as challenge.py Visit)
+  const walkOff = false, fadesWalking = fadeOut && clip.leaves != null && !clip.playOut;
+  const a = fadeIn ? clip.start : clip.first, b = fadesWalking ? clip.end : clip.last;
   const [bx1, , bx2] = CH_BOARD[side], [sx1, sy1, sx2, sy2] = clip.span;
-  const k = (bx2 - bx1) / (sx2 - sx1) * CH_CAT_SIZE * rng.uniform(0.9, 1.1);
-  const push = rng.uniform(0, 0.05) * clip.width * k, w = clip.width * k;
-  const x0 = outer === "l" ? CH_EDGE_X[side] - push : CH_EDGE_X[side] + push - w;
-  const floor = rng.uniform(Math.min(CH_FLOOR_Y[1], CH_FLOOR_Y[0] + (sy2 - sy1) * k), CH_FLOOR_Y[1]);
+  const k = (bx2 - bx1) / (sx2 - sx1) * (clip.anchor ? CH_ANCHORED_SIZE : CH_CAT_SIZE) * clip.scale * rng.uniform(0.9, 1.1);
+  const r = rng.uniform(0, 0.05);
+  const push = r * clip.width * k, w = clip.width * k;
+  let x0 = outer === "l" ? CH_EDGE_X[side] - push : CH_EDGE_X[side] + push - w;
+  let floor = rng.uniform(Math.min(CH_FLOOR_Y[1], CH_FLOOR_Y[0] + (sy2 - sy1) * k), CH_FLOOR_Y[1]);
+  if (clip.anchor) {   // kept to the screen's top or bottom, over the board (as challenge.py Visit)
+    const mid = mirrored ? clip.width - clip.centerX : clip.centerX;
+    x0 = (bx1 + bx2) / 2 - mid * k + (r / 0.05 - 0.5) * CH_ANCHORED_SHIFT * (bx2 - bx1);
+    floor = clip.anchor === "bottom" ? CH_SCREEN_H : sy2 * k;
+  }
   const tEnd = now + (b - a + 1) / (clip.fps * pace);
-  return { side, clip, pace, mirrored, fadeIn, fadeOut, a, b, k, x0, floor, t0: now, tEnd, t1: tEnd + (fadeOut ? CH_OFF_S : 0) };
+  return { side, clip, pace, mirrored, fadeIn, fadeOut, walkOff, a, b, k, x0, floor, t0: now, tEnd,
+           fadesWalking, t1: tEnd + (fadesWalking ? 0 : clip.playOut ? CH_PLAY_OUT_FADE_S : fadeOut ? CH_END_FADE_S : 0) };
 }
 function challengeCatAt(cat, now) {   // [frame, extra x (clip px), opacity], or null once it's gone
   if (now >= cat.t1) return null;
   const clip = cat.clip, t = Math.max(0, now - cat.t0);
   let opacity = cat.fadeIn ? Math.min(1, t / CH_FADE_S) : 1;
-  if (now < cat.tEnd) return [Math.min(cat.b, cat.a + int(t * clip.fps * cat.pace)), 0, Math.max(0, opacity)];
-  const m = (now - cat.tEnd) * clip.fps * cat.pace, n = CH_OFF_S * clip.fps * cat.pace;   // going off by the inner side
+  if (cat.fadesWalking) opacity = Math.min(opacity, (cat.tEnd - now) / CH_WALK_FADE_S);   // fading, still walking
+  if (now < cat.tEnd) return [Math.min(cat.b, cat.a + int(t * clip.fps * cat.pace)), 0, clamp01(opacity)];
+  if (!cat.walkOff) return [cat.b, 0, clamp01(Math.min(opacity, (cat.t1 - now) / (clip.playOut ? CH_PLAY_OUT_FADE_S : CH_END_FADE_S)))];   // gone on the spot / played out
+  const m = (now - cat.tEnd) * clip.fps * cat.pace;   // going off by the inner side, at its own pace
   const index = clip.offCycle[int(m) % clip.offCycle.length];
-  const x = clip.frames[clip.end].x + clip.offSpeed * (m + (CH_OFF_SPEEDUP - 1) / 2 * m * m / n);
+  const cx = (f) => f.cx ?? f.x;   // the cat's own place (a clip with glass)
+  const x = cx(clip.frames[clip.end]) + clip.offSpeed * m;
   opacity = Math.min(opacity, (cat.t1 - now) / CH_OFF_FADE_S);
-  return [index, x - clip.frames[index].x, clamp01(opacity)];
+  return [index, x - cx(clip.frames[index]), clamp01(opacity)];
 }
 
-const challenge = { side: "left", cover: null, cats: [], match: undefined, seen: null, sent: 0, ticking: false };
+// ======================================================================
+// 演出強化モード (display.challenge_dopamine): as hud/dopamine.py — the
+// same numbers, steps and draws (keep the two in sync)
+// ======================================================================
+const DOPA_PURPLE = [[196, 75, 255], [255, 91, 225], [150, 120, 255], [255, 255, 255]];
+const DOPA_CYAN = [[59, 232, 255], [74, 123, 255], [140, 255, 250], [255, 255, 255]];
+const DOPA_GOLD = [[255, 225, 74], [255, 91, 208], [91, 255, 176], [90, 200, 255], [255, 255, 255]];
+const DOPA_KINDS = {
+  "T-SPIN Single": ["T-SPIN SINGLE", 1, DOPA_PURPLE], "T-SPIN Double": ["T-SPIN DOUBLE", 2, DOPA_PURPLE],
+  "T-SPIN Triple": ["T-SPIN TRIPLE", 3, DOPA_PURPLE], "T-SPIN Mini Single": ["T-SPIN MINI", 1, DOPA_PURPLE],
+  "T-SPIN Mini Double": ["T-SPIN MINI DOUBLE", 2, DOPA_PURPLE], "TETRIS": ["TETRIS", 2, DOPA_CYAN],
+};
+const DOPA_PC = ["PERFECT CLEAR", 4, DOPA_GOLD], DOPA_MAX_BURSTS = 6;
+const DOPA_LITE_TEXT_K = 0.6, DOPA_LITE_HOLD_S = 0.6, DOPA_LITE_PARTS = 0.3, DOPA_LITE_ROCKETS = 3, DOPA_LITE_TOP = 24;   // (dopamine.py LITE_*)
+const DOPA_MEDAL = [[255, 214, 64], [255, 245, 170], [190, 130, 20]];
+const DOPA_FLASH_S = 0.22, DOPA_FLASH_ALPHA = [0, 0.20, 0.28, 0.36, 0.44, 0.50, 0.56], DOPA_FLASH_GAP_S = 0.34, DOPA_FLASH_COLORS = 3, DOPA_FLASH_CLEAR = 0.42;
+const DOPA_RING_S = 0.55, DOPA_RING_GAP_S = 0.07, DOPA_RAYS = 18, DOPA_RAY_SPIN = 0.7, DOPA_RAY_S = 1.6;
+const DOPA_PARTICLES = [0, 34, 56, 84, 120, 150, 180], DOPA_GRAVITY = 900;
+const DOPA_TEXT_IN_S = 0.16, DOPA_TEXT_HOLD_S = 1.1, DOPA_TEXT_OUT_S = 0.45, DOPA_TEXT_PX = 66;
+const DOPA_CONFETTI = 150, DOPA_CONFETTI_S = 2.8;
+const DOPA_FRAME_S = 1.4, DOPA_FRAME_SEGMENTS = 56, DOPA_FRAME_PX = 12;
+const DOPA_BAND_IN = 0.10, DOPA_BAND_STOP = 0.28, DOPA_BAND_HOLD = 0.95, DOPA_BAND_OUT = 1.15;
+const DOPA_BAND_Y = 470, DOPA_BAND_H = 132, DOPA_BAND_PX = 92;
+const DOPA_BAND_WORDS = [null, "アツい!!", "アツい!!", "激アツ!!", "大当たり!!", "確変突入!!!", "超激アツ!!!"], DOPA_BAND_PC = "FEVER!!!";
+const DOPA_HUE_STEPS = 12, DOPA_BTB_TIER = 5, DOPA_TIER_MAX = 3;   // (dopamine.py HUE_STEPS, BTB_TIER, TIER_MAX)
+const DOPA_REEL_SYMBOLS = ["7", "BAR", "★", "◆", "♥"], DOPA_REEL_SCALE = { BAR: 0.55 };
+const DOPA_REEL_IN = 0.12, DOPA_REEL_STOP = 0.55, DOPA_REEL_GAP = 0.28, DOPA_REEL_SPEED = 16.0, DOPA_REEL_END = 2.2;
+const DOPA_REEL_W = 66, DOPA_REEL_H = 76, DOPA_REEL_PX = 46;
+const DOPA_ATTACK_UP = 0.30, DOPA_ATTACK_FLY = 0.55, DOPA_ATTACK_HIT = 0.35, DOPA_ATTACK_PX = 58;
+const DOPA_PC_S = 3.9, DOPA_PC_DIM = 0.38, DOPA_PC_LETTER_START = 0.30, DOPA_PC_LETTER_GAP = 0.07, DOPA_PC_LETTER_DROP = 0.25;
+const DOPA_ROCKETS = 7, DOPA_ROCKET_START = 0.35, DOPA_ROCKET_GAP = 0.32, DOPA_ROCKET_RISE = 0.5;
+const DOPA_SPARKS = 60, DOPA_SPARK_LIFE = 1.2, DOPA_SPARK_GRAVITY = 240.0, DOPA_SPARK_PX = 8;
+const DOPA_PILLARS = 6, DOPA_PILLAR_S = 1.6, DOPA_MEDALS = 26, DOPA_MEDAL_GRAVITY = 1500, DOPA_MEDAL_S = 2.3;
+function dopaKind(e) {
+  if (!e || typeof e !== "object") return null;
+  if (e.perfect_clear) return DOPA_PC;
+  const label = String(e.label || "");
+  if (DOPA_KINDS[label]) return DOPA_KINDS[label];
+  return label.includes("TETRIS") ? DOPA_KINDS.TETRIS : null;
+}
+const dopaEaseOut = (t) => 1 - (1 - t) ** 3;
+const dopaEaseBack = (t) => { const c = 1.9; return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2; };
+function dopaHue(h, sat = 1.0, light = 0.55) {   // as dopamine.py hue
+  h = ((h % 1) + 1) % 1;
+  const c = (1 - Math.abs(2 * light - 1)) * sat, x = c * (1 - Math.abs((h * 6) % 2 - 1)), m = light - c / 2;
+  const [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.trunc(h * 6) % 6];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+function dopaBurst(seed, side, t0, e, level, b2b, chain) {   // as dopamine.py Burst (the same draws, in the same order)
+  const [title, power0, pal] = dopaKind(e);
+  const b = { seed, side, t0, level, title, pal, pc: pal === DOPA_GOLD, max: level === "max", lite: level === "lite", chain,
+    eventT: Number(Number(e.t).toFixed(3)) };
+  const btb = !!e.btb && b2b >= 1;
+  b.tier = btb && !b.lite ? Math.min(DOPA_TIER_MAX, Math.floor(b2b / DOPA_BTB_TIER)) : 0;
+  b.milestone = btb && b2b >= DOPA_BTB_TIER && b2b % DOPA_BTB_TIER === 0 && !b.lite;
+  const boost = 1 + 0.5 * b.tier;
+  b.power = b.lite ? power0 : Math.min(6, power0 + (b.max ? 1 : 0) + (b2b >= 3 ? 1 : 0) + Math.min(2, b.tier));
+  const subs = [];
+  if (e.btb && b2b >= 1) subs.push(`BACK-TO-BACK x${b2b}`);
+  const ren = Number(e.ren_count) || 0;
+  if (ren >= 2) subs.push(`${ren} REN`);
+  b.sub = subs.join("   ");
+  const [x1, y1, x2, y2] = CH_BOARD[side];
+  b.cx = (x1 + x2) / 2; b.cy = (y1 + y2) / 2;
+  // (as dopamine.py: 普通 starts at the board's top edge, the rows you play in left clear)
+  b.ty = b.lite ? y1 + DOPA_LITE_TOP : b.cy - 70;
+  b.oy = b.lite ? y1 + DOPA_LITE_TOP : b.cy;
+  b.ay = b.lite ? y1 + DOPA_LITE_TOP + 44 : b.cy + 40;
+  const rng = challengeRand(seed);
+  const n = Math.trunc(DOPA_PARTICLES[b.power] * (b.lite ? DOPA_LITE_PARTS : (b.max ? 2.0 : 1.0)) * boost);
+  b.parts = [];
+  for (let i = 0; i < n; i++) {
+    const a = rng.uniform(0, 2 * Math.PI), speed = rng.uniform(260, 560 + 70 * b.power);
+    const vx = Math.cos(a) * speed, vy = Math.sin(a) * speed - rng.uniform(80, 260);
+    const life = rng.uniform(0.7, 1.2 + 0.1 * b.power), size = rng.uniform(5, 9 + b.power);
+    const ci = Math.trunc(rng.random() * pal.length), star = rng.random() < 0.35;
+    const rot0 = rng.uniform(0, 360), spin = rng.uniform(-720, 720);
+    b.parts.push([vx, vy, life, size, ci, star, rot0, spin]);
+  }
+  b.confetti = [];
+  b.confettiPal = b.milestone ? DOPA_GOLD : pal;
+  if (b.pc || b.milestone) for (let i = 0; i < Math.trunc(DOPA_CONFETTI * (b.lite ? 0.4 : (b.max ? 1.6 : 1.0))); i++) {
+    const x0 = rng.uniform(0, 1232), y0 = rng.uniform(-260, -10), fall = rng.uniform(180, 420);
+    const hz = rng.uniform(0.5, 2.0), sway = rng.uniform(20, 60), ci = Math.trunc(rng.random() * b.confettiPal.length);
+    const rot0 = rng.uniform(0, 360), spin = rng.uniform(-540, 540), size = rng.uniform(6, 12);
+    b.confetti.push([x0, y0, fall, hz, sway, ci, rot0, spin, size]);
+  }
+  b.shake = [rng.uniform(0, 6.28), rng.uniform(0, 6.28)];
+  const big = (b.power >= (b.max ? 2 : 4) || b.tier >= 1) && !b.lite;
+  b.flashes = b.lite ? 0 : (b.milestone ? DOPA_FLASH_COLORS : Math.min(DOPA_FLASH_COLORS, Math.max(1, b.power - (b.max ? 1 : 2))));
+  b.frame = (b.power >= (b.max ? 1 : 3) || b.tier >= 1) && !b.lite;
+  b.framePx = DOPA_FRAME_PX * (b.max ? 1.4 : 1.0) * (1 + 0.35 * b.tier);
+  b.textK = 1 + 0.1 * b.tier + (b.milestone ? 0.1 : 0);
+  b.band = null;
+  if (big) {
+    let word = b.pc ? DOPA_BAND_PC : DOPA_BAND_WORDS[b.power];
+    if (chain >= 3 && rng.random() < 0.5 && !b.pc) word = `${chain}連チャン!!`;   // (a PC: always FEVER)
+    if (b.milestone) word = b2b < 2 * DOPA_BTB_TIER ? `BtB${b2b}連!!` : `BtB${b2b}突破!!!`;
+    b.band = word;
+  }
+  b.pillars = [];
+  if (big) for (let i = 0; i < DOPA_PILLARS; i++) {
+    const x = rng.uniform(0.05, 0.95) * 1232, h0 = rng.uniform(0, 1), rate = rng.uniform(0.6, 1.4);
+    b.pillars.push([x, h0, rate]);
+  }
+  b.medals = [];
+  if (big) for (let i = 0; i < Math.trunc(DOPA_MEDALS * Math.max(1, b.power - 2) * (b.max ? 1.5 : 1.0) * boost); i++) {
+    const x0 = b.cx + rng.uniform(-170, 170), vx = rng.uniform(-320, 320), vy = -rng.uniform(800, 1250);
+    const delay = rng.uniform(0, 0.35), size = rng.uniform(9, 15), spin = rng.uniform(4, 11), phase = rng.uniform(0, 6.28);
+    b.medals.push([x0, vx, vy, delay, size, spin, phase]);
+  }
+  b.reels = null;   // the slot reels (with the band): what they land on
+  if (b.band) b.reels = (b.pc || b.milestone) ? 0 : (b.tier >= 1 || b.power >= 5 ? 2 : 1);
+  b.lines = Number(e.lines) || 0;   // the lines sent, flying over to the other board
+  const [ox1, oy1, ox2, oy2] = CH_BOARD[side === "left" ? "right" : "left"];
+  b.target = [(ox1 + ox2) / 2, (oy1 + oy2) / 2];
+  b.rockets = [];   // a PERFECT CLEAR: fireworks
+  if (b.pc) {
+    for (let i = 0; i < (b.lite ? DOPA_LITE_ROCKETS : DOPA_ROCKETS); i++) {
+      const launch = DOPA_ROCKET_START + DOPA_ROCKET_GAP * i, x = rng.uniform(0.12, 0.88) * 1232, peak = rng.uniform(70, 230), h0 = rng.random();
+      const sparks = [];
+      for (let k = 0; k < DOPA_SPARKS; k++) { const ang = 2 * Math.PI * k / DOPA_SPARKS + rng.uniform(-0.05, 0.05); sparks.push([ang, rng.uniform(170, 360)]); }
+      b.rockets.push([launch, x, peak, h0, sparks]);
+    }
+    b.flashes = 0;   // (dimmed instead: its own show)
+  }
+  b.hold = b.lite ? DOPA_LITE_HOLD_S : DOPA_TEXT_HOLD_S;
+  b.duration = Math.max(DOPA_TEXT_IN_S + b.hold + DOPA_TEXT_OUT_S, b.confetti.length ? DOPA_CONFETTI_S : 0,
+    b.reels !== null ? DOPA_REEL_END : 0, b.pc ? DOPA_PC_S : 0, b.lines ? DOPA_ATTACK_UP + DOPA_ATTACK_FLY + DOPA_ATTACK_HIT : 0,
+    b.medals.length ? DOPA_MEDAL_S : 0, b.frame ? DOPA_FRAME_S + 0.2 * b.power : 0);
+  return b;
+}
+function dopaOps(b, now) {   // as Burst.ops (back to front)
+  const t = now - b.t0, out = [];
+  if (t < 0 || t >= b.duration) return out;
+  const p = b.power, pal = b.pal;
+  if (b.pc && t < 1.3 && !b.lite) out.push(["dim", DOPA_PC_DIM * Math.min(1, t / 0.15) * (t < 0.5 ? 1 : Math.max(0, 1 - (t - 0.5) / 0.8))]);
+  const tints = [pal[0], DOPA_MEDAL[0], pal[1]];
+  for (let i = 0; i < b.flashes; i++) {
+    const u = t - i * DOPA_FLASH_GAP_S;
+    if (u >= 0 && u < DOPA_FLASH_S) {
+      const a = DOPA_FLASH_ALPHA[p] * (b.max ? 1.3 : 1.0) * 0.8 ** i * (1 - u / DOPA_FLASH_S) ** 2, c = tints[i];
+      out.push(["flash", [Math.trunc((255 + c[0]) / 2), Math.trunc((255 + c[1]) / 2), Math.trunc((255 + c[2]) / 2)], a]);
+    }
+  }
+  if (b.pillars.length && t < DOPA_PILLAR_S) {
+    const a = 0.20 * Math.min(1, t / 0.15) * (1 - t / DOPA_PILLAR_S);
+    for (const [x, h0, rate] of b.pillars) out.push(["pillar", x, 692 + 10, 900, 70, Math.sin(t * 2.4 * rate + h0 * 6.28) * 0.45, dopaHue(h0 + t * 0.8), a]);
+  }
+  if (p >= 3 && t < DOPA_RAY_S && !b.lite) {
+    const a = (b.max ? 0.30 : 0.24) * Math.min(1, t / 0.1) * (1 - t / DOPA_RAY_S);
+    out.push(["rays", b.cx, b.cy - 40, 620, DOPA_RAYS, t * DOPA_RAY_SPIN * 2 * Math.PI / DOPA_RAYS, b.max ? dopaHue(t * 0.6) : pal[1], a]);
+  }
+  for (let i = 0; i < (b.lite ? 0 : Math.min(5, p + 1)); i++) {
+    const u = (t - i * DOPA_RING_GAP_S) / DOPA_RING_S;
+    if (u >= 0 && u < 1) out.push(["ring", b.cx, b.cy, 24 + (300 + 60 * p) * dopaEaseOut(u) * (b.lite ? 0.6 : 1.0),
+      b.lite ? 2 + 8 * (1 - u) : 3 + 16 * (1 - u), b.max ? dopaHue(i / 5 + t) : pal[i % pal.length], (b.lite ? 0.55 : 0.85) * (1 - u)]);
+  }
+  for (const [vx, vy, life, size, ci, star, rot0, spin] of b.parts) {
+    if (t >= life) continue;
+    const k = (1 - Math.exp(-3.2 * t)) / 3.2;
+    const x = b.cx + vx * k, y = b.oy + vy * k + 0.5 * DOPA_GRAVITY * 0.55 * t * t, a = 1 - (t / life) ** 2;
+    out.push([star ? "star" : "block", x, y, size * (star ? 1.3 : 1.0), rot0 + spin * t, pal[ci], a]);
+  }
+  for (const [x0, vx, vy, delay, size, spin, phase] of b.medals) {
+    const u = t - delay;
+    if (u < 0) continue;
+    const y = 692 + 20 + vy * u + 0.5 * DOPA_MEDAL_GRAVITY * u * u;
+    if (y > 692 + 40 && u > 0.2) continue;
+    out.push(["medal", x0 + vx * u, y, size, Math.abs(Math.cos(phase + spin * u)), Math.min(1, (DOPA_MEDAL_S - t) / 0.4)]);
+  }
+  for (const [x0, y0, fall, hz, sway, ci, rot0, spin, size] of b.confetti) {
+    const y = y0 + fall * t;
+    if (y > 692 + 20) continue;
+    const cp = b.confettiPal, c = b.max ? dopaHue(ci / cp.length + t * 0.5) : cp[ci];
+    out.push(["confetti", x0 + sway * Math.sin(hz * 2 * Math.PI * t + x0), y, size, rot0 + spin * t, c, Math.min(1, (DOPA_CONFETTI_S - t) / 0.6)]);
+  }
+  if (b.pc) dopaPcLetters(b, t, out);
+  if (!b.pc && t < DOPA_TEXT_IN_S + b.hold + DOPA_TEXT_OUT_S) {
+    let scale, a;
+    if (t < DOPA_TEXT_IN_S) { scale = b.lite ? 1.6 - 0.6 * dopaEaseBack(t / DOPA_TEXT_IN_S) : 2.6 - 1.6 * dopaEaseBack(t / DOPA_TEXT_IN_S); a = Math.min(1, t / (DOPA_TEXT_IN_S * 0.5)); }
+    else {
+      scale = 1 + (b.lite ? 0 : 0.05) * Math.sin((t - DOPA_TEXT_IN_S) * 9) * Math.max(0, 1 - (t - DOPA_TEXT_IN_S) / 0.6);
+      a = 1 - Math.max(0, (t - DOPA_TEXT_IN_S - b.hold) / DOPA_TEXT_OUT_S);
+    }
+    const amp = b.lite ? 0 : 4 * p * Math.max(0, 1 - t / 0.45);
+    const dx = amp * Math.sin(t * 61 + b.shake[0]), dy = amp * Math.sin(t * 53 + b.shake[1]);
+    const px = DOPA_TEXT_PX * (b.pc ? 1.15 : 1.0) * (b.title.length > 14 ? 0.85 : 1.0) * b.textK * (b.lite ? DOPA_LITE_TEXT_K : 1.0);
+    const step = Math.round(t * 0.9 * DOPA_HUE_STEPS) / DOPA_HUE_STEPS;   // (in steps, as dopamine.py)
+    const colors = b.max ? [dopaHue(step), dopaHue(step + 0.33)] : [pal[0], pal[1]];
+    out.push(["text", b.title, b.cx + dx, b.ty + dy, px, scale, colors, a]);
+    const subs = [b.sub, b.chain >= 2 && !b.lite ? `${b.chain}連チャン` : ""].filter((x) => x);
+    if (subs.length && t >= DOPA_TEXT_IN_S * 0.6) out.push(["text", subs.join("   "), b.cx - dx * 0.5, b.ty + px * 0.95, px * 0.42, 1.0, colors, a]);
+  }
+  if (b.band && t >= DOPA_BAND_IN && t < DOPA_BAND_OUT) {
+    let slide;
+    if (t < DOPA_BAND_STOP) slide = (1 - dopaEaseOut((t - DOPA_BAND_IN) / (DOPA_BAND_STOP - DOPA_BAND_IN))) * 1232;
+    else if (t < DOPA_BAND_HOLD) slide = -40 * (t - DOPA_BAND_STOP) / (DOPA_BAND_HOLD - DOPA_BAND_STOP);
+    else slide = -40 - (1232 + 200) * ((t - DOPA_BAND_HOLD) / (DOPA_BAND_OUT - DOPA_BAND_HOLD)) ** 2;
+    const pop = 1 + 0.12 * Math.max(0, 1 - Math.abs(t - DOPA_BAND_STOP) / 0.12);
+    out.push(["band", slide, DOPA_BAND_Y, DOPA_BAND_H, b.band, DOPA_BAND_PX, t * 600, dopaHue(Math.round(t * 1.2 * DOPA_HUE_STEPS) / DOPA_HUE_STEPS), pop]);
+  }
+  if (b.reels !== null && t >= DOPA_REEL_IN && t < DOPA_REEL_END) {   // the slot reels, stopping one by one on the triple
+    const positions = [];
+    for (let i = 0; i < 3; i++) {
+      const stop = DOPA_REEL_STOP + DOPA_REEL_GAP * i;
+      if (t < stop) positions.push(b.reels - DOPA_REEL_SPEED * (stop - t));
+      else { const u = t - stop; positions.push(b.reels + 0.18 * Math.sin(u * 30) * Math.exp(-u * 9)); }
+    }
+    const done = t - (DOPA_REEL_STOP + 2 * DOPA_REEL_GAP), glow = done < 0 ? 0 : 0.5 + 0.5 * Math.sin(done * 14);
+    out.push(["reels", b.cx, b.cy - 158, positions, glow, Math.min(1, (t - DOPA_REEL_IN) / 0.12) * Math.min(1, (DOPA_REEL_END - t) / 0.3)]);
+  }
+  if (b.lines) {   // "+N": the lines sent pop up, fly over to the other board, land there
+    const u = t - DOPA_ATTACK_UP, text = `+${b.lines}`, [tx0, ty0] = b.target;
+    const at = (k) => [b.cx + (tx0 - b.cx) * k, b.ay + (ty0 - b.ay) * k - 160 * Math.sin(Math.PI * k)];
+    if (t < DOPA_ATTACK_UP) out.push(["attack", text, b.cx, b.ay, 0.4 + 1.0 * dopaEaseBack(t / DOPA_ATTACK_UP), 1]);
+    else if (u < DOPA_ATTACK_FLY) {
+      const k = (u / DOPA_ATTACK_FLY) ** 1.6, [x, y] = at(k);
+      out.push(["attack", text, x, y, 1.4 - 0.4 * k, 1]);
+      for (let j = 1; j < 6; j++) { const [sx, sy] = at(Math.max(0, k - 0.05 * j)); out.push(["spark", sx, sy, 9 - j, DOPA_MEDAL[0], 0.8 - 0.13 * j]); }
+    } else if (u < DOPA_ATTACK_FLY + DOPA_ATTACK_HIT) {
+      const v = (u - DOPA_ATTACK_FLY) / DOPA_ATTACK_HIT;
+      out.push(["attack", text, tx0, ty0, 1 + 0.6 * v, 1 - v]);
+      out.push(["ring", tx0, ty0, 20 + 120 * dopaEaseOut(v), 10 * (1 - v) + 2, DOPA_MEDAL[0], 0.9 * (1 - v)]);
+    }
+  }
+  for (const [launch, x, peak, h0, sparks] of b.rockets) {   // a PERFECT CLEAR: fireworks all over
+    const u = t - launch;
+    if (u < 0) continue;
+    if (u < DOPA_ROCKET_RISE) {
+      const y = 692 + 10 - (692 + 10 - peak) * dopaEaseOut(u / DOPA_ROCKET_RISE);
+      out.push(["spark", x, y, 6, [255, 240, 200], 1]);
+      for (let j = 1; j < 5; j++) out.push(["spark", x, y + 14 * j, 5 - j, [255, 200, 120], 0.7 - 0.15 * j]);
+    } else {
+      const v = u - DOPA_ROCKET_RISE;
+      if (v >= DOPA_SPARK_LIFE) continue;
+      const a = 1 - (v / DOPA_SPARK_LIFE) ** 2, c = dopaHue(h0), k = (1 - Math.exp(-2.5 * v)) / 2.5;
+      for (const [ang, speed] of sparks) out.push(["spark", x + Math.cos(ang) * speed * k, peak + Math.sin(ang) * speed * k + 0.5 * DOPA_SPARK_GRAVITY * v * v, DOPA_SPARK_PX, c, a]);
+    }
+  }
+  if (b.frame && t < DOPA_FRAME_S + 0.2 * p) {
+    const end = DOPA_FRAME_S + 0.2 * p;
+    out.push(["frame", t * 1.6 * (1 + 0.5 * b.tier), Math.min(1, t / 0.08) * Math.min(1, (end - t) / 0.4), b.framePx]);
+  }
+  return out;
+}
+function dopaPcLetters(b, t, out) {   // as Burst._pc_letters: P-E-R-F-E-C-T C-L-E-A-R dropping in one at a time
+  const px = DOPA_TEXT_PX * 1.25 * (b.lite ? DOPA_LITE_TEXT_K : 1.0), adv = px * 0.80, n = b.title.length, width = adv * n;
+  const left = Math.min(Math.max(b.cx - width / 2, 10), 1232 - 10 - width), end = DOPA_PC_S - 0.9;
+  const step = Math.round(t * 0.9 * DOPA_HUE_STEPS) / DOPA_HUE_STEPS;
+  for (let i = 0; i < n; i++) {
+    const ch = b.title[i];
+    if (ch === " ") continue;
+    const u = t - (DOPA_PC_LETTER_START + DOPA_PC_LETTER_GAP * i);
+    if (u < 0) continue;
+    const drop = Math.min(1, u / DOPA_PC_LETTER_DROP), y = b.ty - 220 * (1 - dopaEaseBack(drop));
+    const a = Math.min(1, drop * 3) * (t < end ? 1 : Math.max(0, 1 - (t - end) / 0.5));
+    out.push(["text", ch, left + adv * (i + 0.5), y, px, 1.0, [dopaHue(step + i / n), dopaHue(step + i / n + 0.33)], a]);
+  }
+  if (b.sub && t >= DOPA_PC_LETTER_START + 0.5) {
+    const a = Math.min(1, (t - DOPA_PC_LETTER_START - 0.5) / 0.2) * (t < end ? 1 : Math.max(0, 1 - (t - end) / 0.5));
+    out.push(["text", b.sub, b.cx, b.ty + px * 0.9, px * 0.38, 1.0, [DOPA_MEDAL[0], [255, 140, 0]], a]);
+  }
+}
+function dopaReels(ctx, x, y, positions, glow, a, s) {   // as dopamine.py _paint_reels
+  const n = DOPA_REEL_SYMBOLS.length, total = 3 * DOPA_REEL_W + 2 * 8, left = Math.min(Math.max(x - total / 2, 8), 1232 - 8 - total);
+  ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, a));
+  const cx0 = (left - 10) * s, cy0 = (y - DOPA_REEL_H / 2 - 10) * s, cw = (total + 20) * s, chh = (DOPA_REEL_H + 20) * s;
+  roundRectPath(ctx, cx0, cy0, cw, chh, 10 * s); ctx.fillStyle = "rgba(30,0,10,0.92)"; ctx.fill();
+  ctx.strokeStyle = rgba(DOPA_MEDAL[0], 1); ctx.lineWidth = 4 * s; ctx.stroke();
+  positions.forEach((pos, i) => {
+    const bx = (left + i * (DOPA_REEL_W + 8)) * s, by = (y - DOPA_REEL_H / 2) * s, bw = DOPA_REEL_W * s, bh = DOPA_REEL_H * s;
+    const g = ctx.createLinearGradient(0, by, 0, by + bh);
+    g.addColorStop(0, "rgb(150,150,150)"); g.addColorStop(0.5, "#fff"); g.addColorStop(1, "rgb(150,150,150)");
+    ctx.fillStyle = g; ctx.fillRect(bx, by, bw, bh);
+    ctx.save(); ctx.beginPath(); ctx.rect(bx, by, bw, bh); ctx.clip();
+    const base = Math.floor(pos), frac = pos - base;
+    for (const k of [-1, 0, 1]) {
+      const sym = DOPA_REEL_SYMBOLS[(((base + k) % n) + n) % n];
+      const color = sym === "7" ? [220, 0, 30] : (sym === "BAR" ? [40, 40, 200] : [230, 150, 0]);
+      dopaText(ctx, sym, `italic 900 ${Math.max(4, Math.trunc(DOPA_REEL_PX * s))}px "Arial Black", ${FONT_CSS}`, bx + bw / 2,
+        (y + (k - frac) * DOPA_REEL_H * 0.9) * s, DOPA_REEL_SCALE[sym] || 1.0, [[0, color], [1, color]], [255, 255, 255], [20, 20, 20], 3, s, 1e9);
+    }
+    ctx.restore();
+  });
+  if (glow > 0) { roundRectPath(ctx, cx0 - 4 * s, cy0 - 4 * s, cw + 8 * s, chh + 8 * s, 13 * s); ctx.strokeStyle = rgba(DOPA_MEDAL[1], glow); ctx.lineWidth = 7 * s; ctx.stroke(); }
+  ctx.restore();
+}
+function dopaText(ctx, text, font, x, y, scale, fill, glow, outline, outlineW, s, width) {   // as dopamine.py _outlined_text
+  ctx.save();
+  ctx.font = font; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+  const half = ctx.measureText(text).width / 2 * scale + 8 * s;
+  const cx = width > 2 * half ? Math.min(Math.max(x, half), width - half) : x;
+  ctx.translate(cx, y); ctx.scale(scale, scale);
+  for (const [w, al] of [[22, 40], [14, 70], [8, 120]]) { ctx.lineWidth = w * s; ctx.strokeStyle = rgba(glow, al / 255); ctx.strokeText(text, 0, 0); }
+  ctx.lineWidth = outlineW * s; ctx.strokeStyle = rgba(outline, 1); ctx.strokeText(text, 0, 0);
+  const m = ctx.measureText(text), up = m.actualBoundingBoxAscent || 30, down = m.actualBoundingBoxDescent || 10;
+  const g = ctx.createLinearGradient(0, -up, 0, down);
+  for (const [stop, c] of fill) g.addColorStop(stop, rgba(c, 1));
+  ctx.fillStyle = g; ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+function dopaPaint(ctx, b, s, now) {   // as dopamine.py paint
+  const W = 1232 * s, H = 692 * s;
+  for (const op of dopaOps(b, now)) {
+    const kind = op[0];
+    if (kind === "flash") {   // round the edges only: the middle (the game) stays clear
+      const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.hypot(W, H) / 2);
+      g.addColorStop(0, rgba(op[1], 0)); g.addColorStop(DOPA_FLASH_CLEAR, rgba(op[1], 0)); g.addColorStop(1, rgba(op[1], op[2]));
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    } else if (kind === "dim") { ctx.fillStyle = `rgba(0,0,0,${op[1]})`; ctx.fillRect(0, 0, W, H); }
+    else if (kind === "spark") {
+      const [, x, y, size, c, a] = op;
+      if (a > 0) { const h = Math.max(1, size * s / 2); ctx.fillStyle = rgba(c, a); ctx.fillRect(x * s - h, y * s - h, 2 * h, 2 * h); }
+    } else if (kind === "attack") {
+      const [, text, x, y, scale, a] = op;
+      if (a > 0) {
+        ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, a));
+        dopaText(ctx, text, `italic 900 ${Math.max(4, Math.trunc(DOPA_ATTACK_PX * s))}px "Arial Black", ${FONT_CSS}`, x * s, y * s, scale,
+          [[0, [255, 255, 255]], [0.5, DOPA_MEDAL[0]], [1, [255, 120, 0]]], [255, 160, 0], [60, 20, 0], 4, s, W);
+        ctx.restore();
+      }
+    } else if (kind === "reels") { const [, x, y, positions, glow, a] = op; dopaReels(ctx, x, y, positions, glow, a, s); }
+    else if (kind === "pillar") {
+      const [, x, y, length, w, angle, c, a] = op;
+      ctx.save(); ctx.translate(x * s, y * s); ctx.rotate(angle);
+      const g = ctx.createLinearGradient(0, 0, 0, -length * s);
+      g.addColorStop(0, rgba(c, a)); g.addColorStop(1, rgba(c, 0));
+      ctx.fillStyle = g; ctx.beginPath();
+      ctx.moveTo(-w * s * 0.15, 0); ctx.lineTo(w * s * 0.15, 0); ctx.lineTo(w * s, -length * s); ctx.lineTo(-w * s, -length * s); ctx.closePath();
+      ctx.fill(); ctx.restore();
+    } else if (kind === "rays") {
+      const [, x, y, r, n, turn, c, a] = op, half = Math.PI / n / 2;
+      ctx.save(); ctx.translate(x * s, y * s); ctx.rotate(turn);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r * s);
+      g.addColorStop(0, rgba(c, a)); g.addColorStop(1, rgba(c, 0));
+      ctx.fillStyle = g; ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a0 = 2 * Math.PI * i / n;
+        ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a0 - half) * r * s, Math.sin(a0 - half) * r * s);
+        ctx.lineTo(Math.cos(a0 + half) * r * s, Math.sin(a0 + half) * r * s); ctx.closePath();
+      }
+      ctx.fill(); ctx.restore();
+    } else if (kind === "ring") {
+      const [, x, y, r, w, c, a] = op;
+      ctx.strokeStyle = rgba(c, a); ctx.lineWidth = w * s;
+      ctx.beginPath(); ctx.arc(x * s, y * s, r * s, 0, 2 * Math.PI); ctx.stroke();
+    } else if (kind === "block" || kind === "confetti") {
+      const [, x, y, size, rot, c, a] = op;
+      ctx.save(); ctx.translate(x * s, y * s); ctx.rotate(rot * Math.PI / 180);
+      ctx.fillStyle = rgba(c, a);
+      if (kind === "block") {
+        const h = size * s / 2;
+        ctx.fillRect(-h, -h, 2 * h, 2 * h);
+        ctx.fillStyle = rgba([255, 255, 255], 110 / 255 * a); ctx.fillRect(-h, -h, 2 * h, h * 0.6);
+      } else ctx.fillRect(-size * s / 2, -size * s / 4, size * s, size * s / 2);
+      ctx.restore();
+    } else if (kind === "star") {
+      const [, x, y, size, rot, c, a] = op, r = size * s, w = size * s * 0.22;
+      ctx.save(); ctx.translate(x * s, y * s); ctx.rotate(rot * Math.PI / 180);
+      ctx.fillStyle = rgba([255, 255, 255], a); ctx.beginPath();
+      ctx.moveTo(0, -r); ctx.lineTo(w, -w); ctx.lineTo(r, 0); ctx.lineTo(w, w); ctx.lineTo(0, r);
+      ctx.lineTo(-w, w); ctx.lineTo(-r, 0); ctx.lineTo(-w, -w); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = rgba(c, 200 / 255 * a); ctx.beginPath(); ctx.arc(0, 0, w, 0, 2 * Math.PI); ctx.fill();
+      ctx.restore();
+    } else if (kind === "medal") {
+      const [, x, y, size, turn, a] = op, rx = Math.max(0.15, turn) * size * s, ry = size * s;
+      ctx.save(); ctx.translate(x * s, y * s);
+      ctx.fillStyle = rgba(DOPA_MEDAL[0], a); ctx.strokeStyle = rgba(DOPA_MEDAL[2], a); ctx.lineWidth = Math.max(1, 1.6 * s);
+      ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = rgba(DOPA_MEDAL[1], a); ctx.beginPath(); ctx.ellipse(-rx * 0.3, -ry * 0.35, rx * 0.35, ry * 0.3, 0, 0, 2 * Math.PI); ctx.fill();
+      ctx.restore();
+    } else if (kind === "text") {
+      const [, text, x, y, px, scale, colors, a] = op;
+      if (a <= 0) continue;
+      ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      dopaText(ctx, text, `italic 900 ${Math.max(4, Math.trunc(px * s))}px "Arial Black", ${FONT_CSS}`, x * s, y * s, scale,
+        [[0, [255, 255, 255]], [0.45, colors[0]], [1, colors[1]]], colors[0], [20, 10, 40], 4, s, W);
+      ctx.restore();
+    } else if (kind === "band") {
+      const [, slide, y, h, word, px, stripe, glow, pop] = op;
+      const top = (y - h / 2) * s, bottom = (y + h / 2) * s, skew = 40 * s;
+      ctx.save(); ctx.translate(slide * s, 0);
+      ctx.beginPath(); ctx.moveTo(-60 * s + skew, top); ctx.lineTo(W + 60 * s + skew, top); ctx.lineTo(W + 60 * s - skew, bottom); ctx.lineTo(-60 * s - skew, bottom); ctx.closePath();
+      const g = ctx.createLinearGradient(0, top, 0, bottom);
+      g.addColorStop(0, "rgba(40,0,10,0.92)"); g.addColorStop(0.5, "rgba(150,0,30,0.92)"); g.addColorStop(1, "rgba(40,0,10,0.92)");
+      ctx.fillStyle = g; ctx.fill();
+      ctx.save(); ctx.clip();
+      ctx.fillStyle = "rgba(255,255,255,0.11)";
+      const step = 46 * s, off = ((stripe * s) % step + step) % step;
+      for (let x = -2 * step + off - 60 * s; x < W + 120 * s; x += step) {
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x + step * 0.5, top); ctx.lineTo(x + step * 0.5 - 2 * skew, bottom); ctx.lineTo(x - 2 * skew, bottom); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      ctx.strokeStyle = rgba(DOPA_MEDAL[0], 1); ctx.lineWidth = 5 * s;
+      ctx.beginPath(); ctx.moveTo(-60 * s + skew, top); ctx.lineTo(W + 60 * s + skew, top); ctx.moveTo(-60 * s - skew, bottom); ctx.lineTo(W + 60 * s - skew, bottom); ctx.stroke();
+      dopaText(ctx, word, `italic 900 ${Math.max(4, Math.trunc(px * s))}px "Yu Gothic UI", ${FONT_CSS}`, W / 2, y * s, pop,
+        [[0, [255, 255, 255]], [0.35, DOPA_MEDAL[0]], [0.7, [255, 140, 0]], [1, [255, 60, 0]]], glow, [90, 0, 0], 6, s, 1e9);
+      ctx.restore();
+    } else if (kind === "frame") {
+      const [, phase, a, px] = op, n = DOPA_FRAME_SEGMENTS, per = 2 * (W + H), w = px * s;
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = rgba(dopaHue(i / n + phase), a * (0.55 + 0.45 * (Math.sin(i * 1.7 + phase * 12) > 0 ? 1 : 0)));
+        const d0 = per * i / n, d1 = per * (i + 0.8) / n;
+        for (const [e0, e1, make] of [[0, W, (a, b) => [a, 0, b - a, w]], [W, W + H, (a, b) => [W - w, a - W, w, b - a]],
+          [W + H, 2 * W + H, (a, b) => [2 * W + H - b, H - w, b - a, w]], [2 * W + H, 2 * (W + H), (a, b) => [0, 2 * (W + H) - b, w, b - a]]]) {
+          const lo = Math.max(d0, e0), hi = Math.min(d1, e1);
+          if (lo < hi) ctx.fillRect(...make(lo, hi));
+        }
+      }
+    }
+  }
+}
+function dopaUpdate(st, d, side, playing, now) {   // as challenge.py ChallengeLayer._take_bursts
+  const ch = challenge, level = d.challenge_dopamine || "off";
+  if (!(level === "lite" || level === "on" || level === "max") || d.enabled === false || d.show_on_obs === false) { ch.bursts = []; ch.burstSeen = null; return; }
+  ch.bursts = ch.bursts.filter((b) => now - b.t0 < b.duration);
+  const player = st[side] || {};
+  const log = (player.event_log || []).filter((e) => e && typeof e === "object" && e.t != null);
+  // each entry known by what it is, not by being newer than the top one (as challenge.py event_key)
+  const ek = (e) => `${Number(e.t).toFixed(3)}|${e.label || ""}|${!!e.perfect_clear}`;
+  const keys = new Set(log.map(ek)), match = st.match_start_t ?? null, key = `${match}|${side}`;
+  if (!ch.burstSeen || ch.burstSeen[0] !== key) { ch.burstSeen = [key, keys]; ch.burstChain = 0; return; }
+  const seen = ch.burstSeen[1];
+  const fresh = log.filter((e) => !seen.has(ek(e)));
+  ch.burstSeen = [key, keys];
+  if (!playing) return;
+  // only one that just happened (as challenge.py fresh / FRESH_S)
+  const gameNow = st.match_start_t != null ? Number(st.match_start_t) + Number(st.match_elapsed_s || 0) : null;
+  for (const e of fresh.reverse()) {
+    if (gameNow != null && gameNow - Number(e.t) > 4.0) continue;
+    // a TETRIS found a moment later to be a PERFECT CLEAR: its burst gives way to the PC's (as challenge.py)
+    if (e.perfect_clear) ch.bursts = ch.bursts.filter((b) => b.eventT !== Number(Number(e.t).toFixed(3)));
+    if (dopaKind(e) && ch.bursts.length < DOPA_MAX_BURSTS) {
+      ch.burstChain = (ch.burstChain || 0) + 1;
+      ch.bursts.push(dopaBurst(`${match}|${side}|${e.t}`, side, now, e, level, Number(player.b2b) || 0, ch.burstChain));
+    }
+  }
+}
+
+const challenge = { bursts: [], burstSeen: null, side: "left", cover: null, cats: [], match: undefined, seen: {}, sent: {}, ticking: false, comments: {}, mosaic: null, mosaicNext: null, picture: null, pictureSide: "left", pictureAlpha: 0 };
 const chNow = () => performance.now() / 1000;
 function challengeUpdate() {   // as challenge.py ChallengeLayer.update_state
   const st = lastState || {}, d = display, ch = challenge;
@@ -1368,33 +1865,83 @@ function challengeUpdate() {   // as challenge.py ChallengeLayer.update_state
   const active = d.enabled !== false && d.show_on_obs !== false && st.match_screen === true && !st.frozen
     && !((st[side] || {}).puyo);
   ch.cover = active ? challengeNextCover(d.challenge_next, side) : null;
+  const mz = st.challenge_mosaic;
+  if (active && mz && mz.png && mz.strength > 0 && CH_MOSAIC_BOARD[mz.side]) {
+    // the shown picture stays until the next one has loaded (no flicker)
+    if ((!ch.mosaic || ch.mosaic.png !== mz.png) && (!ch.mosaicNext || ch.mosaicNext.png !== mz.png)) {
+      const next = { side: mz.side, png: mz.png, img: new Image() };
+      ch.mosaicNext = next;
+      next.img.onload = () => { if (ch.mosaicNext === next) { ch.mosaic = next; ch.mosaicNext = null; challengePaint(); } };
+      next.img.src = "data:image/png;base64," + mz.png;
+    }
+  } else { ch.mosaic = null; ch.mosaicNext = null; }
+  // the picture over the board (challenge_mosaic_style "image"): its opacity follows the number
+  if (active && mz && mz.image && mz.strength > 0 && CH_MOSAIC_BOARD[mz.side]) {
+    if (!ch.picture || ch.picture.src !== mz.image) {
+      const img = new Image();
+      ch.picture = { src: mz.image, img, ready: false };
+      const mine = ch.picture;
+      img.onload = () => { mine.ready = true; challengePaint(); };
+      img.src = "../assets/" + encodeURI(mz.image);
+    }
+    ch.pictureSide = mz.side; ch.pictureAlpha = Math.min(1, mz.strength);
+  } else ch.pictureAlpha = 0;
+  // the cats: each player's own, on that side (as challenge.py; challenge_cats_side picks one)
+  // after the match (frozen) the cats stay till the screen goes black (a new match_start_t); none new then
+  const catsOn = d.enabled !== false && d.show_on_obs !== false && st.match_screen === true
+    && CH_CATS_ENABLED && !!d.challenge_cats;
+  const sides = d.challenge_cats_side === "left" || d.challenge_cats_side === "right" ? [d.challenge_cats_side] : ["left", "right"];
+  ch.side = side;
   const match = st.match_start_t ?? null;
-  if (match !== ch.match || side !== ch.side) { ch.match = match; ch.side = side; ch.cats = []; ch.seen = null; ch.sent = 0; }
-  const count = challengeCatCount(st, side);
-  const fresh = ch.seen === null ? 0 : Math.max(0, count - ch.seen);   // the first count seen: no flood of cats
-  ch.seen = count;
-  const now = chNow(), clips = challengeClips();
-  if (!(active && CH_CATS_ENABLED && d.challenge_cats)) ch.cats = [];
-  else {
-    clips.forEach(challengeLoadImages);
-    ch.cats = ch.cats.filter((c) => now < c.t1);
-    for (let i = 0; i < (clips.length ? fresh : 0) && ch.cats.length < CH_MAX_CATS; i++) {
-      ch.cats.push(challengeCat(challengeSeed(match, side, ch.sent), side, now, clips[ch.sent % clips.length]));
-      ch.sent++;
+  if (match !== ch.match) { ch.match = match; ch.cats = []; ch.seen = {}; ch.sent = {}; }
+  const now = chNow(), clips = catsOn && !st.frozen ? challengeClips() : [];
+  if (clips.length) clips.forEach(challengeLoadImages);
+  ch.cats = ch.cats.filter((c) => catsOn && sides.includes(c.side) && now < c.t1);
+  for (const sd of ["left", "right"]) {
+    const count = challengeCatCount(st, sd);
+    const fresh = sd in ch.seen ? Math.max(0, count - ch.seen[sd]) : 0;   // the first count seen: no flood of cats
+    ch.seen[sd] = count;
+    if (!clips.length || !sides.includes(sd) || (st[sd] || {}).puyo) continue;
+    for (let i = 0; i < fresh && ch.cats.filter((c) => c.side === sd).length < CH_MAX_CATS; i++) {
+      const sent = ch.sent[sd] || 0, seed = challengeSeed(match, sd, sent);
+      ch.cats.push(challengeCat(seed, sd, now, challengePick(clips, seed, sent)));
+      ch.sent[sd] = sent + 1;
     }
   }
+  // the garbage rows covered, holes and all (challenge_garbage: the server counts them)
+  const g = st.challenge_garbage;
+  ch.garbage = active && g && g.rows > 0 && CH_GRID[g.side] ? { side: g.side, rows: g.rows } : null;
+  dopaUpdate(st, d, side, active, chNow());   // ドーパミンモード
+  // the comments (scripts/comments.py): their own clock from their age at the server
+  const cm = st.comments, cnow = chNow(), live = {};
+  if (d.enabled !== false && d.show_on_obs !== false && cm && cm.items) {   // (through the set and a little after)
+    for (const c of cm.items) live[c.id] = ch.comments[c.id] || { born: cnow - (cm.now - c.t), text: String(c.text || ""), lane: c.lane | 0, big: !!c.big };
+  }
+  ch.comments = live;
+  const nb = Number(d.challenge_bottom_rows) || 0;   // the bottom rows covered (challenge_bottom_rows)
+  ch.bottom = active && nb > 0 ? { side, rows: Math.min(19, nb) } : null;
   challengePaint();
 }
 function challengeTick() {
   challenge.ticking = false;
   const now = chNow();
+  const moving = challenge.cats.length || challenge.bursts.length;   // (last frame: to clear them when they go)
   challenge.cats = challenge.cats.filter((c) => now < c.t1);
-  challengePaint();
+  challenge.bursts = challenge.bursts.filter((b) => now - b.t0 < b.duration);
+  challengePaint(!!moving);
 }
 const chCanvas = $("challenge"), chCtx = chCanvas.getContext("2d");
-function challengePaint() {
+const cmCanvas = $("comments"), cmCtx = cmCanvas.getContext("2d");
+function challengePaint(main = true) {
   const dpr = window.devicePixelRatio || 1, ch = challenge;
   const cw = Math.round(window.innerWidth * dpr), chh = Math.round(window.innerHeight * dpr);
+  const now = chNow();
+  if (main || chCanvas.width !== cw || chCanvas.height !== chh) challengePaintMain(cw, chh, dpr, now);
+  challengePaintComments(cw, chh, dpr, now);
+  if ((ch.cats.length || ch.bursts.length || Object.keys(ch.comments).length) && !ch.ticking) { ch.ticking = true; requestAnimationFrame(challengeTick); }
+}
+function challengePaintMain(cw, chh, dpr, now) {
+  const ch = challenge;
   if (chCanvas.width !== cw || chCanvas.height !== chh) {
     chCanvas.width = cw; chCanvas.height = chh;
     chCanvas.style.width = window.innerWidth + "px"; chCanvas.style.height = window.innerHeight + "px";
@@ -1403,6 +1950,27 @@ function challengePaint() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, chh);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (ch.picture && ch.picture.ready && ch.pictureAlpha > 0) {
+    const [x1, y1, x2, y2] = CH_MOSAIC_BOARD[ch.pictureSide], im = ch.picture.img;
+    const w = (x2 - x1) * s, h = (y2 - y1) * s;
+    const k = Math.max(w / im.naturalWidth, h / im.naturalHeight), sw = w / k, sh = h / k;   // cover (mosaic.cover_rect)
+    ctx.save();
+    ctx.globalAlpha = ch.pictureAlpha; ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(im, (im.naturalWidth - sw) / 2, (im.naturalHeight - sh) / 2, sw, sh, x1 * s, y1 * s, w, h);
+    ctx.restore();
+  }
+  if (ch.mosaic) {
+    const [x1, y1, x2, y2] = CH_MOSAIC_BOARD[ch.mosaic.side];
+    ctx.imageSmoothingEnabled = false;   // the blocks stay blocks
+    ctx.drawImage(ch.mosaic.img, x1 * s, y1 * s, (x2 - x1) * s, (y2 - y1) * s);
+  }
+  if (ch.garbage) challengePaintGarbage(ctx, ch.garbage.side, ch.garbage.rows, s);
+  if (ch.bottom) {   // as challenge.py paint_bottom
+    const [x1, y1, x2, y2] = CH_GRID[ch.bottom.side], top = y2 - ch.bottom.rows * (y2 - y1) / 20;
+    ctx.fillStyle = rgba([18, 20, 28], 250 / 255); ctx.fillRect(x1 * s, top * s, (x2 - x1) * s, (y2 - top) * s);
+    ctx.strokeStyle = rgba([255, 255, 255], 60 / 255); ctx.lineWidth = Math.max(1, 1.5 * s);
+    ctx.strokeRect(x1 * s, top * s, (x2 - x1) * s, (y2 - top) * s);
+  }
   if (ch.cover) {
     const [x1, y1, x2, y2] = ch.cover;
     roundRectPath(ctx, x1 * s, y1 * s, (x2 - x1) * s, (y2 - y1) * s, 6 * s);
@@ -1412,7 +1980,6 @@ function challengePaint() {
     ctx.fillStyle = rgba([255, 255, 255], 70 / 255); ctx.textAlign = "center"; ctx.textBaseline = "middle";
     for (const cy of CH_SLOT_CENTERS_Y) if (y1 < cy && cy < y2) ctx.fillText("?", (x1 + x2) / 2 * s, cy * s);
   }
-  const now = chNow();
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
   for (const cat of [...ch.cats].sort((a, b) => a.floor - b.floor)) {   // the nearer ones over the farther
     const shown = challengeCatAt(cat, now);
@@ -1430,7 +1997,49 @@ function challengePaint() {
     else ctx.drawImage(im, x * s, top * s, w, h);
     ctx.restore();
   }
-  if (ch.cats.length && !ch.ticking) { ch.ticking = true; requestAnimationFrame(challengeTick); }
+  for (const b of ch.bursts) dopaPaint(ctx, b, s, now);   // ドーパミンモード
+}
+// a comment's text drawn once (outline and all) and then only moved: strokeText
+// for every comment every frame made OBS stutter when many were out (user)
+// as challenge.py comment_image (the HUD's look — user): Yu Gothic UI bold for
+// every letter, the edge 200/255 black, the picture the text's own outline + 4
+// reference px each way, its top-left where the lane says
+const COMMENT_FONT_CSS = '"Yu Gothic UI", "Yu Gothic", "Meiryo", sans-serif';
+function commentImage(c, s, dpr) {
+  const px = (c.big ? 50 : 34) * s, key = px * dpr;
+  if (c.img && c.imgKey === key) return c.img;
+  const k = s * dpr, pad = 4 * k, font = `bold ${px * dpr}px ${COMMENT_FONT_CSS}`;
+  const cv = document.createElement("canvas"), x = cv.getContext("2d");
+  x.font = font; x.textAlign = "left"; x.textBaseline = "alphabetic";
+  const m = x.measureText(c.text);
+  const left = m.actualBoundingBoxLeft || 0, asc = m.actualBoundingBoxAscent || px * dpr * 0.8;
+  const w = Math.max(1, left + (m.actualBoundingBoxRight || m.width)), h = Math.max(1, asc + (m.actualBoundingBoxDescent || 0));
+  cv.width = Math.ceil(w + pad * 2); cv.height = Math.ceil(h + pad * 2);
+  x.font = font; x.textAlign = "left"; x.textBaseline = "alphabetic"; x.lineJoin = "round"; x.lineCap = "round";
+  x.lineWidth = 3.5 * k; x.strokeStyle = "rgba(0,0,0,0.784)"; x.strokeText(c.text, pad + left, pad + asc);
+  x.fillStyle = "#fff"; x.fillText(c.text, pad + left, pad + asc);
+  c.img = cv; c.imgKey = key;
+  return cv;
+}
+function challengePaintComments(cw, chh, dpr, now) {
+  const ch = challenge, s = scale;
+  const comments = Object.values(ch.comments).filter((c) => now - c.born >= 0 && now - c.born < CH_COMMENT_FLOW_S);
+  // the comments: on their own canvas, over the parts (as challenge.py CommentView)
+  if (cmCanvas.width !== cw || cmCanvas.height !== chh) {
+    cmCanvas.width = cw; cmCanvas.height = chh;
+    cmCanvas.style.width = window.innerWidth + "px"; cmCanvas.style.height = window.innerHeight + "px";
+  }
+  const cctx = cmCtx;
+  if (!comments.length && !ch.commentsDrawn) return;   // (nothing out, and the canvas already clear)
+  cctx.setTransform(1, 0, 0, 1, 0, 0);
+  cctx.clearRect(0, 0, cw, chh);
+  cctx.imageSmoothingEnabled = false;
+  for (const c of comments) {   // right to left, in device pixels
+    const img = commentImage(c, s, dpr), w = img.width / dpr;
+    const x = 1232 * s - (now - c.born) / CH_COMMENT_FLOW_S * (1232 * s + w), y = (30 + c.lane * 58) * s;
+    cctx.drawImage(img, Math.round(x * dpr), Math.round(y * dpr));
+  }
+  ch.commentsDrawn = comments.length > 0;
 }
 
 // ======================================================================

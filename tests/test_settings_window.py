@@ -281,3 +281,53 @@ def test_each_players_numbers_left_or_right(tmp_path, monkeypatch):
     w._show_values(d)
     assert w.values() == d
     assert display_settings({"display": {"stats_position_left": "up"}})["stats_position_left"] == ""
+
+
+def test_challenge_mosaic_settings(tmp_path, monkeypatch):
+    w = window(tmp_path, monkeypatch)
+    for d in (display_settings({"display": {"challenge_mosaic": "pps", "challenge_mosaic_max": 2.25}}),
+              display_settings({"display": {"challenge_mosaic": "apm"}})):
+        w._show_values(d)
+        assert w.values() == d
+    w.mosaic_metric.setCurrentIndex(w.mosaic_metric.findData("b2b"))
+    w.mosaic_auto.setChecked(False)
+    assert w.values()["challenge_mosaic"] == "b2b" and w.values()["challenge_mosaic_max"] == 8.0
+
+
+def test_challenge_picture_settings(tmp_path, monkeypatch):
+    import settings_window
+    from PyQt6 import QtGui
+    w = window(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings_window, "USER_IMAGES", tmp_path / "user_images")
+    pic = tmp_path / "my cat.png"
+    img = QtGui.QImage(20, 40, QtGui.QImage.Format.Format_RGB32)
+    img.fill(0xff336699)
+    img.save(str(pic))
+    assert settings_window.copy_challenge_image(str(pic)) == "user_images/my_cat.png"
+    assert (tmp_path / "user_images" / "my_cat.png").exists()
+    (tmp_path / "not.png").write_text("text")
+    assert settings_window.copy_challenge_image(str(tmp_path / "not.png")) is None
+    d = display_settings({"display": {"challenge_mosaic": "b2b", "challenge_mosaic_style": "image",
+                                      "challenge_image": "user_images/my_cat.png"}})
+    w._show_values(d)
+    assert w.values() == d
+    w._set_challenge_image("")
+    assert w.values()["challenge_image"] == ""
+
+
+def test_challenge_mosaic_tied_to_time(tmp_path, monkeypatch):
+    w = window(tmp_path, monkeypatch)
+    d = display_settings({"display": {"challenge_mosaic": "time", "challenge_mosaic_max": 150}})
+    w._show_values(d)
+    assert w.values() == d
+    assert not w.mosaic_auto.isVisibleTo(w) and w.mosaic_max.suffix() == " 秒"
+
+
+def test_challenge_bottom_rows_setting(tmp_path, monkeypatch):
+    w = window(tmp_path, monkeypatch)
+    for n in (0, 7):
+        d = display_settings({"display": {"challenge_bottom_rows": n}})
+        w._show_values(d)
+        assert w.values() == d
+    w.bottom_switch.setChecked(False)
+    assert w.values()["challenge_bottom_rows"] == 0

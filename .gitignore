@@ -18,6 +18,8 @@ config/rating_history.json
 config/*.tmp
 # Fonts a user loaded from the settings window (copies of their own files)
 assets/user_fonts/
+# Pictures a user picked for 縛りプレイ (challenge_image, copies of their own files)
+assets/user_images/
 
 # Release zips (tools/make_release.py)
 dist/

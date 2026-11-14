@@ -32,6 +32,7 @@ from config_store import (load_settings, save_settings, display_settings, preset
                           SUMMARY_ITEMS, OPENER_LANGUAGES, stats_mode)
 import opener_stats
 import rating
+import mosaic
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -109,6 +110,24 @@ STYLE_ORDER = ("text", "minimal", "simple", "band", "frame", "slash", "pop",
                "gauge", "trend", "tower", "meter", "hex", "versus")
 ROOT = Path(__file__).resolve().parent.parent
 USER_FONTS = ROOT / "assets" / "user_fonts"
+USER_IMAGES = ROOT / "assets" / "user_images"   # pictures for 縛りプレイ (challenge_image)
+
+
+def copy_challenge_image(path):
+    """Copies a picture into assets/user_images/ and returns its path under
+    assets/ ("user_images/<name>"), or None when it isn't a picture Qt reads."""
+    src = Path(path)
+    if QtGui.QImage(str(src)).isNull():
+        return None
+    suffix = src.suffix.lower()
+    if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"):
+        return None
+    name = re.sub(r"[^\w.\-]+", "_", src.stem)[:100] + suffix
+    USER_IMAGES.mkdir(parents=True, exist_ok=True)
+    dest = USER_IMAGES / name
+    if src.resolve() != dest.resolve():
+        shutil.copyfile(src, dest)
+    return f"user_images/{name}"
 OBS_PAGE = ROOT / "obs" / "overlay.html"   # what an OBS browser source loads
 OPENER_DISPLAY_ORDER = ("board", "hold", "namebar", "top", "cat")
 PLAYER_ORDER = ("both", "left", "right")
@@ -426,8 +445,60 @@ TEXT = {
     "today.app": {"ja": "平均 APP", "en": "Avg APP"},
     "card.session": {"ja": "今日の成績", "en": "Today's results"},
     "card.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
-    "challenge_next": {"ja": "見える NEXT の数（残りを隠します）", "en": "NEXT pieces you can see (the rest are hidden)"},
-    "ch.off": {"ja": "5（隠さない）", "en": "5 (none hidden)"},
+    "challenge_next": {"ja": "見える NEXT の数", "en": "NEXT you can see"},
+    "card.ch_target": {"ja": "縛りをかける盤面", "en": "Whose board"},
+    "card.ch_target_desc": {"ja": "猫以外の縛りをかける盤面です。「自分（自動）」は、オンライン対戦で自分の盤面を見分けます（わからないときは 1P）。",
+                            "en": "\"Yours (auto)\" finds your board in online matches (1P when it can't tell)."},
+    "card.ch_next": {"ja": "NEXT を隠す", "en": "Hide NEXT"},
+    "card.ch_next_desc": {"ja": "先の NEXT を隠して、見える数を減らします。", "en": "Covers the later NEXT pieces, so you see fewer."},
+    "card.ch_garbage": {"ja": "お邪魔の穴を隠す", "en": "Hide the garbage holes"},
+    "card.ch_garbage_desc": {"ja": "下からせり上がってきたお邪魔の段を、穴のない灰色のブロックで覆います。どこを掘ればいいか見えなくなります。",
+                             "en": "Covers the garbage rows with solid grey blocks, so you can't see where their holes are."},
+    "card.ch_bottom": {"ja": "盤面の下側を隠す", "en": "Hide the bottom of the board"},
+    "card.ch_bottom_desc": {"ja": "盤面のいちばん下から、決めた段数を隠します。", "en": "Covers the bottom rows of the board, as many as you choose."},
+    "bottom_rows": {"ja": "隠す段数", "en": "Rows hidden"},
+    "card.ch_comments": {"ja": "コメントを流す", "en": "Comments flow by"},
+    "card.ch_comments_desc": {"ja": "プレイに合わせて画面にコメントが流れます。",
+                              "en": "Comments flow across the screen as you play."},
+    "comments_amount": {"ja": "量", "en": "How many"},
+    "cmt.few": {"ja": "少なめ", "en": "Few"},
+    "cmt.normal": {"ja": "ふつう", "en": "Normal"},
+    "cmt.many": {"ja": "多め", "en": "Many"},
+    "card.ch_dopamine": {"ja": "演出強化", "en": "Big effects"},
+    "section.other": {"ja": "その他", "en": "Other"},
+    "card.ch_dopamine_desc": {"ja": "効果音と読み上げは配信にも OBS のデスクトップ音声で載ります。",
+                              "en": "The sounds and the voice reach your stream through OBS's desktop audio."},
+    "dopamine_level": {"ja": "強さ", "en": "How loud"},
+    "dopa.lite": {"ja": "普通", "en": "Normal"},
+    "dopa.on": {"ja": "派手", "en": "Loud"},
+    "dopa.max": {"ja": "超派手", "en": "Louder"},
+    "dopamine_volume": {"ja": "音量", "en": "Sound"},
+    "announcer": {"ja": "読み上げ", "en": "Announcer"},
+    "announcer_volume": {"ja": "読み上げの音量", "en": "Voice volume"},
+    "announcer_voice": {"ja": "読み上げの声", "en": "Voice"},
+    "voice.heart": {"ja": "女性（Heart）", "en": "Female (Heart)"},
+    "voice.adam": {"ja": "男性（Adam）", "en": "Male (Adam)"},
+    "card.ch_cats": {"ja": "猫", "en": "Cats"},
+    "card.ch_cats_desc": {"ja": "TETRIS・T-SPIN・パフェのたびに、そのプレイヤーの側に猫が出てきて盤面を隠します。",
+                          "en": "Each TETRIS, T-SPIN or PERFECT CLEAR, a cat comes over that player's board."},
+    "cats_side": {"ja": "出す盤面", "en": "Whose board"},
+    "cats.both": {"ja": "1P と 2P", "en": "1P and 2P"},
+    "cats.left": {"ja": "1P だけ", "en": "1P only"},
+    "cats.right": {"ja": "2P だけ", "en": "2P only"},
+    "card.ch_hide": {"ja": "盤面を見えにくくする", "en": "Make your board hard to see"},
+    "card.ch_hide_desc": {"ja": "モザイクか画像で、盤面をだんだん見えにくくします。何に連動して強くなるかを選びます。",
+                          "en": "A mosaic or a picture over your board, stronger with what you pick."},
+    "mz.tied": {"ja": "連動するもの", "en": "Tied to"},
+    "mzc.events": {"ja": "TETRIS・T-SPIN", "en": "TETRIS / T-SPIN"},
+    "mzc.time": {"ja": "試合時間", "en": "Match time"},
+    "mz.time_max": {"ja": "一番強くなる時間", "en": "Strongest at"},
+    "mz.time_hint": {"ja": "試合が始まってから、時間がたつほど強くなり、{} 秒で一番強くなります。",
+                     "en": "Stronger as the match goes on: the strongest at {} s."},
+    "mzc.apm": {"ja": "APM", "en": "APM"},
+    "mzc.pps": {"ja": "PPS", "en": "PPS"},
+    "mzc.attack": {"ja": "攻撃数", "en": "Attack"},
+    "mzc.b2b": {"ja": "B2B", "en": "B2B"},
+    "mzc.ren": {"ja": "REN", "en": "Combo"},
     "ch.from5": {"ja": "4", "en": "4"},
     "ch.from4": {"ja": "3", "en": "3"},
     "ch.from3": {"ja": "2", "en": "2"},
@@ -435,12 +506,41 @@ TEXT = {
     "ch.all": {"ja": "0", "en": "0"},
     "tab.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
     "page.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
-    "challenge_cats": {"ja": "TETRIS・T-SPIN・パフェクリのたびに、画面の端から猫が出てきて盤面を隠す",
+    "challenge_cats": {"ja": "猫：TETRIS・T-SPIN・パフェのたびに、猫が出てきて盤面を隠す",
                        "en": "Each TETRIS / T-SPIN / PERFECT CLEAR, a cat comes in from the edge of the screen and hides your board"},
     "challenge_side": {"ja": "対象の盤面", "en": "Whose board"},
     "cs.auto": {"ja": "自分（自動）", "en": "Yours (auto)"},
     "cs.left": {"ja": "1P", "en": "1P"},
     "cs.right": {"ja": "2P", "en": "2P"},
+    "challenge_mosaic": {"ja": "モザイク・画像の連動（何に連動して盤面が見えにくくなるか）",
+                         "en": "Mosaic / picture: what it's tied to (what makes your board harder to see)"},
+    "mz.off": {"ja": "連動しない（なし）", "en": "Off"},
+    "mz.events": {"ja": "TETRIS・T-SPIN に連動", "en": "Tied to TETRIS / T-SPIN"},
+    "mz.events_hint": {"ja": "TETRIS・T-SPIN・パフェをするたびに 1 段階強くなり（4 回で最大）、しないと少しずつ薄くなります（最大から {} 秒で消えます）。",
+                       "en": "Each TETRIS, T-SPIN or PERFECT CLEAR makes it a step stronger (strongest after 4); doing none, it fades ({} s from the strongest to none)."},
+    "mz.apm": {"ja": "APM に連動", "en": "Tied to APM"},
+    "mz.pps": {"ja": "PPS に連動", "en": "Tied to PPS"},
+    "mz.attack": {"ja": "攻撃数に連動", "en": "Tied to attack"},
+    "mz.b2b": {"ja": "B2B に連動", "en": "Tied to B2B"},
+    "mz.ren": {"ja": "REN に連動", "en": "Tied to combo"},
+    "mz.auto": {"ja": "一番強くなる値を自動で決める", "en": "Set the strongest point by itself"},
+    "mz.style": {"ja": "見えにくくする方法", "en": "How it hides"},
+    "mzs.mosaic": {"ja": "モザイク", "en": "Mosaic"},
+    "mzs.image": {"ja": "画像（だんだん濃くなる）", "en": "Picture (gets stronger)"},
+    "mz.image": {"ja": "画像", "en": "Picture"},
+    "mz.image_cat": {"ja": "猫（初期設定）", "en": "Cat (default)"},
+    "mz.image_pick": {"ja": "画像を選ぶ…", "en": "Choose a picture…"},
+    "mz.image_reset": {"ja": "猫に戻す", "en": "Back to the cat"},
+    "mz.image_title": {"ja": "盤面に重ねる画像を選ぶ", "en": "Choose a picture for over your board"},
+    "mz.image_failed": {"ja": "この画像は読み込めませんでした。PNG・JPEG などの画像を選んでください。",
+                        "en": "This picture couldn't be read. Choose a PNG, JPEG or similar."},
+    "mz.max": {"ja": "一番強くなる値", "en": "Strongest at"},
+    "mz.auto_usual": {"ja": "今は {} で一番強くなります（あなたの直近 {} 試合の平均）。",
+                      "en": "Strongest at {} now (your average over your last {} matches)."},
+    "mz.auto_default": {"ja": "今は {} で一番強くなります（試合の記録がたまると、あなたの普段の平均に合わせます）。",
+                        "en": "Strongest at {} now (once enough matches are kept, it follows your usual average)."},
+    "mz.auto_chain": {"ja": "今は {} で一番強くなります。途切れるとモザイクも消えます。",
+                      "en": "Strongest at {} now. It clears when the chain breaks."},
     "challenge.blocked": {"ja": "⚠ この PC では、ゲーム画面の上の表示が認識の読む画面にも写り込みます（Windows の制限）。認識が壊れるので、縛りプレイはゲーム画面には出していません（OBS には出ます）。",
                           "en": "⚠ On this PC the overlay shows up in what the recognition reads (a Windows limit). It would break the recognition, so challenge mode isn't shown on the game screen (OBS still shows it)."},
     "card.session_desc": {"ja": "ぷよテト2を起動してからの勝敗・連勝数・レートの増減・平均 APM / PPS / APP を、盤面のあいだの上に出します（ゲームを閉じるとリセット）",
@@ -737,6 +837,15 @@ class RatingChart(QtWidgets.QWidget):
                                     f"{q['rating']}　{time.strftime('%Y/%m/%d %H:%M', time.localtime(q['t']))}", self)
 
 
+def _as_widget(layout):
+    """A layout in a widget of its own (to show and hide as one)."""
+    w = QtWidgets.QWidget()
+    w.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+    layout.setContentsMargins(0, 0, 0, 0)
+    w.setLayout(layout)
+    return w
+
+
 def _hbox(*widgets, stretch=True):
     holder = QtWidgets.QWidget()
     box = QtWidgets.QHBoxLayout(holder)
@@ -750,6 +859,7 @@ def _hbox(*widgets, stretch=True):
 
 # how many NEXT still show: 5 (none hidden) .. 0 (all hidden)
 CHALLENGE_NEXT_ORDER = ("off", "from5", "from4", "from3", "from2", "all")
+CHALLENGE_NEXT_COUNTS = CHALLENGE_NEXT_ORDER[1:]   # the choices while hiding NEXT is on
 CHALLENGE_SIDE_ORDER = ("auto", "left", "right")
 
 
@@ -818,7 +928,20 @@ class SettingsWindow(QtWidgets.QWidget):
         self.tabs.addTab(self._build_rating_page(), "", "rating")
         self.tabs.addTab(self._build_obs_tab(), "", "obs")
         # 縛りプレイ: its own page (user's request; built with the items page)
-        self.tabs.addTab(self._page("page.challenge", self.challenge_card), "", "challenge")
+        # (user: 猫・コメント・演出強化・読み上げ under その他, after the restrictions)
+        # その他 is folded away until clicked open (user: its contents not shown)
+        self.ch_other_title = QtWidgets.QPushButton()
+        self.ch_other_title.setObjectName("sectionToggle")
+        self.ch_other_title.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self._other_cards = (self.ch_cats_card, self.ch_comments_card, self.ch_dopamine_card)
+        self._other_open = False
+        self.ch_other_title.clicked.connect(self._toggle_other)
+        for card in self._other_cards:
+            card.setVisible(False)
+        self.tabs.addTab(self._page("page.challenge", self.ch_target_card, self.ch_next_card, self.ch_garbage_card,
+                                    self.ch_bottom_card, self.ch_hide_card, self.ch_other_title, self.ch_cats_card,
+                                    self.ch_comments_card, self.ch_dopamine_card),
+                         "", "challenge")
         self.tabs.addTab(self._build_other_page(), "", "other")
         self._update_info = None
         self._update_silent = False
@@ -882,6 +1005,18 @@ class SettingsWindow(QtWidgets.QWidget):
         lab = QtWidgets.QLabel()
         self._row_labels[key] = lab
         return ui.row(lab, widget, label_w)
+
+    def _toggle_other(self):
+        """その他 opened / folded away."""
+        self._other_open = not self._other_open
+        for card in self._other_cards:
+            card.setVisible(self._other_open)
+        self.retranslate()
+
+    def _voice_rows_shown(self, on):
+        """読み上げ's voice and volume: only while it's on."""
+        for row in getattr(self, "_voice_rows", ()):
+            row.setVisible(bool(on))
 
     def _page(self, key, *cards):
         title = QtWidgets.QLabel()
@@ -1084,31 +1219,139 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_language.currentIndexChanged.connect(self._changed)
         self.opener_card.add(self._row("opener_language", _hbox(self.opener_language)))
 
-        # 縛りプレイ (hud/challenge.py)
-        self.challenge_card = ui.Card()
-        self.challenge_next = ui.Segmented()
-        for key in CHALLENGE_NEXT_ORDER:
-            self.challenge_next.addItem("", key)
-        self.challenge_next.currentIndexChanged.connect(self._changed)
-        next_label = QtWidgets.QLabel()
-        self._row_labels["challenge_next"] = next_label
-        self.challenge_card.add(next_label)
-        self.challenge_card.add(_hbox(self.challenge_next))
-        # the cats: not in the release yet (challenge.CATS_ENABLED); the
-        # setting is kept as it is in the file
-        self.challenge_cats = QtWidgets.QCheckBox()
-        self.challenge_cats.toggled.connect(self._changed)
-        self.challenge_cats.setVisible(False)
+        # 縛りプレイ (hud/challenge.py): one card each (user: easier to follow),
+        # each with its switch on the right; details only while it's on
+        self.ch_target_card = ui.Card()
         self.challenge_side = QtWidgets.QComboBox()
         for key in CHALLENGE_SIDE_ORDER:
             self.challenge_side.addItem("", key)
         self.challenge_side.currentIndexChanged.connect(self._changed)
-        self.challenge_card.add(self._row("challenge_side", _hbox(self.challenge_side)))
+        self.ch_target_card.add(self._row("challenge_side", _hbox(self.challenge_side)))
         self.challenge_note = QtWidgets.QLabel()
         self.challenge_note.setWordWrap(True)
         self.challenge_note.setStyleSheet("background:#fff4e5; color:#7a3e00; border-radius:8px; padding:8px 10px;")
         self.challenge_note.setVisible(False)
-        self.challenge_card.add(self.challenge_note)
+        self.ch_target_card.add(self.challenge_note)
+
+        self.next_switch = ui.Switch()
+        self.next_switch.toggled.connect(self._changed)
+        self.ch_next_card = ui.Card(self.next_switch)
+        self.challenge_next = ui.Segmented()
+        for key in CHALLENGE_NEXT_COUNTS:
+            self.challenge_next.addItem("", key)
+        self.challenge_next.currentIndexChanged.connect(self._changed)
+        self.ch_next_card.add(self._row("challenge_next", _hbox(self.challenge_next)))
+
+        self.challenge_cats = ui.Switch()
+        self.challenge_cats.toggled.connect(self._changed)
+        self.ch_cats_card = ui.Card(self.challenge_cats)
+        self.cats_side = ui.Segmented()
+        for key in ("both", "left", "right"):
+            self.cats_side.addItem("", key)
+        self.cats_side.currentIndexChanged.connect(self._changed)
+        self.ch_cats_card.add(self._row("cats_side", _hbox(self.cats_side)))
+
+        self.challenge_garbage = ui.Switch()
+        self.challenge_garbage.toggled.connect(self._changed)
+        self.ch_garbage_card = ui.Card(self.challenge_garbage)
+
+        self.comments_switch = ui.Switch()
+        self.comments_switch.toggled.connect(self._changed)
+        self.ch_comments_card = ui.Card(self.comments_switch)
+        self.comments_amount = ui.Segmented()
+        for key in ("few", "normal", "many"):
+            self.comments_amount.addItem("", key)
+        self.comments_amount.currentIndexChanged.connect(self._changed)
+        self.ch_comments_card.add(self._row("comments_amount", _hbox(self.comments_amount)))
+
+        self.dopamine_switch = ui.Switch()
+        self.dopamine_switch.toggled.connect(self._changed)
+        self.ch_dopamine_card = ui.Card(self.dopamine_switch)
+        self.dopamine_level = ui.Segmented()
+        for key in ("lite", "on", "max"):
+            self.dopamine_level.addItem("", key)
+        self.dopamine_level.currentIndexChanged.connect(self._changed)
+        self.ch_dopamine_card.add(self._row("dopamine_level", _hbox(self.dopamine_level)))
+        # its sounds: played by the app (the player hears them; OBS's desktop audio takes them to the stream)
+        self.dopamine_volume = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.dopamine_volume.setRange(0, 100)
+        self.dopamine_volume.valueChanged.connect(self._changed)
+        self.dopamine_volume_value = QtWidgets.QLabel()
+        self.dopamine_volume_value.setFixedWidth(40)
+        self.dopamine_volume.valueChanged.connect(lambda v: self.dopamine_volume_value.setText(f"{v}%" if v else "OFF"))
+        self.ch_dopamine_card.add(self._row("dopamine_volume", _hbox(self.dopamine_volume, self.dopamine_volume_value,
+                                                                     stretch=False)))
+        # 読み上げ: in the 演出強化 card (user), its rows shown whatever that
+        # card's switch — it works without the effects too
+        self.announcer_switch = ui.Switch()
+        self.announcer_switch.toggled.connect(self._changed)
+        self.announcer_switch.toggled.connect(lambda on: self._voice_rows_shown(on))
+        self.ch_dopamine_card.add_always(self._row("announcer", _hbox(self.announcer_switch)))
+        self.announcer_voice = ui.Segmented()
+        for key in ("heart", "adam"):
+            self.announcer_voice.addItem("", key)
+        self.announcer_voice.currentIndexChanged.connect(self._changed)
+        self._voice_rows = [self.ch_dopamine_card.add_always(_as_widget(self._row("announcer_voice",
+                                                                                  _hbox(self.announcer_voice))))]
+        self.announcer_volume = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.announcer_volume.setRange(0, 200)   # (user: louder than 100% too)
+        self.announcer_volume.valueChanged.connect(self._changed)
+        self.announcer_volume_value = QtWidgets.QLabel()
+        self.announcer_volume_value.setFixedWidth(46)
+        self.announcer_volume.valueChanged.connect(lambda v: self.announcer_volume_value.setText(f"{v}%" if v else "OFF"))
+        self._voice_rows.append(self.ch_dopamine_card.add_always(_as_widget(self._row("announcer_volume", _hbox(self.announcer_volume,
+                                                                      self.announcer_volume_value, stretch=False)))))
+        self._voice_rows_shown(False)
+
+        self.bottom_switch = ui.Switch()
+        self.bottom_switch.toggled.connect(self._changed)
+        self.ch_bottom_card = ui.Card(self.bottom_switch)
+        self.bottom_rows = QtWidgets.QSpinBox()
+        self.bottom_rows.setRange(1, 19)
+        self.bottom_rows.valueChanged.connect(self._changed)
+        self.ch_bottom_card.add(self._row("bottom_rows", _hbox(self.bottom_rows)))
+
+        # the mosaic / picture (scripts/mosaic.py)
+        self.mosaic_switch = ui.Switch()
+        self.mosaic_switch.toggled.connect(self._mosaic_auto_toggled)
+        self.ch_hide_card = ui.Card(self.mosaic_switch)
+        self.mosaic_metric = QtWidgets.QComboBox()
+        for key in mosaic.METRICS:
+            self.mosaic_metric.addItem("", key)
+        self.mosaic_metric.currentIndexChanged.connect(self._mosaic_metric_changed)
+        self.ch_hide_card.add(self._row("mz.tied", _hbox(self.mosaic_metric)))
+        self.mosaic_hint = ui.muted()
+        self.mosaic_hint.setWordWrap(True)
+        self.ch_hide_card.add(self.mosaic_hint)
+        self.mosaic_auto = QtWidgets.QCheckBox()
+        self.mosaic_auto.toggled.connect(self._mosaic_auto_toggled)
+        self.ch_hide_card.add(self.mosaic_auto)
+        self.mosaic_max = QtWidgets.QDoubleSpinBox()
+        self.mosaic_max.setRange(0.1, 1000.0)
+        self.mosaic_max.valueChanged.connect(self._changed)
+        self.mosaic_max.valueChanged.connect(lambda *_: self._show_mosaic())   # (the time hint follows)
+        self.mosaic_max_row = QtWidgets.QWidget()
+        max_row = self._row("mz.max", _hbox(self.mosaic_max))
+        max_row.setContentsMargins(0, 0, 0, 0)
+        self.mosaic_max_row.setLayout(max_row)
+        self.ch_hide_card.add(self.mosaic_max_row)
+        self.mosaic_style = ui.Segmented()
+        self.mosaic_style.addItem("", "mosaic")
+        self.mosaic_style.addItem("", "image")
+        self.mosaic_style.currentIndexChanged.connect(self._mosaic_auto_toggled)
+        self.ch_hide_card.add(self._row("mz.style", _hbox(self.mosaic_style)))
+        self._challenge_image = ""
+        self.mosaic_image_name = QtWidgets.QLabel()
+        self.mosaic_image_pick = QtWidgets.QPushButton()
+        self.mosaic_image_pick.clicked.connect(self._pick_challenge_image)
+        self.mosaic_image_reset = QtWidgets.QPushButton()
+        self.mosaic_image_reset.clicked.connect(lambda: self._set_challenge_image(""))
+        self.mosaic_image_row = QtWidgets.QWidget()
+        image_row = self._row("mz.image", _hbox(self.mosaic_image_name, self.mosaic_image_pick,
+                                                self.mosaic_image_reset, stretch=False))
+        image_row.setContentsMargins(0, 0, 0, 0)
+        self.mosaic_image_row.setLayout(image_row)
+        self.ch_hide_card.add(self.mosaic_image_row)
 
         for cb in (self.show_clock, self.show_event_log, self.show_summary, self.show_opener, self.show_session):
             cb.toggled.connect(self._changed)
@@ -1116,6 +1359,82 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_display.currentIndexChanged.connect(self._changed)
         return self._page("page.items", self.players_card, self.items_box, self.clock_card, self.session_card,
                           self.events_card, self.summary_card, self.opener_card)
+
+    # --- the mosaic (縛りプレイ) ---
+    def _mosaic_metric_changed(self, *_):
+        metric = self.mosaic_metric.currentData()
+        if not self._loading and metric in mosaic.NUMBERS:
+            self.mosaic_max.blockSignals(True)
+            self.mosaic_max.setValue(mosaic.DEFAULT_TOP[metric])   # another number: its own scale
+            self.mosaic_max.blockSignals(False)
+        self._show_mosaic()
+        self._changed()
+
+    def _mosaic_auto_toggled(self, *_):
+        self._show_mosaic()
+        self._changed()
+
+    def _pick_challenge_image(self):
+        """Copies the chosen picture into assets/user_images/ (where the OBS
+        page can load it too) and uses it."""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, self.tr_("mz.image_title"), "", "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+        if path:
+            self._set_challenge_image(copy_challenge_image(path) or "", failed_note=True)
+
+    def _set_challenge_image(self, rel, failed_note=False):
+        if failed_note and not rel:
+            QtWidgets.QMessageBox.warning(self, self.tr_("mz.image"), self.tr_("mz.image_failed"))
+            return
+        self._challenge_image = rel
+        self._show_mosaic()
+        self._changed()
+
+    def _show_mosaic(self):
+        """Only the parts that matter now, and where the mosaic is strongest
+        when it's set by itself."""
+        if not hasattr(self, "mosaic_hint"):
+            return
+        metric = self.mosaic_metric.currentData()
+        on = metric in mosaic.METRICS   # (the card itself hides it all while switched off)
+        auto = self.mosaic_auto.isChecked()
+        number = metric in mosaic.NUMBERS
+        timed = metric == "time"   # (no "usual" for time: always the seconds entered)
+        self.mosaic_auto.setVisible(number and not timed)
+        image = self.mosaic_style.currentIndex() == 1
+        self.mosaic_image_row.setVisible(on and image)
+        self.mosaic_image_reset.setEnabled(bool(self._challenge_image))
+        self.mosaic_image_name.setText(Path(self._challenge_image).name if self._challenge_image
+                                       else self.tr_("mz.image_cat"))
+        self.mosaic_max_row.setVisible(number and (timed or not auto))
+        self.mosaic_max.setDecimals(2 if metric == "pps" else 0)
+        self.mosaic_max.setSuffix(" 秒" if timed and self.lang == "ja" else " s" if timed else "")
+        self._row_labels["mz.max"].setText(self.tr_("mz.time_max" if timed else "mz.max"))
+        t = self.tr_
+        if timed:
+            self.mosaic_hint.setVisible(True)
+            self.mosaic_hint.setText(t("mz.time_hint").format(int(self.mosaic_max.value())))
+            return
+        if metric == "events":
+            self.mosaic_hint.setVisible(True)
+            self.mosaic_hint.setText(t("mz.events_hint").format(int(mosaic.EVENT_FADE_S)))
+            return
+        self.mosaic_hint.setVisible(number and auto)
+        if not (number and auto):
+            return
+        try:
+            usual = mosaic.usual(opener_stats.load())
+        except Exception:
+            usual = {"matches": 0}
+        top = mosaic.top_value({}, metric, usual)
+        name = {"attack": "攻撃数" if self.lang == "ja" else "Attack", "ren": "REN"}.get(metric, metric.upper())
+        shown = f"{name} {top:.2f}" if metric == "pps" else f"{name} {top:.0f}"
+        if metric in ("b2b", "ren"):
+            self.mosaic_hint.setText(t("mz.auto_chain").format(shown))
+        elif usual.get("matches", 0) >= mosaic.USUAL_MIN and usual.get(metric):
+            self.mosaic_hint.setText(t("mz.auto_usual").format(shown, usual["matches"]))
+        else:
+            self.mosaic_hint.setText(t("mz.auto_default").format(shown))
 
     def _move_item(self, step):
         row = self.items.currentRow()
@@ -1906,12 +2225,34 @@ class SettingsWindow(QtWidgets.QWidget):
             it = self.summary_items.item(i)
             it.setText(t("sum." + it.data(QtCore.Qt.ItemDataRole.UserRole)))
         self.summary_items.blockSignals(False)
-        self.challenge_card.setTitle(t("card.challenge"))
-        for i, key in enumerate(CHALLENGE_NEXT_ORDER):
+        for card, key in ((self.ch_target_card, "ch_target"), (self.ch_next_card, "ch_next"),
+                          (self.ch_garbage_card, "ch_garbage"), (self.ch_bottom_card, "ch_bottom"),
+                          (self.ch_comments_card, "ch_comments"), (self.ch_dopamine_card, "ch_dopamine"),
+
+                          (self.ch_cats_card, "ch_cats"), (self.ch_hide_card, "ch_hide")):
+            card.setTitle(t("card." + key))
+            card.setDescription(t(f"card.{key}_desc"))
+        for i, key in enumerate(CHALLENGE_NEXT_COUNTS):
             self.challenge_next.setItemText(i, t("ch." + key))
-        self.challenge_cats.setText(t("challenge_cats"))
         for i, key in enumerate(CHALLENGE_SIDE_ORDER):
             self.challenge_side.setItemText(i, t("cs." + key))
+        for i, key in enumerate(("both", "left", "right")):
+            self.cats_side.setItemText(i, t("cats." + key))
+        for i, key in enumerate(("few", "normal", "many")):
+            self.comments_amount.setItemText(i, t("cmt." + key))
+        for i, key in enumerate(("lite", "on", "max")):
+            self.dopamine_level.setItemText(i, t("dopa." + key))
+        for i, key in enumerate(("heart", "adam")):
+            self.announcer_voice.setItemText(i, t("voice." + key))
+        self.ch_other_title.setText(("▾ " if self._other_open else "▸ ") + t("section.other"))
+        for i, key in enumerate(mosaic.METRICS):
+            self.mosaic_metric.setItemText(i, t("mzc." + key))
+        self.mosaic_auto.setText(t("mz.auto"))
+        self.mosaic_style.setItemText(0, t("mzs.mosaic"))
+        self.mosaic_style.setItemText(1, t("mzs.image"))
+        self.mosaic_image_pick.setText(t("mz.image_pick"))
+        self.mosaic_image_reset.setText(t("mz.image_reset"))
+        self._show_mosaic()
         self.challenge_note.setText(t("challenge.blocked"))
         self.opener_card.setTitle(t("card.opener"))
         self.opener_card.setDescription(t("card.opener_desc"))
@@ -2388,9 +2729,37 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
         self.show_session.setChecked(d["show_session"])
-        self.challenge_next.setCurrentIndex(max(0, self.challenge_next.findData(d["challenge_next"])))
+        self.next_switch.setChecked(d["challenge_next"] != "off")
+        self.challenge_next.setCurrentIndex(max(0, self.challenge_next.findData(
+            d["challenge_next"] if d["challenge_next"] != "off" else "from3")))   # (2 shown: where it starts)
         self.challenge_cats.setChecked(d["challenge_cats"])
+        self.challenge_garbage.setChecked(d["challenge_garbage"])
+        self.comments_switch.setChecked(d["challenge_comments"] != "off")
+        self.comments_amount.setCurrentIndex(max(0, self.comments_amount.findData(
+            d["challenge_comments"] if d["challenge_comments"] != "off" else "normal")))
+        self.dopamine_switch.setChecked(d["challenge_dopamine"] != "off")
+        self.dopamine_level.setCurrentIndex(max(0, self.dopamine_level.findData(
+            d["challenge_dopamine"] if d["challenge_dopamine"] != "off" else "lite")))   # (turned on: 普通)
+        self.dopamine_volume.setValue(int(d["challenge_dopamine_volume"]))
+        self.announcer_switch.setChecked(bool(d["challenge_announcer"]))
+        self.announcer_voice.setCurrentIndex(max(0, self.announcer_voice.findData(d["challenge_announcer_voice"])))
+        self.announcer_volume.setValue(int(d["challenge_announcer_volume"]))
+        self.announcer_volume_value.setText(f"{self.announcer_volume.value()}%" if self.announcer_volume.value() else "OFF")
+        self.dopamine_volume_value.setText(f"{self.dopamine_volume.value()}%" if self.dopamine_volume.value() else "OFF")
+        self.bottom_switch.setChecked(d["challenge_bottom_rows"] > 0)
+        self.bottom_rows.setValue(d["challenge_bottom_rows"] if d["challenge_bottom_rows"] > 0 else 5)
+        self.bottom_rows.setSuffix(" 段" if self.lang == "ja" else "")
+        self.cats_side.setCurrentIndex(max(0, self.cats_side.findData(d["challenge_cats_side"])))
         self.challenge_side.setCurrentIndex(max(0, self.challenge_side.findData(d["challenge_side"])))
+        self.mosaic_switch.setChecked(d["challenge_mosaic"] != "off")
+        self.mosaic_metric.setCurrentIndex(max(0, self.mosaic_metric.findData(d["challenge_mosaic"])))
+        top = float(d["challenge_mosaic_max"] or 0)
+        self.mosaic_auto.setChecked(top <= 0)
+        self.mosaic_style.setCurrentIndex(1 if d["challenge_mosaic_style"] == "image" else 0)
+        self._challenge_image = d["challenge_image"]
+        metric = d["challenge_mosaic"] if d["challenge_mosaic"] in mosaic.NUMBERS else "apm"
+        self.mosaic_max.setValue(top if top > 0 else mosaic.DEFAULT_TOP[metric])
+        self._show_mosaic()
         for i in range(self.summary_items.count()):
             it = self.summary_items.item(i)
             it.setCheckState(QtCore.Qt.CheckState.Checked if it.data(QtCore.Qt.ItemDataRole.UserRole)
@@ -2400,7 +2769,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_display.setEnabled(d["show_opener"])
         self.event_log_count.setValue(d["event_log_count"])
         self.event_log_count.setEnabled(d["show_event_log"])
-        for card in (self.clock_card, self.events_card, self.summary_card, self.opener_card):
+        for card in (self.clock_card, self.events_card, self.summary_card, self.opener_card,
+                     self.ch_next_card, self.ch_bottom_card, self.ch_cats_card, self.ch_comments_card,
+                     self.ch_dopamine_card, self.ch_hide_card):
             card.sync()   # a part's details only while it's on
         self.retranslate()
         self._loading = False
@@ -2443,9 +2814,23 @@ class SettingsWindow(QtWidgets.QWidget):
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
             "show_session": self.show_session.isChecked(),
-            "challenge_next": self.challenge_next.currentData(),
+            "challenge_next": self.challenge_next.currentData() if self.next_switch.isChecked() else "off",
             "challenge_cats": self.challenge_cats.isChecked(),
+            "challenge_garbage": self.challenge_garbage.isChecked(),
+            "challenge_bottom_rows": self.bottom_rows.value() if self.bottom_switch.isChecked() else 0,
+            "challenge_comments": self.comments_amount.currentData() if self.comments_switch.isChecked() else "off",
+            "challenge_dopamine": self.dopamine_level.currentData() if self.dopamine_switch.isChecked() else "off",
+            "challenge_dopamine_volume": self.dopamine_volume.value(),
+            "challenge_announcer": self.announcer_switch.isChecked(),
+            "challenge_announcer_voice": self.announcer_voice.currentData(),
+            "challenge_announcer_volume": self.announcer_volume.value(),
+            "challenge_cats_side": self.cats_side.currentData(),
             "challenge_side": self.challenge_side.currentData(),
+            "challenge_mosaic": self.mosaic_metric.currentData() if self.mosaic_switch.isChecked() else "off",
+            "challenge_mosaic_max": float(self.mosaic_max.value())
+            if (self.mosaic_metric.currentData() == "time" or not self.mosaic_auto.isChecked()) else 0.0,
+            "challenge_mosaic_style": "image" if self.mosaic_style.currentIndex() == 1 else "mosaic",
+            "challenge_image": self._challenge_image,
             "summary_items": [self.summary_items.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
                               for i in range(self.summary_items.count())
                               if self.summary_items.item(i).checkState() == QtCore.Qt.CheckState.Checked],
@@ -2549,7 +2934,16 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.events_card, ("show_event_log", "event_log_count")),
             (self.summary_card, ("show_summary", "summary_items")),
             (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),
-            (self.challenge_card, ("challenge_next", "challenge_cats", "challenge_side")),
+            (self.ch_target_card, ("challenge_side",)),
+            (self.ch_next_card, ("challenge_next",)),
+            (self.ch_garbage_card, ("challenge_garbage",)),
+            (self.ch_bottom_card, ("challenge_bottom_rows",)),
+            (self.ch_comments_card, ("challenge_comments",)),
+            (self.ch_dopamine_card, ("challenge_dopamine", "challenge_dopamine_volume", "challenge_announcer",
+                                     "challenge_announcer_volume", "challenge_announcer_voice")),
+            (self.ch_cats_card, ("challenge_cats", "challenge_cats_side")),
+            (self.ch_hide_card, ("challenge_mosaic", "challenge_mosaic_max", "challenge_mosaic_style",
+                                 "challenge_image")),
             (self.drag_card, ("drag_each_side",)),
             (self.placement_card, ("stats_position", "stats_position_left", "stats_position_right")),
             (self.position_section, offsets),

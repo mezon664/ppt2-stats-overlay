@@ -40,6 +40,7 @@ CLEAR_TYPE_LABEL_JA = {
     "tspin_single": "T-SPIN Single",
     "tspin_triple": "T-SPIN Triple",
     "tspin_mini": "T-SPIN Mini Single",   # the line-clearing Mini (the game's banner text)
+    "tspin_mini_double": "T-SPIN Mini Double",   # the 2-line Mini (T-SPIN NEO)
 }
 
 EVENT_LOG_MAX = 15  # recent entries kept per side, for on-screen verification of what was recognized
@@ -54,7 +55,8 @@ HOLD_ADJUST_WINDOW_S = 1.0
 # After the victory banner, the clears still waiting are finished for this
 # long: the longest a banner can follow its flash (FLASH_GRACE_BY_LINES_S, 1.1)
 SETTLE_AFTER_END_S = 1.2
-BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3, "tspin_mini": 1}
+BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3, "tspin_mini": 1,
+                "tspin_mini_double": 2}
 
 
 def format_event_log_entry(t, ev, lines):
@@ -271,8 +273,9 @@ class PlayerPipeline:
             self.tetris_count += 1
         elif ev["clear_type"].startswith("tspin_"):
             self.tspin_count += 1
-            if ev["clear_type"] in self.tspin_counts:
-                self.tspin_counts[ev["clear_type"]] += 1
+            kind = "tspin_mini" if ev["clear_type"] == "tspin_mini_double" else ev["clear_type"]   # (a Mini all the same)
+            if kind in self.tspin_counts:
+                self.tspin_counts[kind] += 1
         self.max_ren = max(self.max_ren, ev.get("ren_count") or 0)
         entry = format_event_log_entry(t, ev, lines)
         self.event_log.insert(0, entry)
