@@ -376,6 +376,20 @@ CAMERA_RETRY_S = 2.0               # a camera that wouldn't open is tried again 
 CAMERA_OPEN_REASON = "カメラを開けません"        # (+ its number)
 CAMERA_STALE_REASON = "カメラの映像が届いていません (OBS の仮想カメラを開始していますか？)"
 CAMERA_BLACK_REASON = "カメラの映像が真っ黒です (仮想カメラの出力にキャプチャーボードのソースを選んでいますか？)"
+# a picture this dark all over (few pixels brighter than DARK_LEVEL) counts as
+# black too: a virtual camera with nothing on it isn't exactly 0 (compression
+# noise) — a user's showed as a dark "read" picture instead of saying why
+DARK_LEVEL, DARK_SHARE = 40, 0.005
+# only once it's stayed dark this long: the game goes black for a moment
+# between scenes (5 of 1325 frames of the recordings), and those frames are
+# read as they are, as from the PC game's window
+DARK_HOLD_S = 3.0
+
+
+def is_dark(frame):
+    """Almost every sampled pixel dark (see DARK_LEVEL)."""
+    small = frame[::8, ::8]
+    return float((small.max(axis=2) > DARK_LEVEL).mean()) < DARK_SHARE
 
 
 class CameraCapture:
@@ -404,6 +418,7 @@ class CameraCapture:
         self._thread = None
         self._failed_t = -CAMERA_RETRY_S   # when opening it last failed
         self._opened_t = 0.0
+        self._dark_since = None   # dark (black) since then (DARK_HOLD_S)
         # the "game session" (today's results since it began): no game process
         # here to ask when it started — the first picture read counts
         self.started_at = None
@@ -470,8 +485,13 @@ class CameraCapture:
             return None, False, CAMERA_STALE_REASON, None
         if frame.ndim == 3 and frame.shape[2] == 4:
             frame = frame[:, :, :3]
-        if is_black(frame):
-            return None, False, CAMERA_BLACK_REASON, None
+        if is_black(frame) or is_dark(frame):
+            if self._dark_since is None:
+                self._dark_since = time.monotonic()
+            elif time.monotonic() - self._dark_since >= DARK_HOLD_S:
+                return None, False, CAMERA_BLACK_REASON, None
+        else:
+            self._dark_since = None
         h, w = frame.shape[:2]
         if not self._sizes.update((w, h), time.monotonic()):
             return None, False, None, None
@@ -495,3 +515,57 @@ def make_capture(display):
     if (display or {}).get("capture_source") == "camera":
         return CameraCapture(int((display or {}).get("capture_camera") or 0))
     return GameWindowCapture()
+
+
+OBS_CAMERA = "OBS Virtual Camera"
+
+
+def camera_names():
+    """The cameras' names, in the order of their numbers (DirectShow's video
+    input devices, the same list OpenCV opens by number): a user found
+    several cameras among 1-10 and only one was OBS's — by number alone it
+    took trying them all. [] if they can't be listed."""
+    try:
+        import ctypes
+        from ctypes import POINTER, byref, c_void_p, wintypes
+        import pythoncom
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort), ("Data3", ctypes.c_ushort),
+                        ("Data4", ctypes.c_ubyte * 8)]
+
+        def guid(text):
+            g = GUID()
+            ctypes.oledll.ole32.CLSIDFromString(ctypes.c_wchar_p(text), byref(g))
+            return g
+
+        pythoncom.CoInitialize()
+        dev_enum = c_void_p()
+        ctypes.oledll.ole32.CoCreateInstance(byref(guid("{62BE5D10-60EB-11d0-BD3B-00A0C911CE86}")), None, 1,
+                                             byref(guid("{29840822-5B84-11D0-BD3B-00A0C911CE86}")), byref(dev_enum))
+        vtbl = ctypes.cast(ctypes.cast(dev_enum, POINTER(c_void_p))[0], POINTER(c_void_p))
+        release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(vtbl[2])
+        create = ctypes.WINFUNCTYPE(ctypes.HRESULT, c_void_p, POINTER(GUID), POINTER(c_void_p), wintypes.DWORD)(vtbl[3])
+        found = c_void_p()
+        try:
+            # (S_FALSE and no enumerator: there are no cameras)
+            create(dev_enum, byref(guid("{860BB310-5D01-11d0-BD3B-00A0C911CE86}")), byref(found), 0)
+        finally:
+            release(dev_enum)
+        if not found.value:
+            return []
+        monikers = pythoncom.ObjectFromAddress(found.value, pythoncom.IID_IEnumMoniker)
+        ctx = pythoncom.CreateBindCtx(0)
+        names = []
+        while True:
+            got = monikers.Next(1)
+            if not got:
+                break
+            try:
+                bag = got[0].BindToStorage(ctx, None, pythoncom.IID_IPropertyBag)
+                names.append(str(bag.Read("FriendlyName", pythoncom.VT_BSTR)))
+            except Exception:
+                names.append("")
+        return names[:CAMERA_MAX]
+    except Exception:
+        return []

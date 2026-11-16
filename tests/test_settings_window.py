@@ -331,3 +331,19 @@ def test_challenge_bottom_rows_setting(tmp_path, monkeypatch):
         assert w.values() == d
     w.bottom_switch.setChecked(False)
     assert w.values()["challenge_bottom_rows"] == 0
+
+
+def test_cameras_are_listed_by_name_and_obs_is_picked(tmp_path, monkeypatch):
+    """A capture board: the cameras by name in the order of their numbers (a user
+    had several; only one was OBS's), OBS's virtual camera chosen on switching."""
+    import live_capture
+    monkeypatch.setattr(live_capture, "camera_names", lambda: ["Webcam", "Capture Card", "OBS Virtual Camera"])
+    w = window(tmp_path, monkeypatch)
+    w.capture_source.setCurrentIndex(w.capture_source.findData("camera"))
+    texts = [w.capture_camera.itemText(i) for i in range(w.capture_camera.count())]
+    assert texts[0].endswith("Webcam") and "OBS Virtual Camera" in texts[2] and len(texts) == 3
+    assert w.values()["capture_source"] == "camera" and w.values()["capture_camera"] == 2
+    # a saved number no camera has now stays, marked
+    d = display_settings({"display": {"capture_source": "camera", "capture_camera": 7}})
+    w._show_values(d)
+    assert w.values()["capture_camera"] == 7 and w.capture_camera.count() == 4

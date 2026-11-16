@@ -71,7 +71,12 @@ def test_what_goes_wrong_is_said():
     cam = live_capture.CameraCapture(7, open_device=lambda i: Device(opened=False))
     assert cam.grab()[2].startswith(live_capture.CAMERA_OPEN_REASON)
     black = live_capture.CameraCapture(0, open_device=lambda i: Device(np.zeros((1080, 1920, 3), np.uint8)))
-    assert grab_until(black, ok_wanted=False)[2] == live_capture.CAMERA_BLACK_REASON
+    real_hold = live_capture.DARK_HOLD_S
+    live_capture.DARK_HOLD_S = 0.05
+    try:
+        assert grab_until(black, ok_wanted=False)[2] == live_capture.CAMERA_BLACK_REASON
+    finally:
+        live_capture.DARK_HOLD_S = real_hold
     black.close()
     silent = live_capture.CameraCapture(0, open_device=lambda i: Device(None))
     real = live_capture.CAMERA_STALE_S
@@ -110,3 +115,21 @@ def test_the_camera_numbers_match_the_settings_and_a_session_starts():
     data_server.SESSION["camera_since"] = None
     assert data_server.game_started_at(cam) == cam.started_at
     cam.close()
+
+
+def test_a_nearly_black_picture_says_why():
+    """A virtual camera with nothing on it isn't exactly black (noise): it says
+    so instead of passing for a picture (a user's card showed a dark one)."""
+    rng = np.random.default_rng(3)
+    dark = rng.integers(0, 22, (1080, 1920, 3), dtype=np.uint8)
+    cam = live_capture.CameraCapture(0, open_device=lambda i: Device(dark))
+    cam._sizes = live_capture.SizeSettler(0.0)
+    assert grab_until(cam)[1]          # (a moment's black: read as it is, as the game goes black between scenes)
+    real_hold = live_capture.DARK_HOLD_S
+    live_capture.DARK_HOLD_S = 0.05
+    try:
+        assert grab_until(cam, ok_wanted=False)[2] == live_capture.CAMERA_BLACK_REASON
+    finally:
+        live_capture.DARK_HOLD_S = real_hold
+    cam.close()
+    assert not live_capture.is_dark(picture())

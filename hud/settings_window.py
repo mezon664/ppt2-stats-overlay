@@ -186,6 +186,9 @@ TEXT = {
     "src.camera": {"ja": "キャプチャーボード（Switch など）", "en": "Capture board (Switch etc.)"},
     "capture_camera": {"ja": "カメラ", "en": "Camera"},
     "cam.n": {"ja": "カメラ {n}", "en": "Camera {n}"},
+    "cam.named": {"ja": "カメラ {n}：{name}", "en": "Camera {n}: {name}"},
+    "cam.obs": {"ja": "（OBS の仮想カメラ）", "en": " (OBS's virtual camera)"},
+    "cam.gone": {"ja": "カメラ {n}（見つかりません）", "en": "Camera {n} (not found)"},
     "src.camera_steps": {
         "ja": "OBS の仮想カメラから読みます。<br>"
               "① OBS の「仮想カメラ開始」の横の歯車 → 出力タイプを「ソース」にして、キャプチャーボードのソースを選ぶ<br>"
@@ -199,6 +202,9 @@ TEXT = {
               "3. Set \"Camera\" below to OBS's virtual camera (the picture shows below once it's read)<br>"
               "<b>Don't set the output type to \"Program\"</b> (this app's own display would be read too).<br>"
               "Nothing is shown over a game window; the display goes to OBS (the browser source). Sounds and the voice play from this PC."},
+    "src.ok_match": {"ja": "✓ ぷよテト2 の試合画面を読めています", "en": "✓ Reading the Puyo Puyo Tetris 2 match screen"},
+    "src.ok_other": {"ja": "✓ 映像は読めています（ぷよテト2 の試合画面が映ると数値が出ます）",
+                     "en": "✓ The picture is read (numbers come once a Puyo Puyo Tetris 2 match is on it)"},
     "src.preview_none": {"ja": "（まだ読めていません。ぷよテト2 の画面が映ると、数秒でここに出ます）",
                          "en": "(Nothing read yet. Once Puyo Puyo Tetris 2 is on the picture, it shows here in a few seconds)"},
     "autostart_desc": {"ja": "ゲームを起動すると、このツールも自動で起動します",
@@ -1137,21 +1143,26 @@ class SettingsWindow(QtWidgets.QWidget):
         for key in ("game", "camera"):
             self.capture_source.addItem("", key)
         self.capture_source.currentIndexChanged.connect(self._changed)
-        self.capture_source.currentIndexChanged.connect(lambda _i: self._source_rows_shown())
+        self.capture_source.currentIndexChanged.connect(lambda _i: self._source_picked())
         self.source_card.add(_hbox(self.capture_source))
         self.camera_steps = QtWidgets.QLabel()
         self.camera_steps.setWordWrap(True)
         self.camera_steps.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        # the cameras by name (live_capture.camera_names: the same order as their
+        # numbers): a user had several, and only one was OBS's (filled by _fill_cameras)
         self.capture_camera = QtWidgets.QComboBox()
-        for n in range(10):
-            self.capture_camera.addItem("", n)
+        self._camera_names = None
         self.capture_camera.currentIndexChanged.connect(self._changed)
+        # what the server says about it now, in words (logs/last_status.txt): a
+        # dark picture alone didn't say why (a user's photo of the card)
+        self.camera_status = QtWidgets.QLabel()
+        self.camera_status.setWordWrap(True)
         self.camera_preview = QtWidgets.QLabel()
         self.camera_preview.setFixedHeight(180)
         self.camera_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self._camera_rows = [self.camera_steps,
                              _as_widget(self._row("capture_camera", _hbox(self.capture_camera))),
-                             self.camera_preview]
+                             self.camera_status, self.camera_preview]
         for w in self._camera_rows:
             self.source_card.add(w)
         # what the server reads now (logs/last_seen.jpg, every few seconds): to pick the right camera
@@ -1163,6 +1174,47 @@ class SettingsWindow(QtWidgets.QWidget):
 
         return self._page("page.home", self.power_card, self.source_card, self.autostart_card)
 
+    def _fill_cameras(self, keep=None):
+        """The camera list: each found camera by name (OBS's marked), in the order
+        of their numbers; a saved number no camera has now is kept as "not found"."""
+        import live_capture
+        if self._camera_names is None:
+            self._camera_names = live_capture.camera_names()
+        names = self._camera_names
+        keep = self.capture_camera.currentData() if keep is None else keep
+        box = self.capture_camera
+        box.blockSignals(True)
+        box.clear()
+        if names:
+            for i, name in enumerate(names):
+                text = self.tr_("cam.named").format(n=i + 1, name=name or "?")
+                if name == live_capture.OBS_CAMERA:
+                    text += self.tr_("cam.obs")
+                box.addItem(text, i)
+            if keep is not None and keep >= len(names):
+                box.addItem(self.tr_("cam.gone").format(n=keep + 1), keep)
+        else:   # (couldn't be listed: by number)
+            for i in range(live_capture.CAMERA_MAX):
+                box.addItem(self.tr_("cam.n").format(n=i + 1), i)
+        box.setCurrentIndex(max(0, box.findData(keep if keep is not None else 0)))
+        box.blockSignals(False)
+
+    def obs_camera_index(self):
+        import live_capture
+        names = self._camera_names or []
+        return names.index(live_capture.OBS_CAMERA) if live_capture.OBS_CAMERA in names else None
+
+    def _source_picked(self):
+        """Capture board chosen by hand: OBS's virtual camera picked, if there is
+        one and another was set."""
+        if not self._loading and self.capture_source.currentData() == "camera":
+            self._camera_names = None   # (listed afresh: OBS may have been installed since)
+            self._fill_cameras()
+            obs = self.obs_camera_index()
+            if obs is not None and self.capture_camera.currentData() != obs:
+                self.capture_camera.setCurrentIndex(self.capture_camera.findData(obs))
+        self._source_rows_shown()
+
     def _source_rows_shown(self):
         on = self.capture_source.currentData() == "camera"
         for w in getattr(self, "_camera_rows", ()):
@@ -1170,10 +1222,33 @@ class SettingsWindow(QtWidgets.QWidget):
         if on:
             self._refresh_camera_preview()
 
+    def _refresh_camera_status(self):
+        """The server's word on the camera now (logs/last_status.txt), shown above the picture."""
+        path = ROOT / "logs" / "last_status.txt"
+        try:
+            if time.time() - path.stat().st_mtime > 15:
+                raise OSError
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, ValueError):
+            self.camera_status.setText("")
+            return
+        get = lambda key: next((ln.split(":", 1)[1].strip() for ln in lines if ln.startswith(key + ":")), "")
+        message, match = get("capture"), get("match screen")
+        if message == "capturing":
+            text = self.tr_("src.ok_match" if match.startswith("yes") else "src.ok_other")
+            color = "#1b7a3a"
+        else:
+            from i18n import capture_message_en
+            text = "⚠ " + (capture_message_en(message) if self.lang == "en" else message)
+            color = "#a33a00"
+        self.camera_status.setText(text)
+        self.camera_status.setStyleSheet(f"color:{color};")
+
     def _refresh_camera_preview(self):
         """The picture the server read last (logs/last_seen.jpg), while 'capture board' is chosen."""
         if not self.isVisible() or self.capture_source.currentData() != "camera":
             return
+        self._refresh_camera_status()
         path = ROOT / "logs" / "last_seen.jpg"
         try:
             mtime = path.stat().st_mtime
@@ -2269,8 +2344,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.source_card.setTitle(t("card.source"))
         for i, key in enumerate(("game", "camera")):
             self.capture_source.setItemText(i, t("src." + key))
-        for n in range(self.capture_camera.count()):
-            self.capture_camera.setItemText(n, t("cam.n").format(n=n + 1))
+        self._fill_cameras()
         self.camera_steps.setText(t("src.camera_steps"))
         self.autostart_card.setTitle(t("autostart"))
         self.autostart_card.setDescription(t("autostart_desc"))
@@ -2847,7 +2921,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.challenge_side.setCurrentIndex(max(0, self.challenge_side.findData(d["challenge_side"])))
         self.challenge_off_in_rated.setChecked(d["challenge_off_in_rated"])
         self.capture_source.setCurrentIndex(max(0, self.capture_source.findData(d["capture_source"])))
-        self.capture_camera.setCurrentIndex(max(0, self.capture_camera.findData(d["capture_camera"])))
+        self._fill_cameras(keep=d["capture_camera"])
         self._source_rows_shown()
         self.mosaic_switch.setChecked(d["challenge_mosaic"] != "off")
         self.mosaic_metric.setCurrentIndex(max(0, self.mosaic_metric.findData(d["challenge_mosaic"])))
