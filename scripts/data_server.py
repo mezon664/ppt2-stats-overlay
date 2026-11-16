@@ -204,6 +204,7 @@ def follow_overlay(cap):
 
 
 LAST_FRAME = {"frame": None}
+CAPTURE_CHOICE_S = 1.0   # how often the capture loop looks at where to read the game from
 _COMMENTS = None
 
 
@@ -365,9 +366,34 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     minimized-window handling; kept separate so this module stays testable without
     a running game."""
     global CAPTURE_STATUS
-    from live_capture import GameWindowCapture
+    import live_capture
     from diagnostic import Diagnostic
-    make_capture = capture_factory or GameWindowCapture
+    # the PC game's window, or a camera (a capture board through OBS's virtual
+    # camera: display.capture_source); a change in the settings takes effect
+    # within CAPTURE_CHOICE_S
+    choice = {"want": None, "t": 0.0, "mtime": None}
+
+    def wanted():
+        now = time.monotonic()
+        if now - choice["t"] >= CAPTURE_CHOICE_S or choice["want"] is None:
+            choice["t"] = now
+            try:
+                mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else None
+                if mtime != choice["mtime"] or choice["want"] is None:
+                    choice["mtime"] = mtime
+                    d = display_settings(load_settings())
+                    choice["want"] = (d["capture_source"], d["capture_camera"] if d["capture_source"] == "camera" else None)
+            except Exception:
+                choice["want"] = choice["want"] or ("game", None)
+        return choice["want"]
+
+    def make_capture():
+        if capture_factory is not None:
+            return capture_factory()
+        kind, index = wanted()
+        log.info("reading the game from %s", f"camera {index}" if kind == "camera" else "the PC game's window")
+        return live_capture.make_capture({"capture_source": kind, "capture_camera": index or 0})
+    made_for = None
     diag = Diagnostic()
     cap = None
     period = 1.0 / fps_target
@@ -379,7 +405,11 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     while stop_event is None or not stop_event.is_set():
         loop_start = time.monotonic()
         try:
+            if capture_factory is None and cap is not None and wanted() != made_for:
+                cap.close()   # (the settings changed where the game is read from)
+                cap = None
             if cap is None:
+                made_for = wanted() if capture_factory is None else None
                 cap = make_capture()
             frame, ok, reason, profile = cap.grab()
             follow_session(cap)   # (also when the game is gone: the session ends)

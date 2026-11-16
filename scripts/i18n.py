@@ -29,6 +29,9 @@ _CAPTURE_EN = (
     ("ウインドウのアスペクト比が未対応です", "Unsupported window shape (use a 16:9 window)"),
     ("ウインドウサイズが対応範囲外です", "The game window is too small or too large"),
     ("キャプチャに失敗しました", "Screen capture failed"),
+    ("カメラを開けません", "Can't open the camera (is another app using it?)"),
+    ("カメラの映像が届いていません", "No picture from the camera (is OBS's virtual camera started?)"),
+    ("カメラの映像が真っ黒です", "The camera's picture is black (is the virtual camera set to the capture board's source?)"),
 )
 
 

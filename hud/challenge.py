@@ -568,9 +568,11 @@ class ChallengeLayer(QtWidgets.QWidget):
     def now(self):
         return self._clock.elapsed() / 1000.0
 
-    def update_state(self, state, display, scale, active):
+    def update_state(self, state, display, scale, active, sounds_only=False):
         """active: shown at all now (a match on screen, the HUD kept out of
-        captures, not positioning)."""
+        captures, not positioning). sounds_only: not shown (no game window on
+        this PC: a game on a capture board, read through a camera), but 演出強化's
+        sounds and the announcer still go — the stream hears them through OBS."""
         from config_store import challenge_display
         display = challenge_display(display, state)   # (all off in a rated match, if asked)
         self.scale = scale
@@ -623,7 +625,12 @@ class ChallengeLayer(QtWidgets.QWidget):
             if garbage != self.garbage:
                 self.garbage = garbage
                 self.update()
-        self._take_bursts(state, display, side, playing and not puyo, now)
+        if sounds_only and not active:
+            st = state or {}
+            self._take_bursts(state, display, side, st.get("match_screen") is True and not st.get("frozen") and not puyo,
+                              now, visual=False)
+        else:
+            self._take_bursts(state, display, side, playing and not puyo, now)
         # the comments (scripts/comments.py): their own clock from their age at the server
         self._take_comments((state or {}).get("comments") if self.comments_ok else None)
         # the bottom rows covered (challenge_bottom_rows: so many, whatever's there)
@@ -640,7 +647,7 @@ class ChallengeLayer(QtWidgets.QWidget):
         self.mosaic = (info.get("side", side), s) if active and s > 0 and self.geom and not image else None
         self._refresh(cover)
 
-    def _take_bursts(self, state, display, side, playing, now):
+    def _take_bursts(self, state, display, side, playing, now, visual=True):
         """演出強化 (challenge_dopamine): a burst for each new TETRIS / T-SPIN /
         PC of yours (the ones going finish after the match too); 読み上げ
         (challenge_announcer): its name said — each on its own (user: the
@@ -696,7 +703,8 @@ class ChallengeLayer(QtWidgets.QWidget):
                 burst = dopamine.Burst(f"{match}|{side}|{e['t']}", side, now, e, level if effects else "lite",
                                        int(player.get("b2b") or 0), self._burst_chain)
                 if effects:
-                    self.bursts.append(burst)
+                    if visual:
+                        self.bursts.append(burst)
                     if self._sounds is None:
                         self._sounds = dopamine.shared_sounds()
                     self._sounds.play(burst, int(display.get("challenge_dopamine_volume", 70)))

@@ -170,11 +170,17 @@ DISPLAY_DEFAULTS = {
     # 縛りプレイ all off during a rated (league) match (user's request; the
     # server says which ones are: state["rated_match"]) — see challenge_display
     "challenge_off_in_rated": False,
+    # where the game is read from: "game" the PC game's window (Steam), or
+    # "camera" — a Switch etc. on a capture board, through OBS's virtual
+    # camera (scripts/live_capture.CameraCapture); capture_camera its number
+    "capture_source": "game",
+    "capture_camera": 0,
 }
 
 # (min, max) for numeric options; out-of-range values are clamped.
 DISPLAY_RANGES = {
     "challenge_bottom_rows": (0, 19),
+    "capture_camera": (0, 9),
     "challenge_dopamine_volume": (0, 100),
     "challenge_announcer_volume": (0, 200),   # (above 100: a louder copy, hud/dopamine.py play_level)
     "challenge_mosaic_max": (0.0, 1000.0),
@@ -228,7 +234,8 @@ DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language
                    "challenge_cats_side": ("both", "left", "right"),
                    "challenge_comments": ("off", "few", "normal", "many"),
                    "challenge_dopamine": ("off", "lite", "on", "max"),
-                   "challenge_announcer_voice": ("heart", "adam"), "challenge_side": ("auto", "left", "right")}
+                   "challenge_announcer_voice": ("heart", "adam"), "challenge_side": ("auto", "left", "right"),
+                   "capture_source": ("game", "camera")}
 
 
 def stats_mode(display, side):

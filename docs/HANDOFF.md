@@ -412,3 +412,11 @@
 ### 2026-11-14 v0.2.17（レート戦では縛りプレイをオフ）
 - 設定 `challenge_off_in_rated`（縛りプレイのページ「対象の盤面」のカード）: レート戦（`state["rated_match"]`）のあいだ、縛りプレイの値をすべてオフにして使う（`config_store.challenge_display` / `CHALLENGE_OFF`）。サーバー（コメント・名前・モザイク・お邪魔）、HUD（`ChallengeLayer.update_state`）、OBS（`challengeDisplay`）が同じ形で使う。
   未確認: 本物のレート戦では試していない。
+
+### 2026-11-16 キャプチャーボード（Switch など）対応
+- ほかの利用者: Switch 版をキャプチャーボードで OBS に映していると「ゲームのウィンドウが見つかりません」。
+- `display.capture_source`（"game" / "camera"）と `capture_camera`（0〜9）: "camera" なら `live_capture.CameraCapture`（DirectShow、OBS の仮想カメラ）。読む用のスレッドが最新の 1 枚だけ持つ。黒帯は `PictureFinder`、大きさは `shrink_for_recognition` で PC 版と同じ。開けない（2 秒ごとに再試行）・届かない・真っ黒は理由を出す（i18n にも）。サーバーは 1 秒ごとに設定を見て、変わったら作り直す。
+- HUD は乗るゲームの窓がないので出さないが、"camera" のときは演出強化の音と読み上げだけ鳴らす（`update_state(..., sounds_only=True)` → `_take_bursts(visual=False)`）。
+- 設定画面: ホームに「ゲームの読み取り元」のカード（手順、カメラ番号、logs/last_seen.jpg の映像を 2 秒ごとに表示）。
+- 検証: `tools/validation/camera_scan.py`（録画を 1080p に拡大・16〜235 の映像レベル・JPEG 80 にして CameraCapture に通す）で、録画 3 本とも認識した技が通常と同じ（1 件 0.1 秒ずれ）。この PC の OBS 仮想カメラ（番号 1）を開いてサーバーのループで「capturing」まで確認。
+  未確認: 本物の Switch 版の画面（PC 版と配置・見た目が同じか）。Switch 版の録画が必要。

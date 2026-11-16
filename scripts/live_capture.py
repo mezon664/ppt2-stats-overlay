@@ -360,3 +360,129 @@ class GameWindowCapture:
         self.last_client_origin = (left + px, top + py)
         frame, work_profile = shrink_for_recognition(frame)
         return frame, True, None, work_profile if work_profile.ok else profile
+
+
+# ---------------------------------------------------------------------------
+# A game on another machine (Switch, PS, ...) through a capture board: read
+# as a camera — OBS's virtual camera showing the capture board's source (OBS
+# keeps the board to itself), or the board itself when nothing else uses it.
+# Only the picture is read, as with the PC game's window (user's request: a
+# Switch on a capture board into OBS said "game window not found").
+# ---------------------------------------------------------------------------
+CAMERA_W, CAMERA_H = 1920, 1080   # asked for (a camera gives what it has)
+CAMERA_STALE_S = 2.0               # no new picture for this long: say so
+CAMERA_MAX = 10                    # camera numbers 0..9 (settings)
+CAMERA_RETRY_S = 2.0               # a camera that wouldn't open is tried again this often
+CAMERA_OPEN_REASON = "カメラを開けません"        # (+ its number)
+CAMERA_STALE_REASON = "カメラの映像が届いていません (OBS の仮想カメラを開始していますか？)"
+CAMERA_BLACK_REASON = "カメラの映像が真っ黒です (仮想カメラの出力にキャプチャーボードのソースを選んでいますか？)"
+
+
+class CameraCapture:
+    """The game's picture from a camera device (DirectShow: OBS's virtual
+    camera is one). A thread keeps only the newest picture, so what's read is
+    now, not a queue of old ones (a camera sends 30-60 a second, this reads
+    15). Same results as GameWindowCapture.grab; no window (hwnd None: nothing
+    of this app's can be over it, and the HUD has no game window to sit on)."""
+
+    def __init__(self, index=0, open_device=None):
+        import threading
+        self.index = int(index)
+        self.hwnd = None
+        self.window_only = False
+        self.last_method = "camera"
+        self.last_picture = None
+        self.last_client_size = None
+        self.last_client_origin = None
+        self._picture = PictureFinder()
+        self._sizes = SizeSettler()
+        self._open = open_device or self._open_dshow
+        self._dev = None
+        self._latest, self._latest_t = None, None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._failed_t = -CAMERA_RETRY_S   # when opening it last failed
+
+    @staticmethod
+    def _open_dshow(index):
+        dev = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if dev.isOpened():
+            dev.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_W)
+            dev.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_H)
+        return dev
+
+    def _start(self):
+        import threading
+        self._dev = self._open(self.index)
+        if self._dev is None or not self._dev.isOpened():
+            self._dev = None
+            return False
+        self._opened_t = time.monotonic()
+        self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
+        self._thread.start()
+        return True
+
+    def _run(self):
+        while not self._stop.is_set():
+            ok, frame = self._dev.read()
+            if not ok or frame is None:
+                if self._stop.wait(0.05):
+                    break
+                continue
+            with self._lock:
+                self._latest, self._latest_t = frame, time.monotonic()
+
+    def close(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        if self._dev is not None:
+            try:
+                self._dev.release()
+            except Exception:
+                pass
+        self._dev = None
+
+    def grab(self):
+        if self._dev is None:
+            # (tried again now and then, not every frame: opening a device takes a while)
+            if time.monotonic() - self._failed_t < CAMERA_RETRY_S or not self._start():
+                if time.monotonic() - self._failed_t >= CAMERA_RETRY_S:
+                    self._failed_t = time.monotonic()
+                return None, False, f"{CAMERA_OPEN_REASON} (番号 {self.index})", None
+        with self._lock:
+            frame, t = self._latest, self._latest_t
+        if frame is None:
+            if self._thread is not None and not self._thread.is_alive():
+                return None, False, f"{CAMERA_OPEN_REASON} (番号 {self.index})", None
+            if time.monotonic() - self._opened_t > CAMERA_STALE_S:   # (opened, but nothing comes)
+                return None, False, CAMERA_STALE_REASON, None
+            return None, False, None, None          # (just opened: the first picture's coming)
+        if time.monotonic() - t > CAMERA_STALE_S:
+            return None, False, CAMERA_STALE_REASON, None
+        if frame.ndim == 3 and frame.shape[2] == 4:
+            frame = frame[:, :, :3]
+        if is_black(frame):
+            return None, False, CAMERA_BLACK_REASON, None
+        h, w = frame.shape[:2]
+        if not self._sizes.update((w, h), time.monotonic()):
+            return None, False, None, None
+        px, py, pw, ph = self._picture.update(frame)
+        profile = compute_profile(pw, ph)
+        if not profile.ok:
+            return None, False, profile.reason, profile
+        if (pw, ph) != (w, h):
+            frame = frame[py:py + ph, px:px + pw]
+        self.last_picture = (px, py, pw, ph)
+        self.last_client_size = (pw, ph)
+        frame, work_profile = shrink_for_recognition(frame)
+        return frame, True, None, work_profile if work_profile.ok else profile
+
+
+def make_capture(display):
+    """The capture for the settings: the PC game's window, or a camera
+    (display.capture_source "camera", display.capture_camera its number)."""
+    if (display or {}).get("capture_source") == "camera":
+        return CameraCapture(int((display or {}).get("capture_camera") or 0))
+    return GameWindowCapture()

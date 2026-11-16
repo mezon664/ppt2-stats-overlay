@@ -181,6 +181,26 @@ TEXT = {
     "page.other": {"ja": "その他", "en": "Other"},
     "card.power": {"ja": "表示", "en": "Display"},
     "autostart": {"ja": "ぷよテト2と一緒に起動", "en": "Start with Puyo Puyo Tetris 2"},
+    "card.source": {"ja": "ゲームの読み取り元", "en": "Where the game is read from"},
+    "src.game": {"ja": "PC 版（Steam）", "en": "PC version (Steam)"},
+    "src.camera": {"ja": "キャプチャーボード（Switch など）", "en": "Capture board (Switch etc.)"},
+    "capture_camera": {"ja": "カメラ", "en": "Camera"},
+    "cam.n": {"ja": "カメラ {n}", "en": "Camera {n}"},
+    "src.camera_steps": {
+        "ja": "OBS の仮想カメラから読みます。<br>"
+              "① OBS の「仮想カメラ開始」の横の歯車 → 出力タイプを「ソース」にして、キャプチャーボードのソースを選ぶ<br>"
+              "② 「仮想カメラ開始」を押す<br>"
+              "③ 下の「カメラ」を、OBS の仮想カメラの番号にする（読めていれば下に映像が出ます）<br>"
+              "<b>出力タイプを「プログラム」にしないでください</b>（このアプリの表示まで読んでしまいます）。<br>"
+              "ゲーム画面の上の表示は出ません。表示は OBS（ブラウザソース）に出ます。効果音と読み上げはこの PC から鳴ります。",
+        "en": "Read through OBS's virtual camera.<br>"
+              "1. In OBS, the gear next to \"Start Virtual Camera\" → Output Type \"Source\", and pick the capture board's source<br>"
+              "2. Press \"Start Virtual Camera\"<br>"
+              "3. Set \"Camera\" below to OBS's virtual camera (the picture shows below once it's read)<br>"
+              "<b>Don't set the output type to \"Program\"</b> (this app's own display would be read too).<br>"
+              "Nothing is shown over a game window; the display goes to OBS (the browser source). Sounds and the voice play from this PC."},
+    "src.preview_none": {"ja": "（まだ読めていません。ぷよテト2 の画面が映ると、数秒でここに出ます）",
+                         "en": "(Nothing read yet. Once Puyo Puyo Tetris 2 is on the picture, it shows here in a few seconds)"},
     "autostart_desc": {"ja": "ゲームを起動すると、このツールも自動で起動します",
                        "en": "When the game starts, this tool starts by itself"},
     "autostart_note": {"ja": "オンの間は、Windows の起動時に小さな見張り役が動き出し、ゲームの起動を待ちます（ほぼ負荷はありません）。"
@@ -1110,7 +1130,66 @@ class SettingsWindow(QtWidgets.QWidget):
         self.autostart_note = ui.muted()
         self.autostart_card.add(self.autostart_note)
 
-        return self._page("page.home", self.power_card, self.autostart_card)
+        # where the game is read from: the PC game, or a capture board (a Switch
+        # etc.) through OBS's virtual camera (user's request: scripts/live_capture.CameraCapture)
+        self.source_card = ui.Card()
+        self.capture_source = ui.Segmented()
+        for key in ("game", "camera"):
+            self.capture_source.addItem("", key)
+        self.capture_source.currentIndexChanged.connect(self._changed)
+        self.capture_source.currentIndexChanged.connect(lambda _i: self._source_rows_shown())
+        self.source_card.add(_hbox(self.capture_source))
+        self.camera_steps = QtWidgets.QLabel()
+        self.camera_steps.setWordWrap(True)
+        self.camera_steps.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.capture_camera = QtWidgets.QComboBox()
+        for n in range(10):
+            self.capture_camera.addItem("", n)
+        self.capture_camera.currentIndexChanged.connect(self._changed)
+        self.camera_preview = QtWidgets.QLabel()
+        self.camera_preview.setFixedHeight(180)
+        self.camera_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._camera_rows = [self.camera_steps,
+                             _as_widget(self._row("capture_camera", _hbox(self.capture_camera))),
+                             self.camera_preview]
+        for w in self._camera_rows:
+            self.source_card.add(w)
+        # what the server reads now (logs/last_seen.jpg, every few seconds): to pick the right camera
+        self._preview_mtime = None
+        self._camera_timer = QtCore.QTimer(self)
+        self._camera_timer.setInterval(2000)
+        self._camera_timer.timeout.connect(self._refresh_camera_preview)
+        self._camera_timer.start()
+
+        return self._page("page.home", self.power_card, self.source_card, self.autostart_card)
+
+    def _source_rows_shown(self):
+        on = self.capture_source.currentData() == "camera"
+        for w in getattr(self, "_camera_rows", ()):
+            w.setVisible(on)
+        if on:
+            self._refresh_camera_preview()
+
+    def _refresh_camera_preview(self):
+        """The picture the server read last (logs/last_seen.jpg), while 'capture board' is chosen."""
+        if not self.isVisible() or self.capture_source.currentData() != "camera":
+            return
+        path = ROOT / "logs" / "last_seen.jpg"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime is None or time.time() - mtime > 15:
+            self.camera_preview.setPixmap(QtGui.QPixmap())
+            self.camera_preview.setText(self.tr_("src.preview_none"))
+            self._preview_mtime = None
+            return
+        if mtime == self._preview_mtime:
+            return
+        self._preview_mtime = mtime
+        pix = QtGui.QPixmap(str(path))
+        if not pix.isNull():
+            self.camera_preview.setPixmap(pix.scaledToHeight(180, QtCore.Qt.TransformationMode.SmoothTransformation))
 
     # --- 表示する項目: what is shown, each part in its own card ---
     def _build_items_page(self):
@@ -2187,6 +2266,12 @@ class SettingsWindow(QtWidgets.QWidget):
         self.show_on_obs.setText(t("show_on_obs"))
         for c in (self.show_on_hud, self.show_on_obs):
             c.setToolTip(t("show_on_tip"))
+        self.source_card.setTitle(t("card.source"))
+        for i, key in enumerate(("game", "camera")):
+            self.capture_source.setItemText(i, t("src." + key))
+        for n in range(self.capture_camera.count()):
+            self.capture_camera.setItemText(n, t("cam.n").format(n=n + 1))
+        self.camera_steps.setText(t("src.camera_steps"))
         self.autostart_card.setTitle(t("autostart"))
         self.autostart_card.setDescription(t("autostart_desc"))
         self.autostart_note.setText(t("autostart_note"))
@@ -2761,6 +2846,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.cats_side.setCurrentIndex(max(0, self.cats_side.findData(d["challenge_cats_side"])))
         self.challenge_side.setCurrentIndex(max(0, self.challenge_side.findData(d["challenge_side"])))
         self.challenge_off_in_rated.setChecked(d["challenge_off_in_rated"])
+        self.capture_source.setCurrentIndex(max(0, self.capture_source.findData(d["capture_source"])))
+        self.capture_camera.setCurrentIndex(max(0, self.capture_camera.findData(d["capture_camera"])))
+        self._source_rows_shown()
         self.mosaic_switch.setChecked(d["challenge_mosaic"] != "off")
         self.mosaic_metric.setCurrentIndex(max(0, self.mosaic_metric.findData(d["challenge_mosaic"])))
         top = float(d["challenge_mosaic_max"] or 0)
@@ -2837,6 +2925,8 @@ class SettingsWindow(QtWidgets.QWidget):
             "challenge_cats_side": self.cats_side.currentData(),
             "challenge_side": self.challenge_side.currentData(),
             "challenge_off_in_rated": self.challenge_off_in_rated.isChecked(),
+            "capture_source": self.capture_source.currentData(),
+            "capture_camera": self.capture_camera.currentData(),
             "challenge_mosaic": self.mosaic_metric.currentData() if self.mosaic_switch.isChecked() else "off",
             "challenge_mosaic_max": float(self.mosaic_max.value())
             if (self.mosaic_metric.currentData() == "time" or not self.mosaic_auto.isChecked()) else 0.0,
