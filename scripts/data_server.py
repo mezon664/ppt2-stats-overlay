@@ -131,8 +131,16 @@ YOU_SEEN_S = 90.0
 
 
 def game_started_at(cap):
-    """When the game's process started (a timestamp), or None (no game)."""
+    """When the game's process started (a timestamp), or None (no game). A
+    game on a capture board (read through a camera) has no process here: the
+    first picture read counts, kept while the app runs (a camera reopened
+    after a settings change goes on with the same session)."""
     hwnd = getattr(cap, "hwnd", None)
+    camera_start = getattr(cap, "started_at", None)
+    if camera_start is not None and not hwnd:
+        if SESSION.get("camera_since") is None:
+            SESSION["camera_since"] = camera_start
+        return SESSION["camera_since"]
     try:
         import win32gui
         import win32process

@@ -81,7 +81,7 @@ def test_what_goes_wrong_is_said():
     finally:
         live_capture.CAMERA_STALE_S = real
         silent.close()
-    for reason in (live_capture.CAMERA_OPEN_REASON + " (番号 7)", live_capture.CAMERA_STALE_REASON,
+    for reason in (live_capture.CAMERA_OPEN_REASON + " (カメラ 8)", live_capture.CAMERA_STALE_REASON,
                    live_capture.CAMERA_BLACK_REASON):
         assert capture_message_en(reason) != reason      # (in English too)
 
@@ -93,3 +93,20 @@ def test_the_setting_picks_the_capture():
     assert isinstance(live_capture.make_capture({"capture_source": "camera", "capture_camera": 3}),
                       live_capture.CameraCapture)
     assert live_capture.make_capture({"capture_source": "camera", "capture_camera": 3}).index == 3
+
+
+def test_the_camera_numbers_match_the_settings_and_a_session_starts():
+    """The reason names the camera as the settings do (index 0 is "カメラ 1"),
+    and the first picture read starts the game session (today's results)."""
+    cam = live_capture.CameraCapture(2, open_device=lambda i: Device(opened=False))
+    assert "カメラ 3" in cam.grab()[2]
+    dev = Device(picture())
+    cam = live_capture.CameraCapture(0, open_device=lambda i: dev)
+    cam._sizes = live_capture.SizeSettler(0.0)
+    assert cam.started_at is None
+    grab_until(cam)
+    assert cam.started_at is not None
+    import data_server
+    data_server.SESSION["camera_since"] = None
+    assert data_server.game_started_at(cam) == cam.started_at
+    cam.close()

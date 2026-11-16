@@ -403,6 +403,10 @@ class CameraCapture:
         self._stop = threading.Event()
         self._thread = None
         self._failed_t = -CAMERA_RETRY_S   # when opening it last failed
+        self._opened_t = 0.0
+        # the "game session" (today's results since it began): no game process
+        # here to ask when it started — the first picture read counts
+        self.started_at = None
 
     @staticmethod
     def _open_dshow(index):
@@ -437,6 +441,9 @@ class CameraCapture:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
+            if self._thread.is_alive():   # (stuck in a read: letting go of the device under it could crash)
+                self._dev = None
+                return
         if self._dev is not None:
             try:
                 self._dev.release()
@@ -450,12 +457,12 @@ class CameraCapture:
             if time.monotonic() - self._failed_t < CAMERA_RETRY_S or not self._start():
                 if time.monotonic() - self._failed_t >= CAMERA_RETRY_S:
                     self._failed_t = time.monotonic()
-                return None, False, f"{CAMERA_OPEN_REASON} (番号 {self.index})", None
+                return None, False, f"{CAMERA_OPEN_REASON} (カメラ {self.index + 1})", None
         with self._lock:
             frame, t = self._latest, self._latest_t
         if frame is None:
             if self._thread is not None and not self._thread.is_alive():
-                return None, False, f"{CAMERA_OPEN_REASON} (番号 {self.index})", None
+                return None, False, f"{CAMERA_OPEN_REASON} (カメラ {self.index + 1})", None
             if time.monotonic() - self._opened_t > CAMERA_STALE_S:   # (opened, but nothing comes)
                 return None, False, CAMERA_STALE_REASON, None
             return None, False, None, None          # (just opened: the first picture's coming)
@@ -476,6 +483,8 @@ class CameraCapture:
             frame = frame[py:py + ph, px:px + pw]
         self.last_picture = (px, py, pw, ph)
         self.last_client_size = (pw, ph)
+        if self.started_at is None:
+            self.started_at = time.time()
         frame, work_profile = shrink_for_recognition(frame)
         return frame, True, None, work_profile if work_profile.ok else profile
 
