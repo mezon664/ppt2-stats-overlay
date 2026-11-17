@@ -424,3 +424,4 @@
   遅れ: この PC の OBS 仮想カメラは 60 枚/秒、read は新しい 1 枚を待つだけで溜まらない（カメラ分の遅れは最大約 17ms）。
 - v0.2.20（Switch の利用者の報告: カメラ 1〜10 に映るものが複数あり、カメラ 2 は映るが試合を検知せず、カメラ 8 で動いた。ほかのカメラには「カメラを検知できません」の画像や、止まった画像を出すものもあった）: カメラの一覧を名前で（`live_capture.camera_names`: DirectShow の ICreateDevEnum を ctypes で呼び、IEnumMoniker / IPropertyBag は pythoncom。OpenCV の番号と同じ順。この PC で「AMD Privacy View camera」「OBS Virtual Camera」= 0 / 1 を確認）。キャプチャーボードに切り替えたら OBS Virtual Camera を選ぶ。カードに今の状態（logs/last_status.txt の capture / match screen）。ほぼ真っ黒（明るい画素 0.5% 未満）が 3 秒続いたら黒の理由（場面の切り替わりの一瞬は読む）。
   候補（未実装）: 止まった映像の検出、ぷよテト2 の画面が長く映らないときの知らせ。
+- v0.2.21: カードの見本は logs/preview.jpg（`diagnostic.write` が 480px 幅で、メモなしで保存）。last_seen.jpg の黄色いメモを見た利用者が「正常？」と心配した。

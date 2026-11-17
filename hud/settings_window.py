@@ -1249,7 +1249,7 @@ class SettingsWindow(QtWidgets.QWidget):
         if not self.isVisible() or self.capture_source.currentData() != "camera":
             return
         self._refresh_camera_status()
-        path = ROOT / "logs" / "last_seen.jpg"
+        path = ROOT / "logs" / "preview.jpg"   # (the picture alone: scripts/diagnostic.py)
         try:
             mtime = path.stat().st_mtime
         except OSError:

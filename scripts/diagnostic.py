@@ -17,6 +17,7 @@ from version import VERSION
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 EVERY_S = 5.0
+PREVIEW_W = 480   # logs/preview.jpg: the picture alone, this wide
 
 
 class Diagnostic:
@@ -70,6 +71,12 @@ class Diagnostic:
             (self.log_dir / "last_status.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
             if frame is None:
                 return
+            # the picture alone, small (the settings window's capture board card
+            # shows it: the yellow notes on last_seen.jpg made a user ask if
+            # something was wrong)
+            h, w = frame.shape[:2]
+            small = cv2.resize(frame, (PREVIEW_W, max(1, round(h * PREVIEW_W / w))), interpolation=cv2.INTER_AREA)
+            write_image(self.log_dir / "preview.jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
             img = frame.copy()
             y = 22
             for line in lines:
