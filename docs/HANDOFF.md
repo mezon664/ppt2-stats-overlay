@@ -425,3 +425,10 @@
 - v0.2.20（Switch の利用者の報告: カメラ 1〜10 に映るものが複数あり、カメラ 2 は映るが試合を検知せず、カメラ 8 で動いた。ほかのカメラには「カメラを検知できません」の画像や、止まった画像を出すものもあった）: カメラの一覧を名前で（`live_capture.camera_names`: DirectShow の ICreateDevEnum を ctypes で呼び、IEnumMoniker / IPropertyBag は pythoncom。OpenCV の番号と同じ順。この PC で「AMD Privacy View camera」「OBS Virtual Camera」= 0 / 1 を確認）。キャプチャーボードに切り替えたら OBS Virtual Camera を選ぶ。カードに今の状態（logs/last_status.txt の capture / match screen）。ほぼ真っ黒（明るい画素 0.5% 未満）が 3 秒続いたら黒の理由（場面の切り替わりの一瞬は読む）。
   候補（未実装）: 止まった映像の検出、ぷよテト2 の画面が長く映らないときの知らせ。
 - v0.2.21: カードの見本は logs/preview.jpg（`diagnostic.write` が 480px 幅で、メモなしで保存）。last_seen.jpg の黄色いメモを見た利用者が「正常？」と心配した。
+
+### 2026-11-19 v0.2.22（診断をコピー）
+- Switch の利用者（キャプチャーボード）から「自分（左）の数値だけ低い、相手（右）は正しそう」。ファイルを X の DM で送れないので、トレイに「直近の試合の診断をコピー」（`scripts/diag_summary.py`）。server.log（と .1〜.3、後ろから最大約 3MB）から試合ごと（`resetting match state` 〜 `match concluded` / `screen went black`）に、左右の数えた技・火力・ren_source、`banner ignored`（光なしで見送り）、flash dismissed、T-SPIN の照合の最高点をまとめる。新しい順に 5 試合、9,000 字まで。名前は入れない。
+  この PC の記録で 5 試合 約 2,000 字、0.2 秒。トレイのメニューを押すところは未確認。
+- 通知のクリックは、最後の通知が更新のときだけ更新タブを開く（`notice["kind"]`）。
+- 手順の注意書き: 出力タイプを「シーン」にするなら、キャプチャーボードだけのシーン（利用者の報告）。
+- 左だけ低い原因はまだ不明（盤面の背景色は明るさ 30〜40 で、光の判定 250 には関係しない）。診断が届いたら「let go」と「TS peak」を左右で比べる。

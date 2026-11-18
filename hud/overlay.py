@@ -3109,6 +3109,30 @@ def main():
     # (last_seen.jpg, last_status.txt) and server.log (scripts/diagnostic.py)
     act_logs = menu.addAction("", lambda: QtGui.QDesktopServices.openUrl(
         QtCore.QUrl.fromLocalFile(str(ROOT_DIR / "logs"))))
+    # the same, as short text for an X DM (no file needed): the last matches
+    # from server.log, what each side counted and let go (scripts/diag_summary.py)
+    notice = {"kind": None}     # what the last notification was, for a click on it
+
+    def copy_diagnostic():
+        import diag_summary
+        from version import VERSION
+        ja = win.display["language"] != "en"
+        try:
+            text = diag_summary.summary(ROOT_DIR / "logs", VERSION)
+        except Exception:
+            log_hud.exception("diagnostic summary failed")
+            text = None
+        notice["kind"] = "copied"
+        if text is None:
+            tray.showMessage("PPTetrics", "診断をまとめられませんでした。" if ja else "The diagnostic couldn't be made.",
+                             QtWidgets.QSystemTrayIcon.MessageIcon.Warning, 6000)
+            return
+        QtWidgets.QApplication.clipboard().setText(text)
+        tray.showMessage("PPTetrics",
+                         "直近の試合の診断をコピーしました。DM などにそのまま貼り付けて送ってください。" if ja else
+                         "The last matches' diagnostic is copied. Paste it as it is into a DM or the like.",
+                         QtWidgets.QSystemTrayIcon.MessageIcon.Information, 8000)
+    act_copy = menu.addAction("", copy_diagnostic)
     menu.addSeparator()
     act_quit = menu.addAction("", app.quit)
     tray.setContextMenu(menu)
@@ -3133,6 +3157,8 @@ def main():
         act_obs.setText("    In OBS" if lang == "en" else "    OBS に表示")
         act_settings.setText("Display settings…" if lang == "en" else "表示設定…")
         act_logs.setText("Open the troubleshooting files…" if lang == "en" else "うまく認識しないとき：診断ファイルを開く…")
+        act_copy.setText("Copy the last matches' diagnostic (to paste in a DM)" if lang == "en" else
+                         "うまく認識しないとき：直近の試合の診断をコピー（DM に貼る用）")
         act_quit.setText("Quit" if lang == "en" else "終了")
     tray_language(win.display["language"])
     win.language_changed.connect(tray_language)
@@ -3143,6 +3169,7 @@ def main():
     # doesn't take the focus; clicking it opens the settings on the update tab.
     def update_found(info):
         ja = win.display["language"] != "en"
+        notice["kind"] = "update"
         tray.showMessage("PPTetrics",
                          f"新しい版 v{info['version']} があります。ここをクリックして更新できます。" if ja else
                          f"Version v{info['version']} is available. Click here to update.",
@@ -3150,7 +3177,8 @@ def main():
     settings_win.update_available.connect(update_found)
     # started again while running: open the settings (the person clicked the shortcut)
     instance.newConnection.connect(lambda: (instance.nextPendingConnection(), settings_win.open()))
-    tray.messageClicked.connect(lambda: settings_win.show_update_tab() if settings_win._update_info else None)
+    tray.messageClicked.connect(lambda: settings_win.show_update_tab()
+                                if settings_win._update_info and notice["kind"] == "update" else None)
     if settings.get("update", {}).get("check_on_start", True):
         settings_win.check_for_update(silent=True)
     # Open the settings right away, so someone launching the tool sees where to

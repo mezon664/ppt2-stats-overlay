@@ -191,16 +191,18 @@ TEXT = {
     "cam.gone": {"ja": "カメラ {n}（見つかりません）", "en": "Camera {n} (not found)"},
     "src.camera_steps": {
         "ja": "OBS の仮想カメラから読みます。<br>"
-              "① OBS の「仮想カメラ開始」の横の歯車 → 出力タイプを「ソース」にして、キャプチャーボードのソースを選ぶ<br>"
+              "① OBS の「仮想カメラ開始」の横の歯車 → 出力タイプを「ソース」にして、キャプチャーボードのソースを選ぶ"
+              "（「シーン」にするなら、キャプチャーボードだけが入ったシーンを選ぶ）<br>"
               "② 「仮想カメラ開始」を押す<br>"
               "③ 下の「カメラ」を、OBS の仮想カメラの番号にする（読めていれば下に映像が出ます）<br>"
-              "<b>出力タイプを「プログラム」にしないでください</b>（このアプリの表示まで読んでしまいます）。<br>"
+              "<b>「プログラム」や、このアプリのブラウザソースが入ったシーンは選ばないでください</b>（このアプリの表示まで読んでしまい、数値がずれます）。<br>"
               "ゲーム画面の上の表示は出ません。表示は OBS（ブラウザソース）に出ます。効果音と読み上げはこの PC から鳴ります。",
         "en": "Read through OBS's virtual camera.<br>"
-              "1. In OBS, the gear next to \"Start Virtual Camera\" → Output Type \"Source\", and pick the capture board's source<br>"
+              "1. In OBS, the gear next to \"Start Virtual Camera\" → Output Type \"Source\", and pick the capture board's source"
+              " (or \"Scene\" with a scene holding only the capture board)<br>"
               "2. Press \"Start Virtual Camera\"<br>"
               "3. Set \"Camera\" below to OBS's virtual camera (the picture shows below once it's read)<br>"
-              "<b>Don't set the output type to \"Program\"</b> (this app's own display would be read too).<br>"
+              "<b>Don't pick \"Program\" or a scene with this app's browser source in it</b> (this app's own display would be read too, and the numbers go off).<br>"
               "Nothing is shown over a game window; the display goes to OBS (the browser source). Sounds and the voice play from this PC."},
     "src.ok_match": {"ja": "✓ ぷよテト2 の試合画面を読めています", "en": "✓ Reading the Puyo Puyo Tetris 2 match screen"},
     "src.ok_other": {"ja": "✓ 映像は読めています（ぷよテト2 の試合画面が映ると数値が出ます）",
