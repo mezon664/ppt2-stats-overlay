@@ -66,20 +66,55 @@ def _white_ratio(frame, box):
     return float((gray > WHITE_PIXEL_THRESHOLD).mean())
 
 
+# The board's true row pitch over the box's own (box height / 20): the box
+# starts a little above the top row (the grid is 23.0 px a row at the
+# reference size, the box 23.55 a band).
+ROW_PITCH_OF_BAND = 23.0 / 23.55
+
+
 def count_lit_rows(frame, box):
-    """Returns how many of the board's 20 row-bands are (almost) entirely
-    near-white in this exact frame — the measured line count for a clear
-    caught at its flash's rising edge. Not clamped to MAX_LINES_PER_EVENT
-    here (the caller decides what an out-of-range count means — likely the
-    wrong frame was used, e.g. a bloomed-out peak rather than the edge)."""
+    """Returns how many board rows are (almost) entirely near-white in this
+    exact frame — the measured line count for a clear caught at its flash's
+    rising edge. Not clamped to MAX_LINES_PER_EVENT here (the caller decides
+    what an out-of-range count means — likely the wrong frame was used, e.g.
+    a bloomed-out peak rather than the edge).
+
+    The rows are 20 bands of the board's row pitch, but where they start is
+    found on the frame itself: the start (within half a row of the grid's
+    usual place) at which each band is most clearly all-white or all-dark.
+    With fixed bands, a picture sitting a quarter row off them (a capture
+    board's, user report: a TETRIS read as 5 lit rows and dropped, T-SPIN
+    Doubles as 3 — 73 in one evening, singles as 0) lit one band too many or
+    too few (tools/validation/flash_rows_shift.py)."""
+    x1, y1, x2, y2 = box
+    pitch = (y2 - y1) / ROWS * ROW_PITCH_OF_BAND
+    top = y1 + (y2 - y1) - ROWS * pitch       # the grid's usual top (the box starts above it)
+    pad = int(pitch) + 1
+    lo = max(0, int(top) - pad)
+    gray = cv2.cvtColor(frame[lo:y2 + pad, x1:x2], cv2.COLOR_BGR2GRAY)
+    lit = (gray > WHITE_PIXEL_THRESHOLD).mean(axis=1)          # each pixel line's white share
+    cum = np.concatenate(([0.0], np.cumsum(lit)))
+    best = None
+    for step in range(-int(pitch / 2), int(pitch / 2) + 1):
+        edges = [int(round(top - lo + step + r * pitch)) for r in range(ROWS + 1)]
+        edges = [min(max(e, 0), len(lit)) for e in edges]
+        means = [(cum[b] - cum[a]) / max(1, b - a) for a, b in zip(edges, edges[1:])]
+        # (white left outside the 20 bands counts against this start too)
+        outside = (cum[edges[0]] + cum[-1] - cum[edges[-1]]) / pitch
+        muddle = sum(min(m, 1 - m) for m in means) + outside
+        if best is None or muddle < best[0] - 1e-9 or (abs(muddle - best[0]) <= 1e-9 and abs(step) < abs(best[2])):
+            best = (muddle, sum(1 for m in means if m > ROW_LIT_RATIO), step)
+    return best[1]
+
+
+def count_lit_bands(frame, box):
+    """The older measure (20 fixed bands), kept for comparisons in tools/."""
     x1, y1, x2, y2 = box
     row_h = (y2 - y1) / ROWS
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     count = 0
     for r in range(ROWS):
-        ry1 = int(y1 + r * row_h)
-        ry2 = int(y1 + (r + 1) * row_h)
-        row = gray[ry1:ry2, x1:x2]
+        row = gray[int(y1 + r * row_h):int(y1 + (r + 1) * row_h), x1:x2]
         if (row > WHITE_PIXEL_THRESHOLD).mean() > ROW_LIT_RATIO:
             count += 1
     return count

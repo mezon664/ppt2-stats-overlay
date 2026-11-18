@@ -48,3 +48,28 @@ def test_hysteresis_gap_does_not_reset_on_mid_level_dip():
     mid = (ENTER_RATIO + EXIT_RATIO) / 2
     assert det.update(frame_with_left_brightness(mid), 1.0) is False  # still "active", no new edge
     assert det.update(frame_with_left_brightness(ENTER_RATIO + 0.05), 2.0) is False  # no re-trigger
+
+
+def _lit_rows_frame(rows, shift_px):
+    """A black reference-size frame with these board rows (0 = top) lit white
+    across the left board, the whole picture moved down by shift_px."""
+    import numpy as np
+    from flash_clear_detector import count_lit_rows  # noqa: F401
+    from board_read import LEFT_BOX
+    x1, y1, x2, y2 = LEFT_BOX
+    frame = np.zeros((692, 1232, 3), np.uint8)
+    for r in rows:
+        top = int(round(y1 + 11 + r * 23.0 + shift_px))
+        frame[top:top + 23, x1:x2] = 255
+    return frame
+
+
+def test_lit_rows_counted_when_the_picture_sits_off_the_bands():
+    """A capture board's picture half a row off the bands (user report: a
+    TETRIS read as 5 rows and dropped, a T-SPIN Double as 3, a single as 0)."""
+    from flash_clear_detector import count_lit_rows
+    from board_read import LEFT_BOX
+    for shift in (-11.5, -6, 0, 6, 11.5):
+        for rows in ([19], [18, 19], [17, 18, 19], [16, 17, 18, 19], [10, 11], [3, 4, 5, 6], [12, 15]):
+            frame = _lit_rows_frame(rows, shift)
+            assert count_lit_rows(frame, LEFT_BOX) == len(rows), (shift, rows)
