@@ -59,11 +59,24 @@ ROW_LIT_RATIO = 0.5   # fraction of a row's pixels that must be near-white to co
 MAX_LINES_PER_EVENT = 4
 
 
+# White runs shorter than this part of a row (top to bottom) don't count toward
+# the flash: a garbage block's top edge is a thin bright line that a capture
+# board's / stream's picture puts past 250. A board half full of garbage then
+# read ~0.03-0.05 white with no flash at all, above EXIT_RATIO, so the flash
+# never ended and every clear after it was swallowed (user report: both sides'
+# numbers stopped once the garbage piled up; seen on their stream). A clear's
+# flash is whole rows tall and stays.
+THIN_LINE_OF_ROW = 0.35
+
+
 def _white_ratio(frame, box):
     x1, y1, x2, y2 = box
     region = frame[y1:y2, x1:x2]
     gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-    return float((gray > WHITE_PIXEL_THRESHOLD).mean())
+    white = (gray > WHITE_PIXEL_THRESHOLD).astype(np.uint8)
+    k = max(3, int((y2 - y1) / ROWS * THIN_LINE_OF_ROW))
+    white = cv2.morphologyEx(white, cv2.MORPH_OPEN, np.ones((k, 1), np.uint8))
+    return float(white.mean())
 
 
 # The board's true row pitch over the box's own (box height / 20): the box

@@ -73,3 +73,28 @@ def test_lit_rows_counted_when_the_picture_sits_off_the_bands():
         for rows in ([19], [18, 19], [17, 18, 19], [16, 17, 18, 19], [10, 11], [3, 4, 5, 6], [12, 15]):
             frame = _lit_rows_frame(rows, shift)
             assert count_lit_rows(frame, LEFT_BOX) == len(rows), (shift, rows)
+
+
+def _garbage_frame(rows, flash_rows=()):
+    """LEFT_BOX with `rows` bottom rows of garbage, each block with a thin
+    bright top edge (a capture board's picture puts it past 250), and
+    `flash_rows` lit whole."""
+    f = np.full((REFERENCE_H, REFERENCE_W, 3), 30, dtype=np.uint8)
+    x1, y1, x2, y2 = LEFT_BOX
+    band = (y2 - y1) / 20
+    for r in range(20 - rows, 20):
+        top = int(y1 + r * band)
+        f[top + 2:top + 4, x1:x2] = 255          # the edge: 2 px of a ~23 px row
+    for r in flash_rows:
+        f[int(y1 + r * band):int(y1 + (r + 1) * band), x1:x2] = 255
+    return f
+
+
+def test_garbage_edges_do_not_hold_the_flash_on():
+    det = FlashClearDetector("left")
+    assert det.update(_garbage_frame(12), 0.0) is False
+    assert det.update(_garbage_frame(12, flash_rows=[7, 8]), 1.0) is True
+    assert det.update(_garbage_frame(12), 2.0) is False       # the flash is over
+    assert not det.active
+    assert det.update(_garbage_frame(12, flash_rows=[9, 10, 11]), 3.0) is True
+    assert det.last_edge_row_count == 3
