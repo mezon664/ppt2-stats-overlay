@@ -70,6 +70,7 @@ python -m venv .venv
 - 開幕テンプレのデータ: テトリステンプレ整理Wiki（https://w.atwiki.jp/sasasa123/ ）
 - 開幕テンプレの英語名: Hard Drop Tetris Wiki（https://harddrop.com/wiki/ ）
 - 猫のアニメーション: めぞんが用意した動画から切り抜いたもの
+- フォント（デザイン「中継」「スポーツ斜体」）: Barlow Condensed（The Barlow Project Authors）、Saira Condensed（The Saira Project Authors）。どちらも SIL Open Font License 1.1（`assets/fonts/OFL-*.txt`）
 
 ## ライセンス
 

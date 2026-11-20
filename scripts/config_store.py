@@ -23,7 +23,7 @@ DISPLAY_DEFAULTS = {
     #   "versus" one block between the boards comparing both players
     #   "simple" plain square boxes in one color
     #   "frame" / "slash" / "hex" / "meter" / "tower" /
-    #   "minimal" / "trend"  the designs added later (hud/overlay.py NEW_STYLES)
+    #   "minimal" / "trend" / "broadcast" / "sport"  the designs added later (hud/overlay.py NEW_STYLES)
     "style": "gauge",            # ミニゲージ (user's choice for the default)
     # Colors (#rrggbb) of the dark boxes and of the main text, in every style
     # (the player-colored parts — pop's pills, gauge bars — keep blue / red).
@@ -218,7 +218,9 @@ OLD_TEXT_WEIGHTS = {"normal": 30, "bold": 65}
 STATS_POSITIONS = ("left", "right")
 STYLES = ("band", "pop", "gauge", "text", "versus", "simple",
           # added 2026-10-30 (see hud/overlay.py NEW_STYLES)
-          "frame", "slash", "hex", "meter", "tower", "minimal", "trend")
+          "frame", "slash", "hex", "meter", "tower", "minimal", "trend",
+          # added 2026-11-20, with their own fonts (hud/overlay.py DESIGN_FONTS)
+          "broadcast", "sport")
 # designs that were renamed: old name -> new
 STYLE_RENAMES = {"neon": "frame"}
 # allowed values for the text options

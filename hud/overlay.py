@@ -22,6 +22,7 @@ badges without affecting recognition. Side effect: it also won't appear in
 screenshots or OBS display capture — use the OBS browser source for that.
 """
 import asyncio
+import contextlib
 import ctypes
 import json
 import logging
@@ -350,23 +351,64 @@ def set_font(family, font_file):
     FONT_FAMILY = family
 
 
-def _font(px, weight):
-    font = QtGui.QFont(FONT_FAMILY) if FONT_FAMILY else QtGui.QFont()
+# The designs that bring their own font (assets/fonts/, SIL Open Font
+# License, the OFL-*.txt beside them): style -> (family, files, slant). While
+# one of them measures or draws, DESIGN_FONT holds (family, slant) and every
+# text uses that font instead of display.font_family; slant leans the letters
+# (Saira Condensed has no italic of its own). Same fonts in obs/overlay.html.
+FONTS_DIR = ROOT_DIR / "assets" / "fonts"
+DESIGN_FONTS = {
+    "broadcast": ("Barlow Condensed", ("BarlowCondensed-SemiBold.ttf", "BarlowCondensed-Bold.ttf"), 0.0),
+    "sport": ("Saira Condensed", ("SairaCondensed-SemiBold.ttf", "SairaCondensed-ExtraBold.ttf"), 0.2),
+}
+DESIGN_FONT = None
+_design_fonts_loaded = set()
+
+
+@contextlib.contextmanager
+def design_font(style):
+    """Texts measured and drawn inside this use the design's own font."""
+    global DESIGN_FONT
+    spec = DESIGN_FONTS.get(style)
+    if spec is None:
+        yield
+        return
+    family, files, slant = spec
+    if style not in _design_fonts_loaded:
+        _design_fonts_loaded.add(style)
+        for name in files:
+            if QtGui.QFontDatabase.addApplicationFont(str(FONTS_DIR / name)) < 0:
+                log_hud.warning("could not load font file %s", FONTS_DIR / name)
+    prev, DESIGN_FONT = DESIGN_FONT, (family, slant)
+    try:
+        yield
+    finally:
+        DESIGN_FONT = prev
+
+
+def _font(px, weight, spacing=0.0):
+    """spacing: extra room after each letter, x the font size."""
+    family = DESIGN_FONT[0] if DESIGN_FONT else FONT_FAMILY
+    font = QtGui.QFont(family) if family else QtGui.QFont()
     font.setPixelSize(max(7, int(round(px))))
     font.setWeight(weight)
+    if spacing:
+        font.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, spacing * px)
     return font
 
 
-def text_width(px, weight, text):
-    return QtGui.QFontMetricsF(_font(px, weight)).horizontalAdvance(text)
+def text_width(px, weight, text, spacing=0.0):
+    return QtGui.QFontMetricsF(_font(px, weight, spacing)).horizontalAdvance(text)
 
 
-def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha=1.0, thicken_share=1.0):
+def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha=1.0, thicken_share=1.0,
+              spacing=0.0):
     """Draws text with its left / right / center at x and its baseline at y,
     optionally with a dark outline (the "text" style, like the score digits).
     thicken_share: how much of the text weight's thickening it gets.
+    spacing: extra room after each letter, x the font size.
     Returns the text's width."""
-    font = _font(px, weight)
+    font = _font(px, weight, spacing)
     w = QtGui.QFontMetricsF(font).horizontalAdvance(text)
     if align == "right":
         x -= w
@@ -374,8 +416,13 @@ def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha
         x -= w / 2
     path = QtGui.QPainterPath()
     path.addText(QtCore.QPointF(x, y), font, text)
+    if DESIGN_FONT and DESIGN_FONT[1]:   # leaned over, pivoting on the baseline
+        k = DESIGN_FONT[1]
+        path = QtGui.QTransform(1, 0, -k, 1, k * y, 0).map(path)
     thicken = THICKEN * thicken_share * px
     outline = max(outline, TEXT_OUTLINE * px)
+    if DESIGN_FONT:   # these fonts carry their own weight on their own box: no outline / thickening
+        thicken, outline = 0.0, 0.0
     if outline > 0:
         oc = QtGui.QColor(*(TEXT_OUTLINE_RGB if TEXT_OUTLINE else OUTLINE_RGB))
         oc.setAlphaF(alpha)
@@ -434,10 +481,17 @@ def _draw_thick_faded(p, path, color, alpha, thicken):
 #            background: the background strength, its own color (display.line_color)
 #   trend    each number with a small line chart of its last minute
 # Same looks in obs/overlay.html.
-NEW_STYLES = ("frame", "slash", "hex", "meter", "tower", "minimal", "trend")
+# --- and on 2026-11-20 (two of four samples, user's pick), each with its own
+# font (DESIGN_FONTS) ---
+#   broadcast  中継: tall narrow numbers, small spaced-out labels above them,
+#              the first two big, a thin player-color bar on the board side
+#   sport      スポーツ斜体: leaning letters on a slanted box, the first number
+#              big with its label beside it, the others in a line under it
+NEW_STYLES = ("frame", "slash", "hex", "meter", "tower", "minimal", "trend", "broadcast", "sport")
 # the box the other parts (clock, events, summary, opener) get in each of them
 FRAMES = {"frame": "frame", "slash": "slash", "hex": "square",
-          "tower": "square", "meter": "rounded", "trend": "rounded", "minimal": "none"}
+          "tower": "square", "meter": "rounded", "trend": "rounded", "minimal": "none",
+          "broadcast": "square", "sport": "slash"}
 # Stat blocks in these designs keep this much room (reference px) from the
 # board: their text / box went right up to the board's edge, further toward it
 # than the band style's text (user report: "everything shifted right").
@@ -692,7 +746,8 @@ class StatBlock(Band):
         self.square = style == "simple"
         n = max(1, len(self.shown))
         if style in NEW_STYLES:
-            w, h = self._new_size(u)
+            with design_font(style):
+                w, h = self._new_size(u)
             self.setFixedSize(int(w) + 1, int(h) + 1)
         else:
             self.setFixedSize(int(max(self.WIDTH[style] * u, self._needed_width(u))),
@@ -760,7 +815,107 @@ class StatBlock(Band):
         if st == "tower":
             cw = self._tower_col_w(u)
             return n * cw + (n - 1) * self.TOWER_GAP * u + 2 * self.TOWER_PAD * u, (14 + self.TOWER_BAR_H + 12 + 6) * u
+        if st == "broadcast":
+            return self._broadcast_layout(u)[0]
+        if st == "sport":
+            return self._sport_layout(u)[0]
         return 92 * u, 21 * n * u
+
+    # --- broadcast (中継): sizes in reference px x u ---
+    BC_LAB, BC_BIG, BC_SMALL = 7.5, 24, 16   # label, first-row value, other values
+    BC_SPACING = 0.2                         # the labels' letters spaced out
+    BC_PAD_X, BC_PAD_Y, BC_COL_GAP, BC_BAR = 8, 4, 12, 2.5
+    BC_LAB_W, BC_VAL_W = QtGui.QFont.Weight.DemiBold, QtGui.QFont.Weight.Bold
+
+    def _broadcast_layout(self, u):
+        """((w, h), (rows, px, lines, cols)): rows of up to two keys (the
+        first row big), each row's label / value baselines and top, and the
+        two columns' widths."""
+        keys = self.shown or ["apm"]
+        rows = [keys[:2]] + [keys[i:i + 2] for i in range(2, len(keys), 2)]
+        px_of = [self.BC_BIG if r == 0 else self.BC_SMALL for r in range(len(rows))]
+        cols = [0.0, 0.0]
+        for r, row in enumerate(rows):
+            for c, k in enumerate(row):
+                cols[c] = max(cols[c], text_width(self.BC_LAB * u, self.BC_LAB_W, label_for(k), self.BC_SPACING),
+                              value_slot_width(k, px_of[r] * u, self.BC_VAL_W),
+                              text_width(px_of[r] * u, self.BC_VAL_W, fmt_value(k, self.values.get(k))))
+        y, lines = self.BC_PAD_Y * u, []
+        for r in range(len(rows)):
+            if r == 1:
+                y += 3 * u            # room for the hairline under the first row
+            lab_base = y + self.BC_LAB * 0.95 * u
+            val_base = lab_base + px_of[r] * 0.82 * u
+            lines.append((lab_base, val_base, y))
+            y = val_base + 3 * u
+        w = 2 * self.BC_PAD_X * u + cols[0] + (self.BC_COL_GAP * u + cols[1] if cols[1] else 0) + self.BC_BAR * u
+        return (w, y + (self.BC_PAD_Y - 2) * u), (rows, px_of, lines, cols)
+
+    def _paint_broadcast(self, p, u, W, H, a, accent, tint, hug_right):
+        _, (rows, px_of, lines, cols) = self._broadcast_layout(u)
+        bar = self.BC_BAR * u
+        if not self.editing:
+            paint_frame(p, QtCore.QRectF(0, 0, W, H), "square", u, a, self.opacity)
+            p.fillRect(QtCore.QRectF(W - bar if hug_right else 0, 0, bar, H), QtGui.QColor(*accent, int(255 * a)))
+        x0 = self.BC_PAD_X * u + (0 if hug_right else bar)
+        xs = [x0, x0 + cols[0] + self.BC_COL_GAP * u]
+        for r, row in enumerate(rows):
+            lab_base, val_base, top = lines[r]
+            if r == 1:   # a hairline between the big first row and the rest
+                p.fillRect(QtCore.QRectF(x0, top - 2 * u, W - 2 * self.BC_PAD_X * u - bar, max(1.0, 0.8 * u)),
+                           QtGui.QColor(255, 255, 255, int(60 * a)))
+            for c, k in enumerate(row):
+                draw_text(p, xs[c], lab_base, label_for(k), self.BC_LAB * u, self.BC_LAB_W, tint, "left", 0, a,
+                          spacing=self.BC_SPACING)
+                draw_text(p, xs[c], val_base, fmt_value(k, self.values.get(k)), px_of[r] * u, self.BC_VAL_W,
+                          WHITE, "left", 0, a)
+
+    # --- sport (スポーツ斜体): sizes in reference px x u ---
+    SP_HERO, SP_HERO_LAB, SP_LAB, SP_VAL = 34, 10, 8.5, 15
+    SP_PAD_X, SP_PAD_Y, SP_PAIR_GAP, SP_PER_ROW = 8, 3, 9, 3
+    SP_LAB_W, SP_VAL_W = QtGui.QFont.Weight.DemiBold, QtGui.QFont.Weight.ExtraBold
+
+    def _sport_layout(self, u):
+        """((w, h), parts): the first number's slot width, the other numbers in
+        rows of SP_PER_ROW as (key, label width, slot width), the baselines,
+        the content's width and the box's slant."""
+        keys = self.shown or ["apm"]
+        first, rest = keys[0], keys[1:]
+        hero_slot = max(value_slot_width(first, self.SP_HERO * u, self.SP_VAL_W),
+                        text_width(self.SP_HERO * u, self.SP_VAL_W, fmt_value(first, self.values.get(first))))
+        content = hero_slot + 4 * u + text_width(self.SP_HERO_LAB * u, self.SP_LAB_W, label_for(first))
+        rows = []
+        for i in range(0, len(rest), self.SP_PER_ROW):
+            row = [(k, text_width(self.SP_LAB * u, self.SP_LAB_W, label_for(k)),
+                    max(value_slot_width(k, self.SP_VAL * u, self.SP_VAL_W),
+                        text_width(self.SP_VAL * u, self.SP_VAL_W, fmt_value(k, self.values.get(k)))))
+                   for k in rest[i:i + self.SP_PER_ROW]]
+            rows.append(row)
+            content = max(content, sum(lw + 3 * u + sw for _, lw, sw in row) + self.SP_PAIR_GAP * u * (len(row) - 1))
+        hero_base = self.SP_PAD_Y * u + self.SP_HERO * 0.78 * u
+        bases = [hero_base + (4 + self.SP_VAL * 0.95 * (i + 1)) * u for i in range(len(rows))]
+        h = (bases[-1] if bases else hero_base) + (self.SP_PAD_Y + 4) * u
+        lean = min(h * 0.3, 10 * u)      # the box's slant (slant_dx)
+        w = content + 2 * self.SP_PAD_X * u + lean + self.SP_HERO * 0.2 * u   # + the letters' lean
+        return (w, h), (hero_slot, rows, hero_base, bases, content, lean)
+
+    def _paint_sport(self, p, u, W, H, a, accent, tint, hug_right):
+        _, (hero_slot, rows, hero_base, bases, content, lean) = self._sport_layout(u)
+        if not self.editing:
+            paint_frame(p, QtCore.QRectF(0, 0, W, H), "slash", u, a, self.opacity, accent)
+        x0 = (W - self.SP_PAD_X * u - lean * 0.5 - content) if hug_right else self.SP_PAD_X * u + lean * 0.5
+        first = (self.shown or ["apm"])[0]
+        draw_text(p, x0 + hero_slot, hero_base, fmt_value(first, self.values.get(first)), self.SP_HERO * u,
+                  self.SP_VAL_W, WHITE, "right", 0, a)
+        draw_text(p, x0 + hero_slot + 4 * u, hero_base, label_for(first), self.SP_HERO_LAB * u, self.SP_LAB_W,
+                  tint, "left", 0, a)
+        for row, base in zip(rows, bases):
+            x = x0
+            for k, lw, sw in row:
+                draw_text(p, x, base, label_for(k), self.SP_LAB * u, self.SP_LAB_W, tint, "left", 0, a)
+                draw_text(p, x + lw + 3 * u + sw, base, fmt_value(k, self.values.get(k)), self.SP_VAL * u,
+                          self.SP_VAL_W, WHITE, "right", 0, a)
+                x += lw + 3 * u + sw + self.SP_PAIR_GAP * u
 
     def _needed_width(self, u):
         """Width the shown rows need at their widest values: reworded labels
@@ -883,6 +1038,10 @@ class StatBlock(Band):
         a = 0.45 if self.dim else 1.0
         hug_right = self.mode == "left"
         accent, tint = PLAYER_COLORS[self.side], PLAYER_TEXT_COLORS[self.side]
+        if st in DESIGN_FONTS:
+            with design_font(st):
+                getattr(self, "_paint_" + st)(p, u, W, H, a, accent, tint, hug_right)
+            return
         r = QtCore.QRectF(0, 0, W, H)
         if st in ("frame", "trend") and not self.editing:
             paint_frame(p, r, frame_of(st), u, a, self.opacity, accent if st == "frame" else None)

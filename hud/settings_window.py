@@ -107,7 +107,7 @@ TARGET_ORDER = ("stats", "stats_left", "stats_right", "opener", "opener_left", "
                 "clock", "event", "summary", "session")
 # simplest first (user's request)
 STYLE_ORDER = ("text", "minimal", "simple", "band", "frame", "slash", "pop",
-               "gauge", "trend", "tower", "meter", "hex", "versus")
+               "gauge", "trend", "tower", "meter", "hex", "versus", "broadcast", "sport")
 ROOT = Path(__file__).resolve().parent.parent
 USER_FONTS = ROOT / "assets" / "user_fonts"
 USER_IMAGES = ROOT / "assets" / "user_images"   # pictures for 縛りプレイ (challenge_image)
@@ -337,6 +337,8 @@ TEXT = {
     "style.tower": {"ja": "縦メーター", "en": "Bar towers"},
     "style.minimal": {"ja": "ミニマル線", "en": "Minimal lines"},
     "style.trend": {"ja": "推移グラフ", "en": "Trend lines"},
+    "style.broadcast": {"ja": "中継", "en": "Broadcast"},
+    "style.sport": {"ja": "スポーツ斜体", "en": "Sport italic"},
     "items": {"ja": "数値", "en": "Numbers"},
     "items_hint": {"ja": "盤面の横に出す数値。チェックで表示、つかむか ▲▼ で並べ替え（上から順）",
                    "en": "The numbers beside the boards. Tick to show, drag or ▲▼ to reorder (top to bottom)"},

@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "hud"))
 
 import pytest
-from PyQt6 import QtWidgets
+from PyQt6 import QtGui, QtWidgets
 
 import overlay
 from config_store import STAT_ITEMS, STYLES, display_settings
@@ -85,3 +85,18 @@ def test_summary_shows_the_chosen_rows():
     assert sm.height() < short
     side = overlay.summary_side({"match_stats": {"tspin_double": 3, "tspin": 4}})
     assert side["tspin_double"] == 3 and side["tspin"] == 4
+
+
+@pytest.mark.parametrize("style", sorted(overlay.DESIGN_FONTS))
+def test_design_fonts_ship_and_load(style):
+    """broadcast / sport bring their own font: the files are in assets/fonts/
+    (with the license), and Qt finds the family once a block has drawn."""
+    family, files, _ = overlay.DESIGN_FONTS[style]
+    for name in files:
+        assert (overlay.FONTS_DIR / name).is_file()
+    assert list(overlay.FONTS_DIR.glob("OFL-*.txt"))
+    w = overlay.StatBlock(None, "left")
+    w.update_side(SIDE, 3.0)
+    w.configure(style, "left", ["apm", "pps"], 1.0)
+    assert family in QtGui.QFontDatabase.families()
+    assert overlay.DESIGN_FONT is None   # only while that block measures / draws

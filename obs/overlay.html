@@ -44,8 +44,9 @@ const NAMEBAR_RIGHT_X = 466, NAMEBAR_LEFT_X = 762, NAMEBAR_TOP_Y = 608;
 const OPENER_TOP_CENTER_X = 615.6, OPENER_TOP_Y = 14;
 const POPUP_S = 4.0, POPUP_IN_S = 0.25, POPUP_FADE_S = 1.2;
 const GAUGE_MAX = { apm: 120, pps: 4, app: 1, attack: 100, pieces: 300, ren: 12, b2b: 10 };
-const NEW_STYLES = ["frame", "slash", "hex", "meter", "tower", "minimal", "trend"];
-const FRAMES = { frame: "frame", slash: "slash", hex: "square", tower: "square", meter: "rounded", trend: "rounded", minimal: "none" };
+const NEW_STYLES = ["frame", "slash", "hex", "meter", "tower", "minimal", "trend", "broadcast", "sport"];
+const FRAMES = { frame: "frame", slash: "slash", hex: "square", tower: "square", meter: "rounded", trend: "rounded", minimal: "none",
+                 broadcast: "square", sport: "slash" };
 const NEW_STYLE_GAP = 6;
 const TREND_SAMPLES = 60;
 const TEXT_OUTLINE_RATIO = 0.10, OPENER_NAME_THICKEN = 0.4;
@@ -161,7 +162,30 @@ function weightStyle(value) {
 let [BOLD, SEMI, THICKEN] = weightStyle(65);
 let TEXT_OUTLINE = 0;
 let FONT_CSS = '"Segoe UI", "Yu Gothic UI", sans-serif';
-const fontOf = (px, weight) => `${weight} ${Math.max(7, pyRound(px))}px ${FONT_CSS}`;
+// The designs with their own font (hud/overlay.py DESIGN_FONTS): style ->
+// [family, [[file, weight], ...], slant]. While one of them measures or draws,
+// DESIGN_FONT is [family, slant].
+const DESIGN_FONTS = {
+  broadcast: ["Barlow Condensed", [["BarlowCondensed-SemiBold.ttf", 600], ["BarlowCondensed-Bold.ttf", 700]], 0],
+  sport: ["Saira Condensed", [["SairaCondensed-SemiBold.ttf", 600], ["SairaCondensed-ExtraBold.ttf", 800]], 0.2],
+};
+let DESIGN_FONT = null;
+const designFontsLoaded = new Set();
+function withDesignFont(style, fn) {
+  const spec = DESIGN_FONTS[style];
+  if (!spec) return fn();
+  if (!designFontsLoaded.has(style)) {
+    designFontsLoaded.add(style);
+    for (const [file, weight] of spec[1]) {
+      new FontFace(spec[0], `url("../assets/fonts/${file}")`, { weight: String(weight) }).load()
+        .then((f) => { document.fonts.add(f); widthCache.clear(); layout(); }).catch(() => {});
+    }
+  }
+  const prev = DESIGN_FONT;
+  DESIGN_FONT = [spec[0], spec[2]];
+  try { return fn(); } finally { DESIGN_FONT = prev; }
+}
+const fontOf = (px, weight) => `${weight} ${Math.max(7, pyRound(px))}px ${DESIGN_FONT ? `"${DESIGN_FONT[0]}", ` : ""}${FONT_CSS}`;
 const measureCtx = document.createElement("canvas").getContext("2d");
 const widthCache = new Map();
 // Qt (the HUD) lays text out with each character's width rounded to whole
@@ -178,15 +202,16 @@ function charWidth(font, c) {
   }
   return w;
 }
-function textWidth(px, weight, text) {
-  const font = fontOf(px, weight);
+// spacing: extra room after each letter, x the font size
+function textWidth(px, weight, text, spacing = 0) {
+  const font = fontOf(px, weight), gap = spacing * Math.max(7, pyRound(px));
   let w = 0;
-  for (const c of text) w += charWidth(font, c);
+  for (const c of text) w += charWidth(font, c) + gap;
   return w;
 }
 // each character at its Qt position: op(ctx, char, x)
-function eachChar(ctx, font, text, x, op) {
-  for (const c of text) { op(c, x); x += charWidth(font, c); }
+function eachChar(ctx, font, text, x, op, gap = 0) {
+  for (const c of text) { op(c, x); x += charWidth(font, c) + gap; }
 }
 function elide(text, px, weight, width) {
   if (textWidth(px, weight, text) <= width) return text;
@@ -199,10 +224,19 @@ function elide(text, px, weight, width) {
 }
 let layerCanvas = null;
 // Draws text with its left / right / center at x and its baseline at y; returns its width
-function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 0, alpha = 1, thickenShare = 1) {
+function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 0, alpha = 1, thickenShare = 1, spacing = 0) {
   const font = fontOf(px, weight);
-  const w = textWidth(px, weight, text);
+  const w = textWidth(px, weight, text, spacing);
   if (align === "right") x -= w; else if (align === "center") x -= w / 2;
+  if (DESIGN_FONT) {   // these fonts carry their own weight on their own box: no outline / thickening
+    ctx.save();
+    if (DESIGN_FONT[1]) ctx.transform(1, 0, -DESIGN_FONT[1], 1, DESIGN_FONT[1] * y, 0);   // leaned over, pivoting on the baseline
+    ctx.font = font; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = rgba(color, alpha);
+    eachChar(ctx, font, text, x, (c, cx) => ctx.fillText(c, cx, y), spacing * Math.max(7, pyRound(px)));
+    ctx.restore();
+    return w;
+  }
   // The browser draws letters a little heavier than Qt does (user: OBS's text
   // looked slightly bold and smudged), so it's thickened less here: measured
   // against the HUD at text weights 15 / 40 / 65 / 100 (the light text's
@@ -406,7 +440,86 @@ function statNewSize(s, u) {
     const cw = statTowerColW(s, u);
     return [n * cw + (n - 1) * TOWER_GAP * u + 2 * TOWER_PAD * u, (14 + TOWER_BAR_H + 12 + 6) * u];
   }
+  if (st === "broadcast") return statBroadcastLayout(s, u)[0];
+  if (st === "sport") return statSportLayout(s, u)[0];
   return [92 * u, 21 * n * u];
+}
+// --- broadcast (中継) and sport (スポーツ斜体): hud/overlay.py StatBlock BC_* / SP_* ---
+const BC = { lab: 7.5, big: 24, small: 16, spacing: 0.2, padX: 8, padY: 4, colGap: 12, bar: 2.5, labW: 600, valW: 700 };
+const SP = { hero: 34, heroLab: 10, lab: 8.5, val: 15, padX: 8, padY: 3, pairGap: 9, perRow: 3, labW: 600, valW: 800 };
+function statBroadcastLayout(s, u) {
+  const keys = s.shown.length ? s.shown : ["apm"];
+  const rows = [keys.slice(0, 2)];
+  for (let i = 2; i < keys.length; i += 2) rows.push(keys.slice(i, i + 2));
+  const pxOf = rows.map((_, r) => r === 0 ? BC.big : BC.small);
+  const cols = [0, 0];
+  rows.forEach((row, r) => row.forEach((k, c) => {
+    cols[c] = Math.max(cols[c], textWidth(BC.lab * u, BC.labW, labelFor(k), BC.spacing),
+                       valueSlotWidth(k, pxOf[r] * u, BC.valW), textWidth(pxOf[r] * u, BC.valW, fmtValue(k, s.values[k])));
+  }));
+  let y = BC.padY * u;
+  const lines = [];
+  rows.forEach((_, r) => {
+    if (r === 1) y += 3 * u;            // room for the hairline under the first row
+    const labBase = y + BC.lab * 0.95 * u, valBase = labBase + pxOf[r] * 0.82 * u;
+    lines.push([labBase, valBase, y]);
+    y = valBase + 3 * u;
+  });
+  const w = 2 * BC.padX * u + cols[0] + (cols[1] ? BC.colGap * u + cols[1] : 0) + BC.bar * u;
+  return [[w, y + (BC.padY - 2) * u], [rows, pxOf, lines, cols]];
+}
+function statPaintBroadcast(ctx, s, u, W, H, a, accent, tint, hugRight) {
+  const [rows, pxOf, lines, cols] = statBroadcastLayout(s, u)[1];
+  const bar = BC.bar * u;
+  paintFrame(ctx, 0, 0, W, H, "square", u, a, s.opacity);
+  ctx.fillStyle = rgba(accent, int(255 * a) / 255);
+  ctx.fillRect(hugRight ? W - bar : 0, 0, bar, H);
+  const x0 = BC.padX * u + (hugRight ? 0 : bar), xs = [x0, x0 + cols[0] + BC.colGap * u];
+  rows.forEach((row, r) => {
+    const [labBase, valBase, top] = lines[r];
+    if (r === 1) {   // a hairline between the big first row and the rest
+      ctx.fillStyle = rgba([255, 255, 255], int(60 * a) / 255);
+      ctx.fillRect(x0, top - 2 * u, W - 2 * BC.padX * u - bar, Math.max(1, 0.8 * u));
+    }
+    row.forEach((k, c) => {
+      drawText(ctx, xs[c], labBase, labelFor(k), BC.lab * u, BC.labW, tint, "left", 0, a, 1, BC.spacing);
+      drawText(ctx, xs[c], valBase, fmtValue(k, s.values[k]), pxOf[r] * u, BC.valW, WHITE, "left", 0, a);
+    });
+  });
+}
+function statSportLayout(s, u) {
+  const keys = s.shown.length ? s.shown : ["apm"], first = keys[0], rest = keys.slice(1);
+  const heroSlot = Math.max(valueSlotWidth(first, SP.hero * u, SP.valW), textWidth(SP.hero * u, SP.valW, fmtValue(first, s.values[first])));
+  let content = heroSlot + 4 * u + textWidth(SP.heroLab * u, SP.labW, labelFor(first));
+  const rows = [];
+  for (let i = 0; i < rest.length; i += SP.perRow) {
+    const row = rest.slice(i, i + SP.perRow).map((k) => [k, textWidth(SP.lab * u, SP.labW, labelFor(k)),
+      Math.max(valueSlotWidth(k, SP.val * u, SP.valW), textWidth(SP.val * u, SP.valW, fmtValue(k, s.values[k])))]);
+    rows.push(row);
+    content = Math.max(content, row.reduce((t, [, lw, sw]) => t + lw + 3 * u + sw, 0) + SP.pairGap * u * (row.length - 1));
+  }
+  const heroBase = SP.padY * u + SP.hero * 0.78 * u;
+  const bases = rows.map((_, i) => heroBase + (4 + SP.val * 0.95 * (i + 1)) * u);
+  const h = (bases.length ? bases[bases.length - 1] : heroBase) + (SP.padY + 4) * u;
+  const lean = Math.min(h * 0.3, 10 * u);   // the box's slant (slantDx)
+  const w = content + 2 * SP.padX * u + lean + SP.hero * 0.2 * u;   // + the letters' lean
+  return [[w, h], [heroSlot, rows, heroBase, bases, content, lean]];
+}
+function statPaintSport(ctx, s, u, W, H, a, accent, tint, hugRight) {
+  const [heroSlot, rows, heroBase, bases, content, lean] = statSportLayout(s, u)[1];
+  paintFrame(ctx, 0, 0, W, H, "slash", u, a, s.opacity, accent);
+  const x0 = hugRight ? W - SP.padX * u - lean * 0.5 - content : SP.padX * u + lean * 0.5;
+  const first = (s.shown.length ? s.shown : ["apm"])[0];
+  drawText(ctx, x0 + heroSlot, heroBase, fmtValue(first, s.values[first]), SP.hero * u, SP.valW, WHITE, "right", 0, a);
+  drawText(ctx, x0 + heroSlot + 4 * u, heroBase, labelFor(first), SP.heroLab * u, SP.labW, tint, "left", 0, a);
+  rows.forEach((row, i) => {
+    let x = x0;
+    for (const [k, lw, sw] of row) {
+      drawText(ctx, x, bases[i], labelFor(k), SP.lab * u, SP.labW, tint, "left", 0, a);
+      drawText(ctx, x + lw + 3 * u + sw, bases[i], fmtValue(k, s.values[k]), SP.val * u, SP.valW, WHITE, "right", 0, a);
+      x += lw + 3 * u + sw + SP.pairGap * u;
+    }
+  });
 }
 function statNeededWidth(s, u) {
   const st = s.style, keys = s.shown.length ? s.shown : ["apm"];
@@ -423,7 +536,7 @@ function statConfigure(s, style, mode, shown, u) {
   s.square = style === "simple";
   const n = Math.max(1, s.shown.length);
   if (NEW_STYLES.includes(style)) {
-    const [w, h] = statNewSize(s, u);
+    const [w, h] = withDesignFont(style, () => statNewSize(s, u));
     s.w = int(w) + 1; s.h = int(h) + 1;
   } else {
     s.w = int(Math.max(STAT_WIDTH[style] * u, statNeededWidth(s, u)));
@@ -493,6 +606,9 @@ function statPaint(ctx, s) {
 function statPaintNew(ctx, s) {
   const st = s.style, u = s.u, W = s.w, H = s.h, a = s.dim ? 0.45 : 1, hugRight = s.mode === "left";
   const accent = PLAYER_COLORS[s.side], tint = PLAYER_TEXT_COLORS[s.side];
+  if (DESIGN_FONTS[st]) {
+    return withDesignFont(st, () => ({ broadcast: statPaintBroadcast, sport: statPaintSport })[st](ctx, s, u, W, H, a, accent, tint, hugRight));
+  }
   if (st === "frame" || st === "trend") paintFrame(ctx, 0, 0, W, H, FRAMES[st], u, a, s.opacity, st === "frame" ? accent : null);
   if (st === "hex" || st === "meter" || st === "tower") {
     if (st !== "hex") paintFrame(ctx, 0, 0, W, H, FRAMES[st], u, a, s.opacity);
