@@ -313,3 +313,37 @@ def test_a_bigger_small_shape_still_replaces_a_shown_name(monkeypatch):
     for _ in range(od_wait() + 1):
         det.on_placements(None, 1)
     assert det.name == "開幕TSD"
+
+
+def test_a_t_spin_double_tag_only_gives_a_t_pointing_down():
+    """The wiki's tag shows the rows already full: where the T went is a
+    guess. For two rows only a T pointing down (flat side in the upper row)
+    counts — not one turned up against the wall (user: 石見の光 a lot)."""
+    from opener_detect import _before_the_t_spin, _shape_rows
+    raw = _shape_rows("v115@ChA8DeA8DeB8CeT8JeAgH")   # 石見の光
+    boards = {"/".join("".join("#" if c else "." for c in r) for r in reversed(b)) for b in _before_the_t_spin(raw)}
+    assert ".....#..../#....##.../###...####/####.#####" in boards     # the slot under a roof
+    assert ".....#..../#....##.../#.########/...#######" not in boards  # a T turned up in the corner
+    assert len(boards) == 5
+
+
+def test_a_held_piece_that_could_go_two_ways_names_nothing():
+    """User: "パフェ積み / 新MT砲" for a moment while building パフェ積み. Six
+    pieces down and the Z in HOLD: the Z in one place makes パフェ積み, in
+    another 新MT砲 — not named until it's down (from server.log, 2026-11-21)."""
+    import opener_detect as od
+
+    def parse(s):
+        m = 0
+        for r, row in enumerate(reversed(s.split("/"))):
+            for c, ch in enumerate(row):
+                if ch == "#":
+                    m |= 1 << (r * od.COLS + c)
+        return m
+    board = parse("......####/#.....####/####..####/###...####")
+    landed = [parse(x) for x in ("......#.../......#.../......#.../......#...", ".........#/.......###",
+                                 "..##....../.##.......", ".......##./.......##./..........",
+                                 "#........./##......../#.........", ".......###/.........#/........../..........")]
+    index = od.openers()
+    assert index.match_with_hold(board, landed, "Z") == []
+    assert index.match_with_hold(board, landed, "T") == ["Sホールドパフェ2号"]   # one way only: still named

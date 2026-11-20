@@ -75,8 +75,8 @@ const SUMMARY_ROWS = [   // [key, label, decimals; null = text] (hud/overlay.py 
   ["tspin", "s_tspin", 0], ["tspin_single", "s_tss", 0], ["tspin_double", "s_tsd", 0], ["tspin_triple", "s_tst", 0],
   ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];
 const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enabled: true, opener_language: "auto",
-  opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, text_outline_width: 10, bg_color: "#000000", text_color: "#ffffff",
-  line_color: "#ffffff", font_family: "Meiryo", font_file: "", language: "ja", stats_position: "left", stats_position_left: "", stats_position_right: "", scale: 1.0,
+  opener_seconds: 4, players: "both", text_weight: 65, text_outline: true, text_outline_width: 10, italic: false, font_v: 2, bg_color: "#000000", text_color: "#ffffff",
+  line_color: "#ffffff", font_family: "", font_file: "", language: "ja", stats_position: "left", stats_position_left: "", stats_position_right: "", scale: 1.0,
   offset_x: 0, offset_y: 0, clock_offset_x: 0, clock_offset_y: 0, event_offset_x: 0, event_offset_y: 0,
   summary_offset_x: 0, summary_offset_y: 0, session_offset_x: 0, session_offset_y: 0,
   stats_left_offset_x: 0, stats_left_offset_y: 0,
@@ -170,20 +170,31 @@ const DESIGN_FONTS = {
   sport: ["Saira Condensed", [["SairaCondensed-SemiBold.ttf", 600], ["SairaCondensed-ExtraBold.ttf", 800]], 0.2],
 };
 let DESIGN_FONT = null;
+let DESIGN_SLANT = 0;          // the design's own lean while it draws (sport), with its font or not
 const designFontsLoaded = new Set();
+let USE_DESIGN_FONTS = true;   // no font chosen (font_family ""): the two designs use their own
+let ITALIC = false;            // display.italic: every text leaned over
+const ITALIC_SLANT = 0.2;
+// [lean, pivot height] or null (hud/overlay.py _slant)
+function slantOf(px, y) {
+  if (DESIGN_SLANT) return [DESIGN_SLANT, y];
+  if (ITALIC) return [ITALIC_SLANT, y - 0.35 * px];
+  return null;
+}
 function withDesignFont(style, fn) {
   const spec = DESIGN_FONTS[style];
   if (!spec) return fn();
-  if (!designFontsLoaded.has(style)) {
+  if (USE_DESIGN_FONTS && !designFontsLoaded.has(style)) {
     designFontsLoaded.add(style);
     for (const [file, weight] of spec[1]) {
       new FontFace(spec[0], `url("../assets/fonts/${file}")`, { weight: String(weight) }).load()
         .then((f) => { document.fonts.add(f); widthCache.clear(); layout(); }).catch(() => {});
     }
   }
-  const prev = DESIGN_FONT;
-  DESIGN_FONT = [spec[0], spec[2]];
-  try { return fn(); } finally { DESIGN_FONT = prev; }
+  const prev = [DESIGN_FONT, DESIGN_SLANT];
+  DESIGN_FONT = USE_DESIGN_FONTS ? [spec[0], spec[2]] : null;
+  DESIGN_SLANT = spec[2];
+  try { return fn(); } finally { [DESIGN_FONT, DESIGN_SLANT] = prev; }
 }
 const fontOf = (px, weight) => `${weight} ${Math.max(7, pyRound(px))}px ${DESIGN_FONT ? `"${DESIGN_FONT[0]}", ` : ""}${FONT_CSS}`;
 const measureCtx = document.createElement("canvas").getContext("2d");
@@ -228,9 +239,11 @@ function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 
   const font = fontOf(px, weight);
   const w = textWidth(px, weight, text, spacing);
   if (align === "right") x -= w; else if (align === "center") x -= w / 2;
+  const sl = slantOf(px, y);
+  const skewed = (c2) => { if (sl) c2.transform(1, 0, -sl[0], 1, sl[0] * sl[1], 0); };   // leaned over (slantOf)
   if (DESIGN_FONT) {   // these fonts carry their own weight on their own box: no outline / thickening
     ctx.save();
-    if (DESIGN_FONT[1]) ctx.transform(1, 0, -DESIGN_FONT[1], 1, DESIGN_FONT[1] * y, 0);   // leaned over, pivoting on the baseline
+    skewed(ctx);
     ctx.font = font; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     ctx.fillStyle = rgba(color, alpha);
     eachChar(ctx, font, text, x, (c, cx) => ctx.fillText(c, cx, y), spacing * Math.max(7, pyRound(px)));
@@ -247,12 +260,14 @@ function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 
   if (outline > 0) {
     ctx.strokeStyle = rgba(TEXT_OUTLINE ? TEXT_OUTLINE_RGB : OUTLINE_RGB, alpha);
     ctx.lineWidth = outline * 2 + thicken;   // still shows around the thickened glyphs
+    ctx.save(); skewed(ctx);
     eachChar(ctx, font, text, x, (c, cx) => ctx.strokeText(c, cx, y));
+    ctx.restore();
   }
   if (thicken > 0 && alpha < 1) {
     // fill + stroke opaque on a layer, then the layer at alpha (the stroke must not double the alpha)
     const m = ctx.measureText(text), k = ctx.getTransform().a;
-    const pad = thicken + 2;
+    const pad = thicken + 2 + (sl ? sl[0] * px : 0);
     const left = x - pad, top = y - m.fontBoundingBoxAscent - pad;
     const lw = w + 2 * pad, lh = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent + 2 * pad;
     layerCanvas = layerCanvas || document.createElement("canvas");
@@ -260,6 +275,7 @@ function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 
     const q = layerCanvas.getContext("2d");
     q.setTransform(k, 0, 0, k, 0, 0);
     q.translate(-left, -top);
+    skewed(q);
     q.font = font; q.textAlign = "left"; q.textBaseline = "alphabetic"; q.lineJoin = "round";
     q.fillStyle = rgba(color); q.strokeStyle = rgba(color); q.lineWidth = thicken;
     eachChar(q, font, text, x, (c, cx) => { q.fillText(c, cx, y); q.strokeText(c, cx, y); });
@@ -274,7 +290,9 @@ function drawText(ctx, x, y, text, px, weight, color, align = "left", outline = 
   ctx.fillStyle = rgba(color, alpha);
   ctx.strokeStyle = rgba(color, alpha);
   ctx.lineWidth = thicken;
+  ctx.save(); skewed(ctx);
   eachChar(ctx, font, text, x, (c, cx) => { ctx.fillText(c, cx, y); if (thicken > 0) ctx.strokeText(c, cx, y); });
+  ctx.restore();
   return w;
 }
 
@@ -350,10 +368,10 @@ function paintBand(ctx, part) {
 let LABELS = { ...DEFAULT_LABELS };
 function setLabels(own, language) { LABELS = { ...(language === "en" ? DEFAULT_LABELS_EN : DEFAULT_LABELS), ...(own || {}) }; }
 const labelFor = (key) => LABELS[key] || key.toUpperCase();
-function valueSlotWidth(key, px, weight) {
+function valueSlotWidth(key, px, weight, templates) {
   let d = "0", best = -1;
   for (const c of "0123456789") { const w = textWidth(px, weight, c); if (w > best) { best = w; d = c; } }
-  return textWidth(px, weight, VALUE_TEMPLATES[key].replace(/D/g, d));
+  return textWidth(px, weight, ((templates || {})[key] || VALUE_TEMPLATES[key]).replace(/D/g, d));
 }
 function fmtValue(key, v) {
   if (v == null) return "--";
@@ -445,8 +463,9 @@ function statNewSize(s, u) {
   return [92 * u, 21 * n * u];
 }
 // --- broadcast (中継) and sport (スポーツ斜体): hud/overlay.py StatBlock BC_* / SP_* ---
-const BC = { lab: 7.5, big: 24, small: 16, spacing: 0.2, padX: 8, padY: 4, colGap: 12, bar: 2.5, labW: 600, valW: 700 };
-const SP = { hero: 34, heroLab: 10, lab: 8.5, val: 15, padX: 8, padY: 3, pairGap: 9, perRow: 3, labW: 600, valW: 800 };
+const BC = { lab: 7.5, big: 24, small: 16, spacing: 0.2, padX: 8, padY: 4, colGap: 6, bar: 2.5, labW: 600, valW: 700,
+             slots: { apm: "DD.D" } };   // APM's room for two digits (hud/overlay.py BC_SLOTS)
+const SP = { hero: 30.5, heroLab: 9, lab: 7.5, val: 13.5, padX: 7, padY: 2.7, pairGap: 8, perRow: 3, labW: 600, valW: 800 };
 function statBroadcastLayout(s, u) {
   const keys = s.shown.length ? s.shown : ["apm"];
   const rows = [keys.slice(0, 2)];
@@ -455,7 +474,7 @@ function statBroadcastLayout(s, u) {
   const cols = [0, 0];
   rows.forEach((row, r) => row.forEach((k, c) => {
     cols[c] = Math.max(cols[c], textWidth(BC.lab * u, BC.labW, labelFor(k), BC.spacing),
-                       valueSlotWidth(k, pxOf[r] * u, BC.valW), textWidth(pxOf[r] * u, BC.valW, fmtValue(k, s.values[k])));
+                       valueSlotWidth(k, pxOf[r] * u, BC.valW, BC.slots), textWidth(pxOf[r] * u, BC.valW, fmtValue(k, s.values[k])));
   }));
   let y = BC.padY * u;
   const lines = [];
@@ -1044,7 +1063,8 @@ function setFont(family, file) {
     face.load().then((f) => { document.fonts.add(f); widthCache.clear(); layout(); }).catch(() => {});
   }
   if (!fam && file) fam = "UserFont";
-  const css = fam ? `"${fam}", "Segoe UI", "Yu Gothic UI", sans-serif` : '"Segoe UI", "Yu Gothic UI", sans-serif';
+  // "" = the design's default (hud/overlay.py DEFAULT_FONT; 中継 / スポーツ斜体: their own, withDesignFont)
+  const css = `"${fam || "Meiryo"}", "Segoe UI", "Yu Gothic UI", sans-serif`;
   if (css !== FONT_CSS) { FONT_CSS = css; widthCache.clear(); }
 }
 
@@ -1061,6 +1081,8 @@ function layout() {
   TEXT_OUTLINE = d.text_outline ? (Number(d.text_outline_width) > 0 ? d.text_outline_width / 100 : TEXT_OUTLINE_RATIO) : 0;
   setColors(d.bg_color, d.text_color, d.line_color);
   setFont(d.font_family, d.font_file);
+  USE_DESIGN_FONTS = !d.font_family && !d.font_file;
+  ITALIC = !!d.italic;
   setLabels(d.labels, d.language);
   setPlayerColors(d.player_color_left, d.player_color_right);
   const pu = (part) => s * partValue(part, "scale");

@@ -95,8 +95,81 @@ def test_design_fonts_ship_and_load(style):
     for name in files:
         assert (overlay.FONTS_DIR / name).is_file()
     assert list(overlay.FONTS_DIR.glob("OFL-*.txt"))
+    overlay.set_font("", "")   # no font chosen: the design's own (another test may have set one)
     w = overlay.StatBlock(None, "left")
     w.update_side(SIDE, 3.0)
     w.configure(style, "left", ["apm", "pps"], 1.0)
     assert family in QtGui.QFontDatabase.families()
     assert overlay.DESIGN_FONT is None   # only while that block measures / draws
+
+
+def test_the_overview_draws_the_whole_screen():
+    """見本 shows the whole game screen too (user's request), drawn by a HUD
+    copy that never connects or records anything."""
+    import settings_window as sw
+    from config_store import display_settings
+    d = display_settings({"display": {"style": "broadcast", "stat_items": ["apm", "pps", "app"]}})
+    pm = sw.render_overview(d)
+    assert pm is not None and pm.width() == sw.OVERVIEW_W and pm.height() > 250
+    hud = sw._OVERVIEW["hud"]
+    assert hud.preview
+    assert not hud.stats["left"].isHidden()
+
+
+def test_italic_and_the_default_font_per_design():
+    """display.italic leans every text. font_family "" is each design's
+    default (中継 / スポーツ斜体: their own font, the others メイリオ); a font
+    chosen is used by every design (スポーツ斜体 still leans)."""
+    import overlay
+    from config_store import display_settings, default_font
+    d = display_settings({})
+    assert d["italic"] is False and d["font_family"] == "" and d["font_v"] == 2
+    assert default_font("sport") == "Saira Condensed" and default_font("band") == "Meiryo"
+    try:
+        overlay.set_font("", ""); overlay.set_font_options(False)
+        assert overlay._slant(10, 100) is None and overlay._font(10, 400).family() == "Meiryo"
+        with overlay.design_font("sport"):
+            assert overlay.DESIGN_FONT[0] == "Saira Condensed" and overlay._slant(10, 100) == (0.2, 100)
+        overlay.set_font("Arial", ""); overlay.set_font_options(False)
+        with overlay.design_font("sport"):
+            assert overlay.DESIGN_FONT is None and overlay._slant(10, 100) == (0.2, 100)
+            assert overlay._font(10, 400).family() == "Arial"
+        with overlay.design_font("broadcast"):
+            assert overlay.DESIGN_FONT is None and overlay._slant(10, 100) is None
+        overlay.set_font_options(True)
+        assert overlay._slant(10, 100) == (overlay.ITALIC_SLANT, 100 - 3.5)
+    finally:
+        overlay.set_font("", ""); overlay.set_font_options(False)
+    assert overlay.DESIGN_SLANT == 0.0
+
+
+def test_an_older_file_keeps_its_font():
+    """Before font_v, "Meiryo" was the default (now "" = each design's own)
+    and "" the system font."""
+    from config_store import display_settings
+    assert display_settings({"display": {"font_family": "Meiryo"}})["font_family"] == ""
+    assert display_settings({"display": {"font_family": ""}})["font_family"] == "Yu Gothic UI"
+    assert display_settings({"display": {"font_family": "Arial"}})["font_family"] == "Arial"
+    assert display_settings({"display": {"font_family": "Meiryo", "font_v": 2}})["font_family"] == "Meiryo"
+
+
+def test_the_font_list_names_the_designs_default():
+    import settings_window as sw
+    w = sw.SettingsWindow()
+    w._style_picked(sw.STYLE_ORDER.index("broadcast"))
+    assert w.font_box.itemText(0) == "Barlow Condensed（初期設定）"
+    w._style_picked(sw.STYLE_ORDER.index("band"))
+    assert w.font_box.itemText(0) == "Meiryo（初期設定）"
+    assert w.values()["font_v"] == 2
+
+
+def test_the_overview_names_match_its_stacks():
+    """The overview's openers are the names the recognition gives its stacks
+    (user: the names didn't match the stacks)."""
+    import opener_detect as od
+    import settings_window as sw
+    index = od.openers()
+    for name, name_en, stack in sw.OVERVIEW_STACKS:
+        occ = [[c != "." for c in r] for r in stack] + [[False] * 10 for _ in range(od.ROWS - len(stack))]
+        assert od.shown_name(index.match(occ)) == name
+        assert index.english.get(name) == name_en

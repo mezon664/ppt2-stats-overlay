@@ -35,13 +35,20 @@ DISPLAY_DEFAULTS = {
     # Font for all overlay text: a family name ("" = the system UI font, Yu Gothic UI), and,
     # for a font loaded from a file, that file under assets/user_fonts/ so the
     # OBS page can load it too.
-    "font_family": "Meiryo",     # メイリオ (user's choice for the default)
+    # "" = the design's default font (初期設定): its own font for 中継 /
+    # スポーツ斜体, メイリオ for the others (DEFAULT_FONT, DESIGN_DEFAULT_FONTS;
+    # user: the default per design, changeable like the others)
+    "font_family": "",
     "font_file": "",
     # how thick the overlay text is, 0 (thin) - 100, set with a slider; 65 is
     # what used to be "bold", 30 what used to be "normal" (see weight_style)
     "text_weight": 65,
     "text_outline": True,        # black outline around all overlay text
     "text_outline_width": 10,    # its thickness, % of the text size (user: make it adjustable)
+    "italic": False,             # every text leaned over (user: italic to choose)
+    # 2: font_family "" means the design's default (FONT_V); a file without it
+    # is from before, where "" was the system font and "Meiryo" the default
+    "font_v": 2,
     "language": "ja",           # "ja" / "en": overlay text (states, events) and the settings window
     "stats_position": "left",    # "left": each board's lower-left, "right": lower-right
     # each player's own (user: 1P and 2P each): "" follows stats_position
@@ -178,7 +185,18 @@ DISPLAY_DEFAULTS = {
 }
 
 # (min, max) for numeric options; out-of-range values are clamped.
+DEFAULT_FONT = "Meiryo"   # font_family "" in most designs (メイリオ, user's choice for the default)
+DESIGN_DEFAULT_FONTS = {"broadcast": "Barlow Condensed", "sport": "Saira Condensed"}   # hud/overlay.py DESIGN_FONTS
+FONT_V = 2
+
+
+def default_font(style):
+    """The font font_family "" stands for in this design (its 初期設定)."""
+    return DESIGN_DEFAULT_FONTS.get(style, DEFAULT_FONT)
+
+
 DISPLAY_RANGES = {
+    "font_v": (FONT_V, FONT_V),
     "challenge_bottom_rows": (0, 19),
     "capture_camera": (0, 9),
     "challenge_dopamine_volume": (0, 100),
@@ -303,10 +321,21 @@ DEFAULTS = {
 }
 
 
+def _font_v2(display):
+    """A display block from before font_v: "Meiryo" was the default (now ""
+    = each design's own) and "" the system font."""
+    if not isinstance(display, dict) or "font_v" in display or "font_family" not in display:
+        return display
+    old = display["font_family"]
+    return dict(display, font_family={"Meiryo": "", "": "Yu Gothic UI"}.get(old, old), font_v=FONT_V)
+
+
 def load_settings(persist_defaults=True):
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             saved = json.load(f)
+        if isinstance(saved, dict) and "display" in saved:
+            saved["display"] = _font_v2(saved["display"])
         return _merge(DEFAULTS, saved)
     if persist_defaults:
         save_settings(DEFAULTS)
@@ -336,7 +365,7 @@ def display_settings(settings):
     """The display block with every value checked: unknown or broken values
     fall back to the defaults (or are clamped) instead of breaking the
     overlays — the file may be hand-edited by users."""
-    raw = settings.get("display") or {}
+    raw = _font_v2(settings.get("display") or {})
     display = dict(DISPLAY_DEFAULTS)
     for key, default in DISPLAY_DEFAULTS.items():
         value = raw.get(key, default)

@@ -327,7 +327,8 @@ def luminance(rgb):
     return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255
 
 
-FONT_FAMILY = ""        # display.font_family ("" = the system UI font)
+FONT_FAMILY = ""        # display.font_family ("" = the design's default: DEFAULT_FONT, or its own font)
+DEFAULT_FONT = "Meiryo"   # config_store.DEFAULT_FONT
 _loaded_font_files = {}  # path -> family registered from it
 USER_FONTS_DIR = ROOT_DIR / "assets"
 
@@ -362,34 +363,57 @@ DESIGN_FONTS = {
     "sport": ("Saira Condensed", ("SairaCondensed-SemiBold.ttf", "SairaCondensed-ExtraBold.ttf"), 0.2),
 }
 DESIGN_FONT = None
+DESIGN_SLANT = 0.0        # the design's own lean while it draws (sport), with its font or not
 _design_fonts_loaded = set()
+ITALIC = False            # display.italic: every text leaned over
+ITALIC_SLANT = 0.2
+
+
+def set_font_options(italic):
+    """display.italic."""
+    global ITALIC
+    ITALIC = bool(italic)
+
+
+def _slant(px, y):
+    """(how far the letters lean, the height they pivot at), or None: the
+    design's own lean pivots on the baseline (its layout makes room for it);
+    italic pivots a third of the way up, so the letters stay over their place."""
+    if DESIGN_SLANT:
+        return DESIGN_SLANT, y
+    if ITALIC:
+        return ITALIC_SLANT, y - 0.35 * px
+    return None
 
 
 @contextlib.contextmanager
 def design_font(style):
-    """Texts measured and drawn inside this use the design's own font."""
-    global DESIGN_FONT
+    """Texts measured and drawn inside this use the design's own font (unless
+    another font is chosen) and lean like the design."""
+    global DESIGN_FONT, DESIGN_SLANT
     spec = DESIGN_FONTS.get(style)
     if spec is None:
         yield
         return
     family, files, slant = spec
-    if style not in _design_fonts_loaded:
+    own = not FONT_FAMILY   # no font chosen: the design's own (its 初期設定)
+    if own and style not in _design_fonts_loaded:
         _design_fonts_loaded.add(style)
         for name in files:
             if QtGui.QFontDatabase.addApplicationFont(str(FONTS_DIR / name)) < 0:
                 log_hud.warning("could not load font file %s", FONTS_DIR / name)
-    prev, DESIGN_FONT = DESIGN_FONT, (family, slant)
+    prev = DESIGN_FONT, DESIGN_SLANT
+    DESIGN_FONT, DESIGN_SLANT = ((family, slant) if own else None), slant
     try:
         yield
     finally:
-        DESIGN_FONT = prev
+        DESIGN_FONT, DESIGN_SLANT = prev
 
 
 def _font(px, weight, spacing=0.0):
     """spacing: extra room after each letter, x the font size."""
-    family = DESIGN_FONT[0] if DESIGN_FONT else FONT_FAMILY
-    font = QtGui.QFont(family) if family else QtGui.QFont()
+    family = DESIGN_FONT[0] if DESIGN_FONT else (FONT_FAMILY or DEFAULT_FONT)
+    font = QtGui.QFont(family)
     font.setPixelSize(max(7, int(round(px))))
     font.setWeight(weight)
     if spacing:
@@ -416,9 +440,10 @@ def draw_text(p, x, y, text, px, weight, color, align="left", outline=0.0, alpha
         x -= w / 2
     path = QtGui.QPainterPath()
     path.addText(QtCore.QPointF(x, y), font, text)
-    if DESIGN_FONT and DESIGN_FONT[1]:   # leaned over, pivoting on the baseline
-        k = DESIGN_FONT[1]
-        path = QtGui.QTransform(1, 0, -k, 1, k * y, 0).map(path)
+    lean = _slant(px, y)
+    if lean:   # leaned over (see _slant)
+        k, pivot = lean
+        path = QtGui.QTransform(1, 0, -k, 1, k * pivot, 0).map(path)
     thicken = THICKEN * thicken_share * px
     outline = max(outline, TEXT_OUTLINE * px)
     if DESIGN_FONT:   # these fonts carry their own weight on their own box: no outline / thickening
@@ -600,9 +625,9 @@ def use_colors(widget):
         set_colors(*widget.colors)
 
 
-def value_slot_width(key, px, weight):
+def value_slot_width(key, px, weight, templates=None):
     d = max("0123456789", key=lambda c: text_width(px, weight, c))
-    return text_width(px, weight, VALUE_TEMPLATES[key].format(d))
+    return text_width(px, weight, {**VALUE_TEMPLATES, **(templates or {})}[key].format(d))
 
 
 def fmt_value(key, value):
@@ -824,7 +849,10 @@ class StatBlock(Band):
     # --- broadcast (中継): sizes in reference px x u ---
     BC_LAB, BC_BIG, BC_SMALL = 7.5, 24, 16   # label, first-row value, other values
     BC_SPACING = 0.2                         # the labels' letters spaced out
-    BC_PAD_X, BC_PAD_Y, BC_COL_GAP, BC_BAR = 8, 4, 12, 2.5
+    BC_PAD_X, BC_PAD_Y, BC_COL_GAP, BC_BAR = 8, 4, 6, 2.5
+    # APM's room for two digits, not three (user: the numbers too far apart,
+    # the block ran into the match clock); 100 and up widens the column
+    BC_SLOTS = {"apm": "{0}{0}.{0}"}
     BC_LAB_W, BC_VAL_W = QtGui.QFont.Weight.DemiBold, QtGui.QFont.Weight.Bold
 
     def _broadcast_layout(self, u):
@@ -838,7 +866,7 @@ class StatBlock(Band):
         for r, row in enumerate(rows):
             for c, k in enumerate(row):
                 cols[c] = max(cols[c], text_width(self.BC_LAB * u, self.BC_LAB_W, label_for(k), self.BC_SPACING),
-                              value_slot_width(k, px_of[r] * u, self.BC_VAL_W),
+                              value_slot_width(k, px_of[r] * u, self.BC_VAL_W, self.BC_SLOTS),
                               text_width(px_of[r] * u, self.BC_VAL_W, fmt_value(k, self.values.get(k))))
         y, lines = self.BC_PAD_Y * u, []
         for r in range(len(rows)):
@@ -871,8 +899,9 @@ class StatBlock(Band):
                           WHITE, "left", 0, a)
 
     # --- sport (スポーツ斜体): sizes in reference px x u ---
-    SP_HERO, SP_HERO_LAB, SP_LAB, SP_VAL = 34, 10, 8.5, 15
-    SP_PAD_X, SP_PAD_Y, SP_PAIR_GAP, SP_PER_ROW = 8, 3, 9, 3
+    # (a tenth smaller than first made: 34, 10, 8.5, 15 / 8, 3, 9 — user's request)
+    SP_HERO, SP_HERO_LAB, SP_LAB, SP_VAL = 30.5, 9, 7.5, 13.5
+    SP_PAD_X, SP_PAD_Y, SP_PAIR_GAP, SP_PER_ROW = 7, 2.7, 8, 3
     SP_LAB_W, SP_VAL_W = QtGui.QFont.Weight.DemiBold, QtGui.QFont.Weight.ExtraBold
 
     def _sport_layout(self, u):
@@ -2175,9 +2204,13 @@ class HudWindow(QtWidgets.QWidget):
     reading_overlap = QtCore.pyqtSignal(bool, list)
     language_changed = QtCore.pyqtSignal(str)
 
-    def __init__(self, settings):
+    def __init__(self, settings, preview=False):
+        """preview=True: never shown, only drawn (the settings window's
+        overview, see settings_window.render_overview) — no server, no
+        following the game, no health checks, nothing recorded."""
         super().__init__()
         self.settings = settings
+        self.preview = preview
         self.edit_mode = False
         self._last_match_screen = None   # see match_screen_changed
         self._drag = None
@@ -2250,7 +2283,7 @@ class HudWindow(QtWidgets.QWidget):
         self.display = display_settings(settings)
         self._layout()
 
-        if settings["hud"]["follow_game"]:
+        if settings["hud"]["follow_game"] and not preview:
             self._follow = QtCore.QTimer(self)
             self._follow.timeout.connect(self._follow_game_window)
             self._follow.start(500)
@@ -2260,6 +2293,8 @@ class HudWindow(QtWidgets.QWidget):
 
         self.ws_client = WsClient(f"ws://{settings['server']['host']}:{settings['server']['port']}")
         self.ws_client.state_received.connect(self.on_state)
+        if preview:
+            return
         self.ws_client.start()
 
         # The HUD's own health, once a second (user: sometimes only OBS shows
@@ -2297,6 +2332,7 @@ class HudWindow(QtWidgets.QWidget):
         s = self._scale
         d = self.display
         set_text_style(d["text_weight"], d["text_outline"], d["text_outline_width"])
+        set_font_options(d["italic"])
         set_colors(d["bg_color"], d["text_color"], d["line_color"])
         set_font(d["font_family"], d["font_file"])
         set_labels(d["labels"], d["language"])
@@ -2759,6 +2795,8 @@ class HudWindow(QtWidgets.QWidget):
         """A match just ended (frozen, with a winner): its openers and the
         winner go to opener_stats, for the settings window's opener stats.
         (Before display.players hides a side: both are kept.)"""
+        if self.preview:
+            return
         frozen = bool(state.get("frozen"))
         was, self._was_frozen = self._was_frozen, frozen
         if not frozen or was is not False:

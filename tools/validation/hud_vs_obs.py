@@ -3,6 +3,9 @@
 
     python tools/validation/hud_vs_obs.py OUT_DIR [style ...]
 
+A style can carry +italic (display.italic) or +nofont (a font chosen,
+not the design's own), e.g. frame+italic sport+nofont.
+
 For each case it writes OUT_DIR/<case>.png: HUD | OBS | difference
 (red = where they differ), and prints how much of the picture differs.
 """
@@ -159,9 +162,13 @@ def main():
                               "frame", "slash", "hex", "meter", "tower", "minimal", "trend"]
     app = QtWidgets.QApplication(sys.argv[:1])
     cases = []
-    for st in styles:
-        cases.append((f"{st}", dict(DISPLAY_DEFAULTS, style=st, show_event_log=True), False))
-        cases.append((f"{st}_summary", dict(DISPLAY_DEFAULTS, style=st), True))
+    flags = {"italic": {"italic": True}, "nofont": {"font_family": "Meiryo"}}   # e.g. frame+italic, sport+nofont
+    for arg in styles:
+        st, *fl = arg.split("+")
+        extra = {k: v for f in fl for k, v in flags[f].items()}
+        name = arg.replace("+", "_")
+        cases.append((name, dict(DISPLAY_DEFAULTS, style=st, show_event_log=True, **extra), False))
+        cases.append((f"{name}_summary", dict(DISPLAY_DEFAULTS, style=st, **extra), True))
     cases.append(("vs_puyo", dict(DISPLAY_DEFAULTS, _vs_puyo=True), False))
     for om in ("hold", "namebar", "top"):
         cases.append((f"opener_{om}", dict(DISPLAY_DEFAULTS, opener_display=om), False))

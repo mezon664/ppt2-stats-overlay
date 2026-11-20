@@ -18,6 +18,7 @@ Can also be run on its own (python settings_window.py) to edit the file —
 then the HUD and OBS follow through the server.
 """
 import json
+import logging
 import math
 import time
 import copy
@@ -27,6 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from config_store import (default_font, FONT_V)
 from config_store import (load_settings, save_settings, display_settings, preset_of, preset_file,
                           read_preset_file, part_value, DISPLAY_DEFAULTS, DISPLAY_RANGES, STAT_ITEMS, PARTS,
                           SUMMARY_ITEMS, OPENER_LANGUAGES, stats_mode)
@@ -409,7 +411,9 @@ TEXT = {
     "tw.thick": {"ja": "太い", "en": "Thick"},
     "text_outline": {"ja": "すべての文字に縁をつける", "en": "Outline all text"},
     "font": {"ja": "フォント", "en": "Font"},
-    "font_default": {"ja": "標準", "en": "Default"},
+    "font_default": {"ja": "{}（初期設定）", "en": "{} (default)"},
+    "italic_row": {"ja": "斜体", "en": "Italic"},
+    "italic": {"ja": "文字を斜めにする", "en": "Lean the text over"},
     "font_load": {"ja": "ファイルから読み込む…", "en": "Load from file…"},
     "font_load_title": {"ja": "フォントファイルを選ぶ", "en": "Choose a font file"},
     "font_load_failed": {"ja": "このファイルはフォントとして読み込めませんでした。",
@@ -629,26 +633,31 @@ WINDOW_W, WINDOW_MAX_H = 830, 860   # the window's size on opening
 PREVIEW_W, PREVIEW_H = 92, 57   # the design cards on 見た目 (smaller, five a row: user's request)
 DESIGN_COLUMNS = 5
 LOOK_PREVIEW_W, LOOK_PREVIEW_H = 520, 140   # the preview on 見た目
+OVERVIEW_W = 520   # the whole screen under it (user: the overview on 見本 too)
 SAMPLE_LEFT = {"apm": {"apm": 77.8}, "pps": 2.09, "app": 0.62, "attack": 112, "pieces": 181, "ren": 3, "b2b": 2}
 SAMPLE_RIGHT = {"apm": {"apm": 43.2}, "pps": 1.74, "app": 0.41, "attack": 62, "pieces": 151, "ren": 0, "b2b": 0}
 
 
-def render_style_preview(style, d, size=None, u=0.85):
+def render_style_preview(style, d, size=None, u=0.85, full=False):
     """A small picture of the stat block in `style`, drawn by the HUD's own
     code with the current colors, font and rows (None if the HUD code can't
-    be loaded) — so the design choice is something you can see, not a name."""
+    be loaded) — so the design choice is something you can see, not a name.
+    full (見本): every item shown, on 1P's side, as the HUD has it (user: the
+    same as the HUD); the design cards show three rows."""
     try:
         import overlay
     except Exception:
         return None
     overlay.set_text_style(d["text_weight"], d["text_outline"], d["text_outline_width"])
+    overlay.set_font_options(d["italic"])
     overlay.set_font(d["font_family"], d["font_file"])
-    overlay.set_labels(d["labels"])
+    overlay.set_labels(d["labels"], d["language"])
     overlay.set_player_colors(d["player_color_left"], d["player_color_right"])
-    items = d["stat_items"][:3] or ["apm", "pps", "app"]   # three rows are enough to show the look
+    items = (d["stat_items"] if full else d["stat_items"][:3]) or ["apm", "pps", "app"]   # three: enough for a card
+    mode = stats_mode(d, "left") if full else "left"
     if style == "versus":
         w = overlay.VersusBlock(None)
-        w.configure(items, u * 0.7)
+        w.configure(items, u if full else u * 0.7)   # (the cards: smaller, it's wide)
         w.update_sides(SAMPLE_LEFT, SAMPLE_RIGHT)
     else:
         w = overlay.StatBlock(None, "left")
@@ -657,7 +666,7 @@ def render_style_preview(style, d, size=None, u=0.85):
             for i, k in enumerate(w.KEYS):
                 v = overlay.side_values(SAMPLE_LEFT)[k]
                 w.history[k].extend(v * (0.85 + 0.12 * math.sin(j / 3 + i) + j * 0.004) for j in range(30))
-        w.configure(style, "left", items, u)
+        w.configure(style, mode, items, u)
     w.colors = (part_value(d, "stats", "bg_color"), part_value(d, "stats", "text_color"),
                 part_value(d, "stats", "line_color"))
     w.opacity = part_value(d, "stats", "background_opacity")
@@ -681,6 +690,105 @@ def render_style_preview(style, d, size=None, u=0.85):
     p.end()
     w.deleteLater()
     return pm
+
+
+_OVERVIEW = {}   # the HUD drawn for the overview, made once (see render_overview)
+# The overview's boards: (name, English name, the stack, bottom row first).
+# The stacks are read from real games (tests/fixtures/opener_gassho_left.jpg,
+# opener_meisou_left.jpg: each cell's piece by its color), so the names over
+# them are the ones the recognition gives them (user: the names didn't match
+# the stacks, then: 迷走砲's shape is wrong; tests/test_new_styles.py checks it).
+OVERVIEW_STACKS = (("合掌TSD", "Gassho TSD PC", ("ITTTZ..SOO", "IJT.ZZSSOO", "IJ...ZSLLL", "IJJ......L")),
+                   ("迷走砲", "Stray Cannon", ("ILLST.JJOO", "ILSSTT.JOO", "ILS.T..J..", "I.........")))
+PIECE_COLORS = {"I": (40, 190, 235), "O": (245, 200, 30), "T": (165, 70, 200), "S": (110, 200, 60),
+                "Z": (225, 55, 65), "J": (45, 95, 220), "L": (245, 135, 30)}
+
+
+def _overview_state(d):
+    """A match in progress, made up: numbers, a few events and an opener on
+    each side, the clock at 1:26."""
+    def side(sample, stack, events):
+        return {**sample, "opener": stack[0], "opener_en": stack[1], "opener_age_s": 1.0,
+                "event_log": [{"text": e, "text_en": e} for e in events],
+                "match_stats": {"lines_sent": sample["attack"], "pieces": sample["pieces"], "max_ren": 3,
+                                "tetris": 2, "tspin": 4, "perfect_clear": 0}}
+    return {"match_screen": True, "match_elapsed_s": 86.0, "frozen": False, "capture": {"ok": True},
+            "display": d,
+            "left": side(SAMPLE_LEFT, OVERVIEW_STACKS[0], ["T-SPIN DOUBLE", "TETRIS", "BACK-TO-BACK x2"]),
+            "right": side(SAMPLE_RIGHT, OVERVIEW_STACKS[1], ["TETRIS", "3 REN"])}
+
+
+def _overview_backdrop(p, w, h):
+    """The game screen, sketched: two boards with their HOLD and NEXT, at
+    their places in the game (board_read's boxes, reference 1232 x 692)."""
+    g = QtGui.QLinearGradient(0, 0, w, h)
+    g.setColorAt(0.0, QtGui.QColor(150, 186, 214))
+    g.setColorAt(1.0, QtGui.QColor(92, 74, 64))
+    p.fillRect(QtCore.QRectF(0, 0, w, h), g)
+    for (x1, y1, x2, y2), frame, stack in (((198, 92, 429, 563), QtGui.QColor(60, 150, 220), OVERVIEW_STACKS[0][2]),
+                                           ((803, 92, 1034, 563), QtGui.QColor(225, 80, 85), OVERVIEW_STACKS[1][2])):
+        p.fillRect(QtCore.QRectF(x1 - 8, y1 - 8, x2 - x1 + 16, y2 - y1 + 44), frame)
+        p.fillRect(QtCore.QRectF(x1, y1, x2 - x1, y2 - y1), QtGui.QColor(28, 30, 38))
+        pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 22))
+        p.setPen(pen)
+        cw, ch = (x2 - x1) / 10, (y2 - y1) / 20
+        for i in range(1, 10):
+            p.drawLine(QtCore.QPointF(x1 + i * cw, y1), QtCore.QPointF(x1 + i * cw, y2))
+        for i in range(1, 20):
+            p.drawLine(QtCore.QPointF(x1, y1 + i * ch), QtCore.QPointF(x2, y1 + i * ch))
+        p.fillRect(QtCore.QRectF(x1 - 78, y1 + 4, 64, 54), QtGui.QColor(20, 20, 26))          # HOLD
+        for i in range(5):                                                                     # NEXT
+            p.fillRect(QtCore.QRectF(x2 + 14, y1 + 4 + i * 56 + (14 if i else 0), 64, 48 if i else 54),
+                       QtGui.QColor(20, 20, 26))
+        for r, line in enumerate(stack):   # the pieces, in the game's colors
+            for c, kind in enumerate(line):
+                if kind == ".":
+                    continue
+                col = QtGui.QColor(*PIECE_COLORS[kind])
+                cell = QtCore.QRectF(x1 + c * cw + 0.5, y2 - (r + 1) * ch + 0.5, cw - 1, ch - 1)
+                p.fillRect(cell, col.darker(135))
+                p.fillRect(cell.adjusted(2, 2, -2, -2), col)
+                p.fillRect(QtCore.QRectF(cell.left() + 2, cell.top() + 2, cell.width() - 4, 3), col.lighter(140))
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+
+
+def render_overview(d, width=OVERVIEW_W):
+    """The whole game screen with everything that's switched on, as the
+    HUD itself draws it (its own code, a copy never shown), at `width`."""
+    try:
+        import overlay
+    except Exception:
+        return None
+    try:
+        hud = _OVERVIEW.get("hud")
+        if hud is None:
+            settings = overlay.load_settings()
+            settings["hud"]["follow_game"] = False
+            hud = _OVERVIEW["hud"] = overlay.HudWindow(settings, preview=True)
+        disp = overlay.display_settings({"display": d})
+        hud.apply_display(disp, local=True)
+        hud.on_state(_overview_state(disp))
+        rw, rh = overlay.REFERENCE_W, overlay.REFERENCE_H
+        full = QtGui.QPixmap(rw, rh)
+        p = QtGui.QPainter(full)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        _overview_backdrop(p, rw, rh)
+        p.drawPixmap(0, 0, hud.grab())
+        p.end()
+    except Exception:
+        logging.getLogger("hud").exception("overview failed")
+        return None
+    small = full.scaledToWidth(width, QtCore.Qt.TransformationMode.SmoothTransformation)
+    out = QtGui.QPixmap(small.size())   # rounded like the preview above it
+    out.fill(QtCore.Qt.GlobalColor.transparent)
+    p = QtGui.QPainter(out)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    path = QtGui.QPainterPath()
+    path.addRoundedRect(QtCore.QRectF(0, 0, small.width(), small.height()), 7, 7)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, small)
+    p.end()
+    return out
 
 
 def _form():
@@ -1618,6 +1726,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.look_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.look_preview.setMinimumHeight(LOOK_PREVIEW_H)
         self.preview_card.add(self.look_preview)
+        self.look_overview = QtWidgets.QLabel()   # the whole screen (user's request)
+        self.look_overview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.preview_card.add(self.look_overview)
 
         self.text_box = ui.Card()
         # a slider, thin to thick (user's request); starts where "bold" was
@@ -1647,6 +1758,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.font_load = QtWidgets.QPushButton()
         self.font_load.clicked.connect(self._load_font)
         self.text_box.add(self._row("font", _hbox(self.font_box, self.font_load, stretch=False)))
+        # italic for any design, and the two designs' own fonts on / off (user's request)
+        self.italic = ui.Switch()
+        self.italic.toggled.connect(self._changed)
+        self.text_box.add(self._row("italic_row", _hbox(self.italic, stretch=True)))
 
         self.look_box = ui.Card()
         self.look_target = ui.Segmented()
@@ -2442,7 +2557,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.ow_thin.setText(t("tw.thin"))
         self.ow_thick.setText(t("tw.thick"))
         self.text_outline.setText(t("text_outline"))
-        self.font_box.setItemText(0, t("font_default"))
+        self.italic.setText(t("italic"))
+        self._name_default_font()
         self.font_load.setText(t("font_load"))
         self.look_box.setTitle(t("look_group"))
         self.look_box.setDescription(t("look_desc"))
@@ -2514,8 +2630,13 @@ class SettingsWindow(QtWidgets.QWidget):
         self._changed()
 
     # --- design cards ---
+    def _name_default_font(self):
+        """The font list's first entry: this design's default font, by name."""
+        self.font_box.setItemText(0, self.tr_("font_default").format(default_font(self._style)))
+
     def _style_picked(self, index):
         self._style = STYLE_ORDER[index]
+        self._name_default_font()
         self._show_look()   # the background row means the lines in "minimal"
         self._changed()
 
@@ -2531,9 +2652,12 @@ class SettingsWindow(QtWidgets.QWidget):
             pm = render_style_preview(key, d)
             if pm is not None:
                 card.setIcon(QtGui.QIcon(pm))
-        pm = render_style_preview(self._style, d, (LOOK_PREVIEW_W, LOOK_PREVIEW_H), 1.25)
+        pm = render_style_preview(self._style, d, (LOOK_PREVIEW_W, LOOK_PREVIEW_H), 1.25, full=True)
         if pm is not None:
             self.look_preview.setPixmap(pm)
+        pm = render_overview(d)
+        if pm is not None:
+            self.look_overview.setPixmap(pm)
 
     # --- size / colors / background, overall or per part ---
     def _look_value(self, key):
@@ -2874,6 +2998,7 @@ class SettingsWindow(QtWidgets.QWidget):
             e.setText(d["labels"].get(key, ""))
         self.text_weight.setValue(int(d["text_weight"]))
         self.text_outline.setChecked(d["text_outline"])
+        self.italic.setChecked(d["italic"])
         self.outline_width.setValue(int(d["text_outline_width"]))
         self.outline_width.setEnabled(d["text_outline"])
         self._overall = {k: d[k] for k in LOOK_KEYS}
@@ -2974,6 +3099,8 @@ class SettingsWindow(QtWidgets.QWidget):
             **self._player_colors,
             "text_weight": self.text_weight.value(),
             "text_outline": self.text_outline.isChecked(),
+            "italic": self.italic.isChecked(),
+            "font_v": FONT_V,
             "text_outline_width": self.outline_width.value(),
             "font_family": self.font_box.currentData() or "",
             "font_file": self._font_file,
@@ -3104,7 +3231,8 @@ class SettingsWindow(QtWidgets.QWidget):
         offsets = tuple(k for pair in TARGET_KEYS.values() for k in pair)
         cards = (
             (self.design_box, ("style",)),
-            (self.text_box, ("text_weight", "text_outline", "text_outline_width", "font_family", "font_file")),
+            (self.text_box, ("text_weight", "text_outline", "text_outline_width", "font_family", "font_file",
+                             "italic")),
             (self.player_box, ("player_color_left", "player_color_right")),
             (self.players_card, ("players", "always_show", "hide_in_rated")),
             (self.items_box, ("stat_items", "labels")),

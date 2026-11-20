@@ -100,7 +100,14 @@ def _before_the_t_spin(raw):
     T-spin (inside the shape, touching each full row, leaving none full, and
     3 of the 4 corners around its center blocked — the game's T-spin rule,
     and open above in at least one of its columns, so it can come down)
-    gives one such board."""
+    gives one such board. Two rows cleared (a T-spin Double): only a T
+    pointing down, its flat side in the upper row — the wiki's tags don't
+    say where the T went, and every T that fits made 15 boards a tag, among
+    them Ts turned up against a wall that nobody plays; with that many,
+    unrelated stacks matched one (user: "石見の光 comes up a lot"). 332 tags
+    clear two rows: their boards go from 5034 to 1415; one opener (Absorber
+    ZS, 2 tags) has none left. One row cleared keeps every turn: T-spin Singles
+    and Minis are often done with the T sideways or up (82 tags)."""
     full = [i for i, r in enumerate(raw) if all(r)]
     if not full:
         return []
@@ -113,6 +120,8 @@ def _before_the_t_spin(raw):
                 if not t <= cells or any(not any((c, r) in t for c in range(COLS)) for r in full):
                     continue
                 cx, cy = c0 + mc, r0 + mr
+                if len(full) == 2 and not (sum(1 for _, y in t if y == cy) == 3 and (cx, cy - 1) in t):
+                    continue   # a T-spin Double: the T points down
                 blocked = sum(1 for dx in (-1, 1) for dy in (-1, 1)
                               if not (0 <= cx + dx < COLS) or cy + dy < 0
                               or ((cx + dx, cy + dy) in cells and (cx + dx, cy + dy) not in t))
@@ -288,23 +297,29 @@ class OpenerIndex:
         module docstring). landed: the pieces that landed, as masks; hold:
         the piece kind in HOLD, or None."""
         n = bin(mask).count("1")
-        names = []
+        shapes = []   # the whole shapes this board can be
         for piece in landed:
             if piece & mask != piece:
                 continue
             rest = mask & ~piece
-            found = []
-            if n - 4 in self.counts:                     # the held piece went in after it: the whole shape
-                found += self.by_mask.get(rest, [])
+            if n - 4 in self.counts and self.by_mask.get(rest):   # the held piece went in after it: the whole shape
+                shapes.append(rest)
             if hold in PLACEMENTS and n in self.counts:  # still held: the shape once it's put back
-                for p in PLACEMENTS[hold]:
-                    if not p & rest:
-                        found += self.by_mask.get(rest | p, [])
-            found = [f for f in found if f]
-            for name in found:
-                if name not in names:
-                    names.append(name)
-        return names
+                shapes += [rest | p for p in PLACEMENTS[hold] if not p & rest and self.by_mask.get(rest | p)]
+        # More than one shape: which it is depends on where a piece goes —
+        # the Z still held makes パフェ積み in one place and 新MT砲 in another,
+        # and "パフェ積み / 新MT砲" showed until the Z went in (user: another
+        # name for a moment). Nothing is named until it's on the board.
+        if len(set(shapes)) != 1:
+            return []
+        return list(self.by_mask[shapes[0]])
+
+
+def _draw_mask(m):
+    """A board mask as rows of #/. (top row first, from its highest block)."""
+    top = max((i // COLS for i in range(MASK_ROWS * COLS) if m >> i & 1), default=0)
+    return "/".join("".join("#" if m >> (r * COLS + c) & 1 else "." for c in range(COLS))
+                    for r in range(top, -1, -1))
 
 
 def shown_name(names, language="ja"):
@@ -428,10 +443,7 @@ class OpenerDetector:
         self._reported = True
         import logging
 
-        def draw(m):
-            top = max((i // COLS for i in range(MASK_ROWS * COLS) if m >> i & 1), default=0)
-            return "/".join("".join("#" if m >> (r * COLS + c) & 1 else "." for c in range(COLS))
-                            for r in range(top, -1, -1))
+        draw = _draw_mask
         logging.getLogger("opener").info(
             "[%s] no opener: board %s | landed %s | hold %s | placements %d", self.side, draw(self._board),
             " ".join(draw(p) for p in self.landed), self._last_hold, self.placements)
@@ -515,5 +527,11 @@ class OpenerDetector:
         self.name_en = shown_name(list(dict.fromkeys(index.english.get(n, n) for n in names)), "en")
         if name != self.name:
             self.name = name
+            # what it was named from (user: another name showed for a moment
+            # while building パフェ積み, and nothing told which board it was)
+            import logging
+            logging.getLogger("opener").info(
+                "[%s] named %s from board %s | landed %s | placements %d", self.side, name, _draw_mask(self._board),
+                " ".join(_draw_mask(p) for p in self.landed), self.placements)
             return name
         return None
