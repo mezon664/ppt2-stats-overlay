@@ -135,6 +135,13 @@ HOLD_MIN_CELLS = 24   # the hold case: only shapes of 6 pieces or more
 SETTLE_FRAMES = 3     # a cell filled this many frames running has settled (_note_landing)
 FULL_BAG_CELLS = 28   # a shape of a whole bag (7 pieces) is shown as soon as it matches
 WAIT_PIECES = 2       # a smaller one only after this many more pieces with no bigger match
+# A shape this many pieces (or more) short of the opener's own biggest one is
+# only a step on the way, not named: 婿TD's 5-piece tag (its others have 6 and
+# 7) is also how 32 other openers start, and came up while building something
+# else (user: "the shape is different"). One piece short is kept: 迷走砲 and
+# 開幕TSD are mostly recognized by a shape one piece short of their biggest
+# (the last piece of the bag goes anywhere).
+STEP_SHORT_PIECES = 2
 
 
 def _mask(rows):
@@ -246,9 +253,20 @@ class OpenerIndex:
         # only shapes of most of a bag: with a small one (3-4 pieces) any early
         # board less a piece came out as an opener (burst_boundary, the CPU)
         self.counts = {c for c in (bin(m).count("1") for m in self.by_mask) if c >= HOLD_MIN_CELLS}
+        # each opener's biggest shape (not counting the leftovers after a clear), in cells
+        self.max_cells = {}
+        for shape in self.openers:
+            if not (len(shape) > 2 and shape[2]):
+                n = sum(map(sum, shape[1]))
+                self.max_cells[shape[0]] = max(n, self.max_cells.get(shape[0], 0))
 
     def match(self, occupancy, placements=None):
-        names = []
+        return [name for name, _ in self.match_cells(occupancy, placements)]
+
+    def match_cells(self, occupancy, placements=None):
+        """[(name, cells)]: like match, with the size of the shape that matched
+        (0 for a leftover after a clear)."""
+        out = []
         for h in self.heights:
             if any(any(occupancy[r]) for r in range(h, min(ROWS, h + CLEAR_ROWS_ABOVE))):
                 continue
@@ -256,9 +274,14 @@ class OpenerIndex:
                 name, pieces = shape[0], shape[2] if len(shape) > 2 else 0
                 if placements is not None and pieces and placements < pieces - PLACEMENT_SLACK:
                     continue   # a small leftover shape this early is something else
-                if name not in names:
-                    names.append(name)
-        return names
+                if name not in (n for n, _ in out):
+                    out.append((name, 0 if pieces else sum(map(sum, shape[1]))))
+        return out
+
+    def is_a_step_on_the_way(self, name, cells):
+        """This shape is STEP_SHORT_PIECES or more pieces short of the
+        opener's own biggest one."""
+        return bool(cells) and self.max_cells.get(name, 0) >= cells + 4 * STEP_SHORT_PIECES
 
     def match_with_hold(self, mask, landed, hold):
         """No exact shape: one landed piece is a second-bag one (see the
@@ -378,7 +401,8 @@ class OpenerDetector:
         self._recent = __import__("collections").deque(maxlen=SETTLE_FRAMES)   # the last few boards
         self.landed = []      # each piece that landed, as a mask (the hold case)
         self._reported = False   # _report_miss: once
-        self._pending = None     # (names, placements then): a small shape kept back (see _check)
+        self._pending = None     # (names, placements then, cells): a small shape kept back (see _check)
+        self._shown_cells = 0    # the size of the shape the shown name came from
         self._last_hold = None
 
     def on_frame(self, frame, t_in_match, placements=0, hold=None):
@@ -389,7 +413,7 @@ class OpenerDetector:
         self.placements += placements
         if t_in_match > OPENING_S or self.placements > MAX_PLACEMENTS:
             if self._pending is not None:   # the opening is over: a shape kept back is the one
-                return self._announce(self._pending[0])
+                return self._announce(*self._pending[::2])
             self._report_miss()
             return None
         self._last_hold = hold
@@ -451,28 +475,40 @@ class OpenerDetector:
             occupancy = occupancy[lifted:] + [[False] * COLS for _ in range(lifted)]
         mask = _mask(occupancy)
         self._note_landing(mask, placed)
-        names = match_openers(occupancy, openers(), self.placements)
+        index = openers()
+        found = index.match_cells(occupancy, self.placements)
+        names = [name for name, _ in found]
+        if names and bin(mask).count("1") < FULL_BAG_CELLS:
+            # see STEP_SHORT_PIECES
+            names = [name for name, cells in found if not index.is_a_step_on_the_way(name, cells)]
         if names:
             if bin(mask).count("1") >= FULL_BAG_CELLS:
-                return self._announce(names)
+                return self._announce(names, bin(mask).count("1"))
             # Fewer pieces than a bag: many openers pass through such a shape
             # on the way to their own (2BX砲 alone has 840 five- and six-piece
             # ones; user: an unrelated name came up while building 合掌TSD).
             # Kept back until WAIT_PIECES more pieces land with no bigger
             # shape matching, then shown.
-            if self._pending is None or self._pending[0] != names:
-                self._pending = (names, self.placements)
+            # Once a name is shown, only a bigger shape takes its place
+            # (Captain Stacking's 5 pieces, then 開幕TSD's 6 — 18 times in the
+            # logs): after 合掌TSD's T-spin the two rows left plus two pieces
+            # are 婿TD's 5-piece shape, and 婿TD took the place of 合掌TSD
+            # (4 of the 6 婿TD in the logs).
+            cells = max(c for name, c in found if name in names)
+            if cells > self._shown_cells and (self._pending is None or self._pending[0] != names):
+                self._pending = (names, self.placements, cells)
         elif self.name is None and self.landed:
             # the hold case: only shapes of 6 pieces or more, shown at once
             names = openers().match_with_hold(mask, self.landed, hold)
             if names:
-                return self._announce(names)
+                return self._announce(names, bin(mask).count("1"))
         if self._pending is not None and self.placements - self._pending[1] >= WAIT_PIECES:
-            return self._announce(self._pending[0])
+            return self._announce(*self._pending[::2])
         return None
 
-    def _announce(self, names):
+    def _announce(self, names, cells=0):
         self._pending = None
+        self._shown_cells = cells
         name = shown_name(names)      # shapes shared by several openers: up to MAX_NAMES of them
         index = openers()
         # dict.fromkeys: two Japanese names can share one English name once its (…) is gone

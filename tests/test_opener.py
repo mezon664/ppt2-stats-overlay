@@ -262,3 +262,54 @@ def test_a_small_shape_waits_for_a_bigger_one():
     det = OpenerDetector("left", compute_profile(meisou.shape[1], meisou.shape[0]))
     assert det.on_placements(meisou, 1) is None                        # kept back
     assert det.on_placements(gassho, 1) == "合掌TSD"                   # the bigger one, at once
+
+
+def test_a_shown_name_stays_over_a_smaller_shape():
+    """4 of the 6 婿TD in the logs came 2-3 s after 合掌TSD: after its T-spin
+    the rows left plus two pieces are 婿TD's 5-piece shape. A shape smaller
+    than the one the shown name came from doesn't replace it."""
+    meisou = cv2.imread(str(FIXTURES / "opener_meisou_left.jpg"))     # a 6-piece shape
+    gassho = cv2.imread(str(FIXTURES / "opener_gassho_left.jpg"))     # 合掌TSD
+    gassho = cv2.resize(gassho, (meisou.shape[1], meisou.shape[0]), interpolation=cv2.INTER_AREA)
+    det = OpenerDetector("left", compute_profile(meisou.shape[1], meisou.shape[0]))
+    assert det.on_placements(gassho, 1) == "合掌TSD"
+    for _ in range(od_wait() + 2):
+        assert det.on_placements(meisou, 1) is None
+    assert det.name == "合掌TSD"
+
+
+def test_a_shape_two_pieces_short_of_its_own_is_a_step():
+    """婿TD's 5-piece tag (its others have 6 and 7 pieces) is how 32 other
+    openers start: not named. A shape one piece short of the opener's biggest
+    still is (迷走砲's 6-piece one, 開幕TSD's 5-piece one)."""
+    from opener_detect import openers
+    index = openers()
+    assert index.max_cells["婿TD"] == 28 and index.is_a_step_on_the_way("婿TD", 20)
+    assert not index.is_a_step_on_the_way("婿TD", 24)
+    assert not index.is_a_step_on_the_way("迷走砲", 24)
+    assert not index.is_a_step_on_the_way("開幕TSD", 20)
+    assert not index.is_a_step_on_the_way("婿TD", 0)          # a leftover after a clear
+
+
+def test_a_bigger_small_shape_still_replaces_a_shown_name(monkeypatch):
+    """Captain Stacking (5 pieces) and then 開幕TSD (6), 18 times in the logs:
+    a bigger shape still takes the place of the name shown."""
+    import opener_detect
+    det = OpenerDetector("left", compute_profile(1232, 692))
+    boards = {}
+    monkeypatch.setattr(opener_detect, "read_occupancy", lambda frame, box: boards["now"])
+    monkeypatch.setattr(opener_detect, "garbage_rows", lambda frame, box: 0)
+    index = opener_detect.openers()
+
+    def shape_of(name, cells):
+        rows = next(s[1] for s in index.openers if s[0] == name and sum(map(sum, s[1])) == cells
+                    and not (len(s) > 2 and s[2]) and index.match(board(s[1])) == [name])
+        return board(rows)
+    small, bigger = shape_of("Captain Stacking", 20), shape_of("開幕TSD", 24)
+    boards["now"] = small
+    names = [det.on_placements(None, 1) for _ in range(od_wait() + 1)]
+    assert det.name == "Captain Stacking"
+    boards["now"] = bigger
+    for _ in range(od_wait() + 1):
+        det.on_placements(None, 1)
+    assert det.name == "開幕TSD"
