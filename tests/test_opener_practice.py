@@ -517,3 +517,27 @@ def test_a_step_that_clears_rows_waits_for_the_new_plan():
     full = frozenset((x, 0) for x in range(10)) | {(0, 1), (1, 1)}
     p._advance(full)
     assert p.plan[0]["piece"] == "O"
+
+
+def test_the_wikis_groups_are_all_that_is_listed(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {"X": [{"name": "a", "fumen": "f", "start": True}]})
+    monkeypatch.setattr(op, "_MIN_COVERS", {"X": {"rate": 1.0, "hold": None, "groups": [
+        {"name": "Standard S①", "rows": ["OO........"], "on": True},
+        {"name": "Advance A①", "rows": ["II........"], "on": False}]}})
+    got = op.entry_routes({"name": "X"})
+    assert [(r["name"], r["on"]) for r in got] == [("Standard S①", True), ("Advance A①", False)]
+
+
+def test_hachimitsu_has_its_standard_on():
+    got = op.entry_routes({"name": "はちみつ砲"})
+    assert [r["name"] for r in got if r["on"]] == ["Standard S①", "Standard S②", "Standard S③"]
+    assert all(r["name"].split()[0] in ("Standard", "Advance", "Extra") for r in got)
+
+
+def test_meisou_standard_is_what_the_wiki_says():
+    got = {r["name"]: r for r in op.entry_routes({"name": "迷走砲"})}
+    assert [n for n, r in got.items() if r["on"]][:3] == ["Standard S①", "Standard S②", "Standard S③"]
+    base = op.opener_shapes("迷走砲")[0]
+    rates = [round(bin(op.page_orders(base, op.route_targets(got[f"Standard S{k}"])[0], "S")).count("1") / 50.40, 2)
+             for k in "①②③"]
+    assert rates == [66.67, 66.67, 50.0]     # the wiki's own setup rates

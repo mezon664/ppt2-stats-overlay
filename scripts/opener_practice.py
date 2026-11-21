@@ -866,17 +866,20 @@ def min_cover_routes(opener):
     got = _MIN_COVERS.get(opener)
     if not got:
         return []
+    if got.get("groups"):       # the wiki's own Standard / Advance / Extra: those alone
+        return [{"name": g["name"], "paint": g["rows"], "cover": g["on"], "only": True} for g in got["groups"]]
     n = len(got["boards"])
     names = got.get("names") or [""] * n
     return [{"name": f"最少パターン {k + 1}/{n}（{n}個で {got['rate'] * 100:.2f}%）" + (f" {names[k]}" if names[k] else ""),
              "paint": rows, "cover": True} for k, rows in enumerate(got["boards"])]
 
 
-def page_orders(base, page, hold=None):
+def page_orders(base, page, hold=None, spare=False):
     """Which of the next bag's orders (a bit per all_bags()) build `page` from
     `base`, with `hold` in HOLD to begin with. The board may leave one T out
-    (most next-bag shapes are the setup, its T kept for the T-spin). Worked
-    out per set of pieces placed, so the 5040 orders share the work."""
+    (most next-bag shapes are the setup, its T kept for the T-spin); spare:
+    one more piece may be left out too, kept in HOLD (the wiki's ホールド地形).
+    Worked out per set of pieces placed, so the 5040 orders share the work."""
     room = frozenset(page.cells) - frozenset(base)
     if len(room) % 4 or len(room) > 32:
         return 0
@@ -884,9 +887,12 @@ def page_orders(base, page, hold=None):
     have = sorted(list(PIECES) + ([hold] if hold else []))
     no_t = list(have)
     no_t.remove("T")
+    allowed = [have, no_t]
+    if spare:
+        allowed += [no_t[:k] + no_t[k + 1:] for k in range(len(no_t))]
     cuts = [c for c in tilings(room)
             if all(colors.get(x, p) == p for p, cells in c for x in cells)
-            and sorted(p for p, _ in c) in (have, no_t)]
+            and sorted(p for p, _ in c) in allowed]
     target = frozenset(page.cells)
     out = 0
     for cut in cuts[:12]:
@@ -983,10 +989,13 @@ def entry_routes(entry):
     """The opener's routes in your order: [{"name", "fumen" or "paint", "on",
     "own"}]. Your own (added by テト譜 or painted) come first when new. Until
     you change them, only the 最少パターン are on: the fewest boards covering
-    the next bag's orders (min_cover_routes). An opener without one: the wiki's
+    the next bag's orders (min_cover_routes). An opener whose wiki page labels
+    its boards Standard / Advance / Extra lists those alone, Standard on (and
+    what Advance / Extra it takes to cover more). One without any: the wiki's
     最小 patterns and the first route from each of its shapes ("start")."""
     cover = min_cover_routes(entry["name"])
-    wiki = {r["name"]: dict(r) for r in cover + wiki_routes(entry["name"])}
+    only = any(r.get("only") for r in cover)
+    wiki = {r["name"]: dict(r) for r in (cover if only else cover + wiki_routes(entry["name"]))}
     own = {r["name"]: dict(r, own=True) for r in entry.get("own_routes", [])}
     pool = {**wiki, **own}
     saved = [dict(pool[s["name"]], on=s.get("on", True)) for s in entry.get("routes", []) if s.get("name") in pool]
