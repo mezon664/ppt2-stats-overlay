@@ -236,6 +236,51 @@ def comment_stream():
         _COMMENTS = comments.CommentStream()
     return _COMMENTS
 _GARBAGE_HOLD = None
+_PRACTICE = None
+_DECK = {"mtime": None, "cands": []}
+_ENDLESS = None
+
+
+def deck_candidates():
+    """The deck's openers and forms (opener_practice.candidates), read again
+    when config/practice_deck.json changes."""
+    import opener_practice
+    path = opener_practice.DECK_PATH
+    mtime = path.stat().st_mtime if path.exists() else None
+    if mtime != _DECK["mtime"]:
+        _DECK["mtime"] = mtime
+        _DECK["cands"] = opener_practice.candidates(opener_practice.load_deck())
+    return _DECK["cands"]
+
+
+def practice_state(display, state):
+    """state["practice"]: 開幕テンプレ練習 on your side (opener_practice.Practice),
+    None when off. Only in マラソン with エンドレス ON (endless_gate.py): in a
+    マラソン without it, just a line saying so."""
+    global _PRACTICE, _ENDLESS
+    if not display.get("practice_on") or display.get("enabled") is False:
+        return None
+    if LAST_FRAME["frame"] is None:
+        return None
+    if _ENDLESS is None:
+        import endless_gate
+        _ENDLESS = endless_gate.EndlessGate()
+    if not _ENDLESS.update(LAST_FRAME["frame"], state.get("match_screen") is True):
+        return {"status": "locked", "side": "left"} if _ENDLESS.marathon else None
+    import opener_practice
+    cands = deck_candidates()
+    if not cands:
+        return None
+    if _PRACTICE is None:
+        _PRACTICE = opener_practice.Practice()
+    side = "left"   # (マラソン has the one board)
+    pp = getattr(PIPELINE, side)
+    q, det = pp.queue_tracker, pp.opener_detector
+    board = [(i % 10, i // 10) for i in range(det._board.bit_length()) if det._board >> i & 1]
+    out = _PRACTICE.update(cands, id(q), list(q.seen), q.from_start, board, det._last_hold, q.pieces_placed)
+    if out is not None:
+        out["side"] = side
+    return out
 
 
 def _garbage_hold():
@@ -561,6 +606,11 @@ async def broadcaster():
         except Exception:
             log.exception("counting the garbage rows failed")
             state["challenge_garbage"] = None
+        try:
+            state["practice"] = practice_state(display, state)
+        except Exception:
+            log.exception("the opener practice failed")
+            state["practice"] = None
         try:
             state["challenge_mosaic"] = mosaic_state(ch_display, state)
         except Exception:

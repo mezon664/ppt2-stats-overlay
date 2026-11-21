@@ -2229,6 +2229,8 @@ class HudWindow(QtWidgets.QWidget):
 
         self.read_zones_layer = ReadZonesLayer(self)   # (first: under every part)
         self.challenge = ChallengeLayer(self)          # 縛りプレイ: over the boards, under the parts
+        from practice import PracticeLayer
+        self.practice = PracticeLayer(self)            # 開幕テンプレ練習: over your board
         self.stats = {"left": StatBlock(self, "left"), "right": StatBlock(self, "right")}
         self.versus = VersusBlock(self)
         self.summary = SummaryBlock(self)
@@ -2523,6 +2525,21 @@ class HudWindow(QtWidgets.QWidget):
         self._place_parts()
         self._keep_out_of_reading(openers=False)
         self._place_challenge()
+        self._place_practice()
+
+    def _place_practice(self):
+        """開幕テンプレ練習 (hud/practice.py): while a match is played, and only
+        where the HUD stays out of the recognition's captures (the guide is
+        drawn on the board the recognition reads)."""
+        st = getattr(self, "_last_state", None) or {}
+        active = (self.display["enabled"] and not self.edit_mode and not self.reading_unsafe()
+                  and not (getattr(self, "_follows", False) and getattr(self, "_last_geom", None) is None)
+                  and st.get("match_screen") is True and not st.get("frozen"))
+        layer = self.practice
+        if layer.geometry() != self.rect():
+            layer.setGeometry(self.rect())
+        layer.setVisible(bool(active and st.get("practice")))
+        layer.show_state(st.get("practice") if active else None, self._scale, self.display["language"])
 
     def challenge_blocked(self):
         """縛りプレイ is set, but this PC shows the HUD in screen captures:

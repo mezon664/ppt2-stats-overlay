@@ -174,6 +174,9 @@ DISPLAY_DEFAULTS = {
     "challenge_announcer_voice": "heart",  # "heart" (female) / "adam" (male): assets/announcer
     "challenge_cats_side": "both",   # whose TETRIS / T-SPIN / PC bring cats: "both" / "left" / "right"
     "challenge_side": "auto",
+    # 開幕テンプレ練習 on / off (scripts/opener_practice.py; your side, as
+    # challenge_side "auto"); the deck itself is config/practice_deck.json
+    "practice_on": False,
     # 縛りプレイ all off during a rated (league) match (user's request; the
     # server says which ones are: state["rated_match"]) — see challenge_display
     "challenge_off_in_rated": False,

@@ -103,6 +103,12 @@ class NextQueueTracker:
         # where the tracker's first observed shift is a real placement).
         # Cleared after that one shift either way.
         self._first_shift_pending = discard_first_shift
+        # Every piece in the order it came through NEXT (開幕テンプレ練習:
+        # the first bag's order). from_start: the first of them is the
+        # match's first piece (made at a confirmed match start, read before
+        # it spawned); lost when the queue had to be re-read from scratch.
+        self.seen = []
+        self.from_start = discard_first_shift
 
     def _read(self, frame):
         x1, y1, x2, y2 = self.window
@@ -149,6 +155,7 @@ class NextQueueTracker:
             # on a slow PC (users: PPS fine only if they waited for it to show
             # 0 before placing). A misread start is caught up with below.
             self.stable, self._trusted = seq, len(seq)
+            self.seen = list(seq)
             return []
         k = count_advances(self.stable, seq, self._trusted)
         if k is None and prev is not None and prev != self.stable:
@@ -160,15 +167,18 @@ class NextQueueTracker:
             if k2:
                 log.info("[%s] queue %s -> %s -> %s: following the queue", self.side, self.stable, prev, seq)
                 self.stable, self._trusted = seq, len(seq) - k2
+                self._see(seq, k2)
                 return self._count(k2)
         if k is None:
             if self._candidate_reads >= REBASELINE_READS:
                 log.info("[%s] queue %s -> %s isn't a shift; re-baselining", self.side, self.stable, seq)
                 self.stable, self._trusted = seq, len(seq)
+                self.seen, self.from_start = list(seq), False   # the order is lost
             return []
         if k == 0:
             # the same queue (its new tail read again, maybe corrected)
             self.stable = seq
+            self._see(seq, 0)
             if confirmed:
                 self._trusted = len(seq)
             return []
@@ -180,7 +190,15 @@ class NextQueueTracker:
         # are only trusted once read twice.
         self.stable = seq
         self._trusted = len(seq) if confirmed else len(seq) - k
+        self._see(seq, k)
         return self._count(k)
+
+    def _see(self, seq, k):
+        """The queue moved on k places to `seq`: its new tail joins `seen`
+        (and a corrected reading of the tail replaces what was there)."""
+        if k:
+            self.seen.extend(seq[-k:])
+        self.seen[-len(seq):] = list(seq)
 
     def _count(self, k):
         if self._first_shift_pending:

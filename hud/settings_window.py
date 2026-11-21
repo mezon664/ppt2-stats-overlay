@@ -539,6 +539,17 @@ TEXT = {
     "ch.from2": {"ja": "1", "en": "1"},
     "ch.all": {"ja": "0", "en": "0"},
     "tab.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
+    "tab.practice": {"ja": "開幕テンプレ練習", "en": "Opener practice"},
+    "page.practice": {"ja": "開幕テンプレ練習", "en": "Opener practice"},
+    "pr.card": {"ja": "練習モード", "en": "Practice"},
+    "pr.desc": {"ja": "マラソンのエンドレスがONのときだけ使えます。試合が始まると、1巡目のミノ順でデッキのどのテンプレ（単体なら選んだテンプレ）が組めるかを判定して、次のミノの置き場所を盤面に出します。",
+                "en": "Works only in Marathon with Endless ON. When a game starts, it works out which opener of the deck (or the one you picked) the first bag builds and shows where "
+                      "each next piece goes on your board."},
+    "pr.on": {"ja": "練習モードを使う", "en": "Use practice mode"},
+    "pr.note": {"ja": "ゲームの画面の上の表示にだけ出ます（OBS とキャプチャーボードの読み取りでは出ません）。"
+                      "置き場所は最後にどこへ置くかだけで、回転の入れ方などは出ません。",
+                "en": "Shown only over the game screen (not in OBS, not with a capture board). It shows where each "
+                      "piece ends up, not how to turn it there."},
     "page.challenge": {"ja": "縛りプレイ", "en": "Challenge mode"},
     "challenge_cats": {"ja": "猫：TETRIS・T-SPIN・パフェのたびに、猫が出てきて盤面を隠す",
                        "en": "Each TETRIS / T-SPIN / PERFECT CLEAR, a cat comes in from the edge of the screen and hides your board"},
@@ -789,6 +800,16 @@ def render_overview(d, width=OVERVIEW_W):
     p.drawPixmap(0, 0, small)
     p.end()
     return out
+
+
+def practice_names():
+    """Every opener's shown name, as the recognition names them, sorted."""
+    try:
+        from opener_detect import load_openers
+        return sorted({s[0] for s in load_openers()})
+    except Exception:
+        logging.getLogger("hud").exception("couldn't list the openers")
+        return []
 
 
 def _form():
@@ -1084,6 +1105,7 @@ class SettingsWindow(QtWidgets.QWidget):
                                     self.ch_bottom_card, self.ch_hide_card, self.ch_other_title, self.ch_cats_card,
                                     self.ch_comments_card, self.ch_dopamine_card),
                          "", "challenge")
+        self.tabs.addTab(self._build_practice_page(), "", "practice")
         self.tabs.addTab(self._build_other_page(), "", "other")
         self._update_info = None
         self._update_silent = False
@@ -1839,6 +1861,21 @@ class SettingsWindow(QtWidgets.QWidget):
         return self._page("page.place", self.drag_card, self.placement_card, self.position_section)
 
     # --- その他: language, the window, starting with the game, updates ---
+    def _build_practice_page(self):
+        """開幕テンプレ練習 (scripts/opener_practice.py, hud/practice.py): which
+        opener, picked from the list or typed (it filters as you type)."""
+        self.practice_card = ui.Card()
+        self.practice_on = ui.Switch()
+        self.practice_on.toggled.connect(self._changed)
+        self.practice_card.add(self.practice_on)
+        self.practice_note = ui.muted()
+        self.practice_note.setWordWrap(True)
+        self.practice_card.add(self.practice_note)
+        # the deck: openers in order, their forms, the setup rates (hud/practice_deck.py)
+        from practice_deck import DeckEditor
+        self.deck_editor = DeckEditor(practice_names())
+        return self._page("page.practice", self.practice_card, *self.deck_editor.cards)
+
     def _build_other_page(self):
         self.language_card = ui.Card()
         self.language = QtWidgets.QComboBox()
@@ -2443,7 +2480,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.setWindowTitle(t("title"))
         self._paint_enabled()
         for i, key in enumerate(("tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.rating",
-                                 "tab.obs", "tab.challenge", "tab.other")):
+                                 "tab.obs", "tab.challenge", "tab.practice", "tab.other")):
             self.tabs.setTabText(i, t(key))
         for key, lab in self._page_titles.items():
             lab.setText(t(key))
@@ -2551,6 +2588,11 @@ class SettingsWindow(QtWidgets.QWidget):
             self.opener_language.setItemText(i, t("ol." + key))
         # 見た目
         self.preview_card.setTitle(t("card.preview"))
+        self.practice_card.setTitle(t("pr.card"))
+        self.practice_card.setDescription(t("pr.desc"))
+        self.practice_note.setText(t("pr.note"))
+        self.practice_on.setText(t("pr.on"))
+        self.deck_editor.retranslate(self.lang)
         self.text_box.setTitle(t("text_group"))
         self.tw_thin.setText(t("tw.thin"))
         self.tw_thick.setText(t("tw.thick"))
@@ -3048,6 +3090,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.bottom_rows.setSuffix(" 段" if self.lang == "ja" else "")
         self.cats_side.setCurrentIndex(max(0, self.cats_side.findData(d["challenge_cats_side"])))
         self.challenge_side.setCurrentIndex(max(0, self.challenge_side.findData(d["challenge_side"])))
+        self.practice_on.setChecked(d["practice_on"])
         self.challenge_off_in_rated.setChecked(d["challenge_off_in_rated"])
         self.capture_source.setCurrentIndex(max(0, self.capture_source.findData(d["capture_source"])))
         self._fill_cameras(keep=d["capture_camera"])
@@ -3129,6 +3172,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "challenge_announcer_volume": self.announcer_volume.value(),
             "challenge_cats_side": self.cats_side.currentData(),
             "challenge_side": self.challenge_side.currentData(),
+            "practice_on": self.practice_on.isChecked(),
             "challenge_off_in_rated": self.challenge_off_in_rated.isChecked(),
             "capture_source": self.capture_source.currentData(),
             "capture_camera": self.capture_camera.currentData(),
