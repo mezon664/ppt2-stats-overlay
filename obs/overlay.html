@@ -18,6 +18,8 @@
   <!-- 縛りプレイ (hud/challenge.py): the NEXT cover and the cats, under the parts -->
   <canvas id="challenge"></canvas>
   <canvas id="hud"></canvas>
+  <!-- 開幕テンプレ練習 (hud/practice.py): the guide over your board -->
+  <canvas id="practice"></canvas>
   <!-- the 「猫」 opener display: a cat over each player's board holding up the name -->
   <canvas class="cat hidden" id="cat-left"></canvas>
   <canvas class="cat hidden" id="cat-right"></canvas>
@@ -2187,6 +2189,98 @@ function challengePaintComments(cw, chh, dpr, now) {
 }
 
 // ======================================================================
+// 開幕テンプレ練習 (hud/practice.py): the same numbers, words and steps —
+// keep the two in sync. state.practice comes from scripts/opener_practice.py.
+// ======================================================================
+const PRACTICE_BOXES = { left: [198, 92, 429, 563], right: [803, 92, 1034, 563] };
+const PRACTICE_GRID_TOP = 11, PRACTICE_ROW_H = 23.0;
+const PRACTICE_COLORS = { I: [40, 190, 235], O: [245, 200, 30], T: [165, 70, 200], S: [110, 200, 60],
+                          Z: [225, 55, 65], J: [45, 95, 220], L: [245, 135, 30] };
+const PRACTICE_TEXT = {
+  ja: { locked: "エンドレスをONにしてマラソンを始めると使えます", unread: "エンドレス未確認：ポーズ→ゲームせってい", can: "このミノ順で組めます", end: "Wikiの派生から外れました", stuck: "派生の途中ですが、ここから先は案内できません", lost: "ミノ順を見失いました", more: "この先のミノしだい", wait: "ミノ順を読んでいます", no: "このミノ順では組めません", done: "完成！",
+        off: "置き場所がずれました", maybe: "8個目のミノしだい", next: "次：{}", hold: "HOLD してから {}",
+        title: "練習：{}", deck: "練習：デッキ", left: "あと{}個" },
+  en: { locked: "Start Marathon with Endless ON to use this", unread: "Endless not read: Pause > Game Settings", can: "These pieces build it", end: "Off the wiki's routes", stuck: "Still on the route, but can't guide from here", lost: "Lost the piece order", more: "Depends on the next pieces", wait: "Reading the pieces", no: "Can't be built with these pieces", done: "Done!",
+        off: "Off the plan", maybe: "Depends on the 8th piece", next: "Next: {}", hold: "HOLD, then {}",
+        title: "Practice: {}", deck: "Practice: deck", left: "{} to go" },
+};
+const PRACTICE_WORDS = ["locked", "unread", "wait", "no", "done", "off", "maybe", "end", "stuck", "lost"];
+const practiceCanvas = $("practice"), practiceCtx = practiceCanvas.getContext("2d");
+let practiceDrawn = null;
+
+function practiceCell(side, x, y, s) {   // as practice.py cell_rect, with its adjusted(1, 1, -1, -1)
+  const [x1, y1, x2] = PRACTICE_BOXES[side], w = (x2 - x1) / 10;
+  const top = y1 + PRACTICE_GRID_TOP + (19 - y) * PRACTICE_ROW_H;
+  return [(x1 + x * w) * s + 1, top * s + 1, w * s - 2, PRACTICE_ROW_H * s - 2];
+}
+function practiceLines(st, t) {   // the words, as practice.py paintEvent
+  const status = st.status;
+  let name = st.name;
+  if (name && st.form && st.form !== "Wiki") name += `（${st.form}）`;
+  const lines = [name ? t.title.replace("{}", name) : t.deck];
+  if (["ok", "maybe", "off"].includes(status) && st.next) {
+    lines.push((st.next.hold ? t.hold : t.next).replace("{}", st.next.piece || ""));
+    if (st.left) lines[0] += "  " + t.left.replace("{}", st.left);
+  }
+  if (status === "maybe" && st.route) lines.push(t.more);
+  else if (PRACTICE_WORDS.includes(status)) lines.push(t[status]);
+  else if (status === "ok" && st.single && !st.route) lines.push(t.can);
+  return lines;
+}
+function practiceUpdate() {   // only while a match is played, as HudWindow._place_practice
+  const d = display, state = lastState;
+  const st = d.enabled !== false && d.show_on_obs !== false && state.match_screen === true && !state.frozen
+    ? state.practice : null;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.round(window.innerWidth * dpr), chh = Math.round(window.innerHeight * dpr);
+  const key = st ? JSON.stringify([st, cw, chh, scale, d.language]) : "";
+  if (key === practiceDrawn) return;
+  practiceDrawn = key;
+  if (practiceCanvas.width !== cw || practiceCanvas.height !== chh) {
+    practiceCanvas.width = cw; practiceCanvas.height = chh;
+    practiceCanvas.style.width = window.innerWidth + "px"; practiceCanvas.style.height = window.innerHeight + "px";
+  }
+  const p = practiceCtx, s = scale;
+  p.setTransform(1, 0, 0, 1, 0, 0);
+  p.clearRect(0, 0, cw, chh);
+  if (!st) return;
+  p.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const side = PRACTICE_BOXES[st.side] ? st.side : "left";
+  if (["ok", "maybe", "off"].includes(st.status) && st.shape && st.shape.length) {
+    const nxt = st.next || {}, nextCells = nxt.cells || [];
+    const isNext = new Set(nextCells.map((c) => `${c[0]},${c[1]}`));
+    // the shape still to build, faint
+    p.fillStyle = rgba([255, 255, 255], 70 / 255);
+    for (const [x, y] of st.shape) if (!isNext.has(`${x},${y}`)) p.fillRect(...practiceCell(side, x, y, s));
+    // where the next piece goes, in its color
+    const col = PRACTICE_COLORS[nxt.piece] || [255, 255, 255];
+    p.lineWidth = Math.max(1, 1.5 * s);
+    for (const [x, y] of nextCells) {
+      const r = practiceCell(side, x, y, s);
+      p.fillStyle = rgba(col, 200 / 255);
+      p.fillRect(...r);
+      p.strokeStyle = rgba([255, 255, 255], 220 / 255);
+      p.strokeRect(...r);
+    }
+  }
+  // the words, over the board's top
+  const lines = practiceLines(st, PRACTICE_TEXT[d.language] || PRACTICE_TEXT.ja);
+  const [x1, y1, x2] = PRACTICE_BOXES[side], mid = (x1 + x2) / 2 * s;
+  p.font = `bold ${Math.max(9, Math.floor(15 * s))}px Meiryo, "Yu Gothic UI", sans-serif`;
+  p.textBaseline = "alphabetic";
+  const m = p.measureText("あ"), ascent = m.fontBoundingBoxAscent, height = ascent + m.fontBoundingBoxDescent;
+  let y = (y1 + PRACTICE_GRID_TOP + 6 * PRACTICE_ROW_H) * s;
+  lines.forEach((line, i) => {
+    const w = p.measureText(line).width;
+    p.fillStyle = rgba([0, 0, 0], 170 / 255);
+    p.fillRect(mid - w / 2 - 8 * s, y - ascent - 3 * s, w + 16 * s, height + 6 * s);
+    p.fillStyle = i ? "rgb(255,220,90)" : "rgb(255,255,255)";
+    p.fillText(line, mid - w / 2, y);
+    y += height + 8 * s;
+  });
+}
+
+// ======================================================================
 // State from the server
 // ======================================================================
 function render(state) {
@@ -2210,6 +2304,7 @@ function render(state) {
   for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)]) p.dim = stale;
   layout();
   challengeUpdate();
+  practiceUpdate();
 }
 
 let lastMessage = null;
@@ -2231,7 +2326,7 @@ function connect() {
     render(state);
   };
 }
-window.addEventListener("resize", () => { layout(); challengePaint(); });
+window.addEventListener("resize", () => { layout(); challengePaint(); practiceUpdate(); });
 document.fonts && document.fonts.ready.then(() => { widthCache.clear(); layout(); });
 render({});
 connect();
