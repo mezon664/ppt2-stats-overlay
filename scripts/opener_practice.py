@@ -726,6 +726,98 @@ def save_deck(deck, path=None):
     tmp.replace(path)
 
 
+def _free_name(taken, base):
+    name, k = base, 2
+    while name in taken:
+        name, k = f"{base} {k}", k + 1
+    return name
+
+
+def load_library(deck):
+    """Your named decks: {"current", "decks": {name: deck}, "deleted": [...]}.
+    The one in use is always `deck` (practice_deck.json, what the game reads);
+    the others wait here."""
+    try:
+        got = json.loads(Path(DECK_PATH).with_name("practice_decks.json").read_text(encoding="utf-8"))
+        decks = {n: d for n, d in got["decks"].items() if isinstance(d, dict) and isinstance(d.get("openers"), list)}
+        current, deleted = got.get("current"), [x for x in got.get("deleted", []) if x.get("name") and x.get("deck")]
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
+        decks, current, deleted = {}, None, []
+    if current not in decks:
+        current = _free_name(decks, "デッキ1")     # (the deck in use is never dropped)
+    decks[current] = deck
+    return {"current": current, "decks": decks, "deleted": deleted}
+
+
+def save_library(lib):
+    path = Path(DECK_PATH).with_name("practice_decks.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".lib.tmp")
+    tmp.write_text(json.dumps(lib, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def library_add(lib, name, source=None):
+    """A new deck (a copy of `source`, else empty), now in use; returns it."""
+    deck = json.loads(json.dumps(source)) if source is not None else default_deck()
+    name = _free_name(lib["decks"], name)
+    lib["decks"][name] = deck
+    lib["current"] = name
+    return deck
+
+
+def library_rename(lib, name):
+    """The deck in use gets `name` (made unique); returns the name it got."""
+    name = name.strip()
+    old = lib["current"]
+    if not name or name == old:
+        return old
+    name = _free_name(lib["decks"], name)
+    lib["decks"] = {(name if n == old else n): d for n, d in lib["decks"].items()}
+    lib["current"] = name
+    return name
+
+
+def library_delete(lib):
+    """Set the deck in use aside (it can come back) and use its neighbor;
+    returns that deck. The last deck stays: None."""
+    names = list(lib["decks"])
+    if len(names) < 2:
+        return None
+    k = names.index(lib["current"])
+    lib["deleted"].append({"name": lib["current"], "deck": lib["decks"].pop(lib["current"])})
+    lib["current"] = names[k + 1] if k + 1 < len(names) else names[k - 1]
+    return lib["decks"][lib["current"]]
+
+
+def library_restore(lib, k):
+    """Bring back deleted deck number k, now in use; returns it."""
+    item = lib["deleted"].pop(k)
+    name = _free_name(lib["decks"], item["name"])
+    lib["decks"][name] = item["deck"]
+    lib["current"] = name
+    return item["deck"]
+
+
+def load_editor():
+    """How the deck's settings page was left (the board being painted, what
+    was typed, the opener selected, the last rates). A file of its own: the
+    running game reloads the deck whenever that file changes."""
+    try:
+        got = json.loads(Path(DECK_PATH).with_name("practice_editor.json").read_text(encoding="utf-8"))
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_editor(view):
+    path = Path(DECK_PATH).with_name("practice_editor.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(view, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
 def single_entry(deck, keep=False):
     """The opener of the テンプレ単体 practice with its forms: the deck's own
     entry if it's in the deck, else one kept aside (keep: stored there, so
@@ -1006,6 +1098,42 @@ def entry_routes(entry):
                      bool(r.get("min") or r.get("start")) or (not has_start and k == 0))
                 for k, (n, r) in enumerate(wiki.items()) if n not in have and n not in own]
     return new_own + saved + new_wiki
+
+
+def delete_route(entry, name):
+    """Delete one of your own routes, kept in entry["deleted_routes"] (with
+    its place and tick) so restore_route can bring it back."""
+    routes = entry_routes(entry)
+    at = next((k for k, r in enumerate(routes) if r["name"] == name and r.get("own")), None)
+    if at is None:
+        return False
+    kept = next(x for x in entry["own_routes"] if x["name"] == name)
+    entry["own_routes"] = [x for x in entry["own_routes"] if x is not kept]
+    entry.setdefault("deleted_routes", []).append(dict(kept, on=routes[at]["on"], at=at))
+    entry["routes"] = [{"name": r["name"], "on": r["on"]} for k, r in enumerate(routes) if k != at]
+    return True
+
+
+def restore_route(entry, name):
+    """Bring a deleted route back where it was; its row, or None. (If another
+    route took its name meanwhile, it comes back as "name 2".)"""
+    gone = entry.get("deleted_routes", [])
+    k = next((k for k in range(len(gone) - 1, -1, -1) if gone[k]["name"] == name), None)
+    if k is None:
+        return None
+    routes = entry_routes(entry)
+    item = dict(gone.pop(k))
+    on, at = item.pop("on", True), item.pop("at", 0)
+    taken = {r["name"] for r in routes}
+    shown, n = name, 2
+    while shown in taken:
+        shown, n = f"{name} {n}", n + 1
+    item["name"] = shown
+    entry.setdefault("own_routes", []).append(item)
+    at = max(0, min(at, len(routes)))
+    routes.insert(at, {"name": shown, "on": on})
+    entry["routes"] = [{"name": r["name"], "on": r["on"]} for r in routes]
+    return at
 
 
 def route_targets(route):

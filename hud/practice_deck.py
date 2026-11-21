@@ -30,7 +30,9 @@ TEXT = {
            "deck_desc": "試合では、ミノ順で組めるもののうち一番上のテンプレ（その中では上の形から）を選んでガイドします。",
            "up": "上へ", "down": "下へ", "remove": "外す", "add": "追加", "pick": "テンプレを選ぶ（名前で絞り込み）",
            "mirror": "左右反転した形も使う", "empty": "（テンプレを追加してください）",
-           "form_name": "派生の名前（理想形など）", "form_fumen": "テト譜（v115@…）", "delete": "削除",
+           "form_name": "派生の名前（理想形など）", "form_fumen": "テト譜（v115@…）", "delete": "削除", "restore": "削除した派生を戻す",
+           "decks": "使うデッキ", "deck_new": "新規", "deck_copy": "複製", "deck_rename": "名前変更",
+           "deck_restore": "削除したデッキを戻す", "deck_name": "デッキの名前", "deck_n": "デッキ{}",
            "paint_how": "盤面で作る：色を選んで左ドラッグで塗り、右ドラッグで消します。灰色はどのミノでも入る場所です。",
            "paint_add": "塗った形を追加", "paint_clear": "全部消す", "paint_copy": "選んだ派生を写す", "gray": "灰", "erase": "消",
            "p_empty": "盤面にミノを塗ってください。", "p_count": "マスの数が合いません（偶数にしてください）。",
@@ -59,7 +61,9 @@ TEXT = {
            "deck_desc": "In a match, the topmost opener (and its topmost form) the pieces build is the one guided.",
            "up": "Up", "down": "Down", "remove": "Remove", "add": "Add", "pick": "Pick an opener (type to filter)",
            "mirror": "Use the mirrored shapes too", "empty": "(Add openers)",
-           "form_name": "Route name", "form_fumen": "Fumen (v115@…)", "delete": "Delete",
+           "form_name": "Route name", "form_fumen": "Fumen (v115@…)", "delete": "Delete", "restore": "Restore a deleted route",
+           "decks": "Deck in use", "deck_new": "New", "deck_copy": "Copy", "deck_rename": "Rename",
+           "deck_restore": "Restore a deleted deck", "deck_name": "Deck name", "deck_n": "Deck {}",
            "paint_how": "Paint it: pick a color, drag with the left button to paint, the right to erase. Gray: any piece.",
            "paint_add": "Add this shape", "paint_clear": "Clear", "paint_copy": "Copy the selected route", "gray": "Any",
            "erase": "Erase",
@@ -160,12 +164,15 @@ class BoardPainter(QtWidgets.QWidget):
         self.cells = {}
         self.color = "T"
         self._mode = None
+        self.on_change = None
         self.setFixedSize(self.CELL * 10 + 1, self.CELL * self.ROWS + 1)
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
 
     def set_cells(self, cells):
         self.cells = {c: v for c, v in cells.items() if c[1] < self.ROWS}
         self.update()
+        if self.on_change:
+            self.on_change()
 
     def _at(self, pos):
         x, y = int(pos.x() // self.CELL), self.ROWS - 1 - int(pos.y() // self.CELL)
@@ -192,6 +199,8 @@ class BoardPainter(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, e):
         self._mode = None
+        if self.on_change:
+            self.on_change()
 
     def paintEvent(self, e):
         p = QtGui.QPainter(self)
@@ -213,6 +222,9 @@ class DeckEditor:
     def __init__(self, names):
         self.lang = "ja"
         self.deck = op.load_deck()
+        self.view = op.load_editor()
+        self.lib = op.load_library(self.deck)
+        self._ready = False
         self.names = names
         try:
             self.wiki = json.loads(WIKI_RATES.read_text(encoding="utf-8"))["rates"]
@@ -220,11 +232,66 @@ class DeckEditor:
             self.wiki = {}
         self.worker = None
         self._build()
+        self._fill_decks()
         self._fill_deck()
+        self._restore_view()
+        self._ready = True
+
+    # --- how the page was left ---
+    def _restore_view(self):
+        v = self.view
+        try:
+            if v.get("paint"):
+                self.painter.set_cells(op.paint_cells(v["paint"]))
+        except Exception:       # (a damaged file: an empty board)
+            self.painter.set_cells({})
+        if "color" in v and v["color"] in self.paint_buttons:
+            self.paint_buttons[v["color"]].setChecked(True)
+            self.painter.color = v["color"]
+        self.form_name.setText(str(v.get("name") or ""))
+        self.form_fumen.setText(str(v.get("fumen") or ""))
+        names = [e["name"] for e in self.deck["openers"]]
+        if v.get("opener") in names:
+            self.deck_list.setCurrentRow(names.index(v["opener"]))
+        self.painter.on_change = self._keep_view
+        self.form_name.textChanged.connect(self._keep_view)
+        self.form_fumen.textChanged.connect(self._keep_view)
+        self.deck_list.currentRowChanged.connect(self._keep_view)
+
+    def _keep_view(self, *_):
+        if not self._ready:
+            return
+        o, r = self.deck["openers"], self.deck_list.currentRow()
+        self.view.update(opener=o[r]["name"] if 0 <= r < len(o) else None, color=self.painter.color,
+                         paint=op.paint_rows(self.painter.cells), name=self.form_name.text(),
+                         fumen=self.form_fumen.text())
+        op.save_editor(self.view)
+
+    def _pick_color(self, color):
+        self.painter.color = color
+        self._keep_view()
 
     # --- building ---
     def _build(self):
         self.deck_card = ui.Card()
+        self.decks_label = QtWidgets.QLabel()
+        self.deck_pick = QtWidgets.QComboBox()
+        self.deck_pick.setMinimumWidth(150)
+        self.deck_pick.activated.connect(lambda k: self._switch_deck(self.deck_pick.itemText(k)))
+        self.d_new, self.d_copy, self.d_rename, self.d_delete, self.d_restore = (
+            QtWidgets.QPushButton() for _ in range(5))
+        self.d_new.clicked.connect(lambda: self._ask_new_deck(False))
+        self.d_copy.clicked.connect(lambda: self._ask_new_deck(True))
+        self.d_rename.clicked.connect(self._ask_rename_deck)
+        self.d_delete.clicked.connect(self._delete_deck)
+        self.deck_trash = QtWidgets.QMenu(self.d_restore)
+        self.d_restore.setMenu(self.deck_trash)
+        decks_row = QtWidgets.QHBoxLayout()
+        decks_row.addWidget(self.decks_label)
+        decks_row.addWidget(self.deck_pick)
+        for b in (self.d_new, self.d_copy, self.d_rename, self.d_delete, self.d_restore):
+            decks_row.addWidget(b)
+        decks_row.addStretch(1)
         self.mode_label = QtWidgets.QLabel()
         self.mode = QtWidgets.QComboBox()
         self.mode.addItem("", "deck")
@@ -269,6 +336,7 @@ class DeckEditor:
         self.mirror = QtWidgets.QCheckBox()
         self.mirror.setChecked(bool(self.deck.get("mirror", True)))
         self.mirror.toggled.connect(self._mirror_toggled)
+        self.deck_card.add(decks_row)
         self.deck_card.add(mode_row)
         self.deck_card.add(self.single_now)
         self.deck_card.add(self.deck_list)
@@ -290,8 +358,11 @@ class DeckEditor:
         self.r_up.clicked.connect(lambda: self._move_route(-1))
         self.r_down.clicked.connect(lambda: self._move_route(1))
         self.r_delete.clicked.connect(self._delete_route)
+        self.r_restore = QtWidgets.QPushButton()
+        self.restore_menu = QtWidgets.QMenu(self.r_restore)
+        self.r_restore.setMenu(self.restore_menu)
         rrow = QtWidgets.QHBoxLayout()
-        for b in (self.r_up, self.r_down, self.r_delete):
+        for b in (self.r_up, self.r_down, self.r_delete, self.r_restore):
             rrow.addWidget(b)
         rrow.addStretch(1)
         self.form_name = QtWidgets.QLineEdit()
@@ -322,7 +393,7 @@ class DeckEditor:
             ink = "#111" if v != "J" and v != "T" else "#fff"
             b.setStyleSheet(f"QPushButton{{background:rgb{rgb};color:{ink};font-weight:700;border:2px solid transparent;"
                             "border-radius:5px;padding:0;}QPushButton:checked{border:2px solid #111;}")
-            b.clicked.connect(lambda _=False, c=v: setattr(self.painter, "color", c))
+            b.clicked.connect(lambda _=False, c=v: self._pick_color(c))
             self.paint_group.addButton(b)
             self.paint_buttons[v] = b
             palette.addWidget(b, k // 3, k % 3)
@@ -374,10 +445,13 @@ class DeckEditor:
         self.mode.setItemText(1, t["mode_single"])
         for b, k in ((self.b_up, "up"), (self.b_down, "down"), (self.b_remove, "remove"),
                      (self.f_add, "add"), (self.r_up, "up"), (self.r_down, "down"), (self.r_delete, "delete"),
-                     (self.b_calc, "calc")):
+                     (self.r_restore, "restore"), (self.b_calc, "calc"),
+                     (self.d_new, "deck_new"), (self.d_copy, "deck_copy"), (self.d_rename, "deck_rename"),
+                     (self.d_delete, "delete"), (self.d_restore, "deck_restore")):
             b.setText(t[k])
         self.pick.lineEdit().setPlaceholderText(t["pick"])
         self.mirror.setText(t["mirror"])
+        self.decks_label.setText(t["decks"])
         self.form_name.setPlaceholderText(t["form_name"])
         self.form_fumen.setPlaceholderText(t["form_fumen"])
         self.paint_how.setText(t["paint_how"])
@@ -391,10 +465,80 @@ class DeckEditor:
         self.rate_card.setTitle(t["rates"])
         self.rate_card.setDescription(t["rates_desc"])
         self._fill_deck(keep=True)
+        if self.view.get("rates") and not self.result.property("stale"):
+            self._write_rates(self.view["rates"])
+
+    # --- your named decks ---
+    def _fill_decks(self):
+        self.deck_pick.clear()
+        self.deck_pick.addItems(list(self.lib["decks"]))
+        self.deck_pick.setCurrentText(self.lib["current"])
+        self.d_delete.setEnabled(len(self.lib["decks"]) > 1)
+        self.deck_trash.clear()
+        for k in range(len(self.lib["deleted"]) - 1, -1, -1):       # the last deleted first
+            self.deck_trash.addAction(self.lib["deleted"][k]["name"]).triggered.connect(
+                lambda _=False, k=k: self._restore_deck(k))
+        self.d_restore.setEnabled(bool(self.lib["deleted"]))
+
+    def _use_deck(self, deck):
+        """`deck` is now the one in use (the game picks it up from the file)."""
+        self.deck = deck
+        op.save_deck(deck)
+        op.save_library(self.lib)
+        if self.view.pop("rates", None) is not None:
+            op.save_editor(self.view)
+        self.result.clear()
+        self.result.setProperty("stale", False)
+        for w, set_it in ((self.mode, lambda: self.mode.setCurrentIndex(max(0, self.mode.findData(deck.get("mode", "deck"))))),
+                          (self.mirror, lambda: self.mirror.setChecked(bool(deck.get("mirror", True))))):
+            w.blockSignals(True)
+            set_it()
+            w.blockSignals(False)
+        self._fill_decks()
+        self._fill_deck()
+        self._keep_view()
+
+    def _switch_deck(self, name):
+        if name != self.lib["current"] and name in self.lib["decks"]:
+            self.lib["current"] = name
+            self._use_deck(self.lib["decks"][name])
+
+    def _make_deck(self, name, copy=False):
+        self._use_deck(op.library_add(self.lib, name, self.deck if copy else None))
+
+    def _ask_new_deck(self, copy):
+        t = TEXT[self.lang]
+        guess = f"{self.lib['current']} 2" if copy else t["deck_n"].format(len(self.lib["decks"]) + 1)
+        name, ok = QtWidgets.QInputDialog.getText(self.deck_card, t["deck_copy" if copy else "deck_new"], t["deck_name"],
+                                                  text=guess)
+        if ok and name.strip():
+            self._make_deck(name.strip(), copy)
+
+    def _rename_deck(self, name):
+        op.library_rename(self.lib, name)
+        op.save_library(self.lib)
+        self._fill_decks()
+
+    def _ask_rename_deck(self):
+        t = TEXT[self.lang]
+        name, ok = QtWidgets.QInputDialog.getText(self.deck_card, t["deck_rename"], t["deck_name"],
+                                                  text=self.lib["current"])
+        if ok:
+            self._rename_deck(name)
+
+    def _delete_deck(self):
+        deck = op.library_delete(self.lib)
+        if deck is not None:
+            self._use_deck(deck)
+
+    def _restore_deck(self, k):
+        self._use_deck(op.library_restore(self.lib, k))
 
     # --- the deck ---
     def _save(self):
         op.save_deck(self.deck)
+        if self.view.pop("rates", None) is not None:    # (they were for the deck as it was)
+            op.save_editor(self.view)
         if self.result.text() and not self.result.property("stale"):
             self.result.setText(TEXT[self.lang]["stale"])
             self.result.setProperty("stale", True)
@@ -473,8 +617,9 @@ class DeckEditor:
         r = self.deck_list.currentRow()
         if 0 <= r < len(self.deck["openers"]):
             gone = self.deck["openers"].pop(r)
-            if gone["name"] == self.deck.get("single"):     # still the one of テンプレ単体
-                self.deck.setdefault("single_forms", {})[gone["name"]] = gone
+            # kept aside with its routes: adding it again (or picking it for
+            # テンプレ単体) brings them back
+            self.deck.setdefault("single_forms", {})[gone["name"]] = gone
             self._save()
             self._fill_deck()
 
@@ -507,6 +652,11 @@ class DeckEditor:
             w.setEnabled(bool(routes))
         for w in (self.form_name, self.form_fumen, self.f_add, self.p_add, self.p_base):
             w.setEnabled(e is not None)
+        self.restore_menu.clear()
+        for x in reversed(e.get("deleted_routes", []) if e else []):     # the last deleted first
+            self.restore_menu.addAction(x["name"]).triggered.connect(
+                lambda _=False, n=x["name"]: self._restore_route(n))
+        self.r_restore.setEnabled(not self.restore_menu.isEmpty())
         self._show_route()
 
     def _route_at(self):
@@ -550,10 +700,16 @@ class DeckEditor:
         e, routes, r = self._route_at()
         if r is None or not routes[r].get("own"):
             return
-        name = routes[r]["name"]
-        e["own_routes"] = [x for x in e.get("own_routes", []) if x["name"] != name]
-        self._store_routes(e, routes[:r] + routes[r + 1:])
+        op.delete_route(e, routes[r]["name"])
+        self._save()
         self._fill_routes(r)
+
+    def _restore_route(self, name):
+        e = self._current()
+        at = op.restore_route(e, name) if e else None
+        if at is not None:
+            self._save()
+            self._fill_routes(at)
 
     def _error(self, key):
         self.form_error.setText(TEXT[self.lang][key])
@@ -631,6 +787,7 @@ class DeckEditor:
         self.bar.setVisible(True)
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
+        self._rated = self.deck
         self.worker = RateWorker(cands)
         self.worker.progress.connect(lambda d, n: self.bar.setValue(int(100 * d / max(1, n))))
         self.worker.finished_rates.connect(self._show_rates)
@@ -641,11 +798,20 @@ class DeckEditor:
         self.b_calc.setEnabled(True)
         self.b_calc.setText(t["calc"])
         self.bar.setVisible(False)
+        if getattr(self, "_rated", self.deck) is not self.deck:     # (another deck was picked meanwhile)
+            return
         self.result.setProperty("stale", False)
         if r is None:
             self.result.setText(t["failed"])
             return
-        lines = [t["total_single" if self._single() else "total"].format(r["total"] * 100, r["none"] * 100)]
+        self.view["rates"] = {"single": self._single(), "total": float(r["total"]), "none": float(r["none"]),
+                              "by": [[o, f, float(p), float(a)] for o, f, p, a in r["by"]]}
+        op.save_editor(self.view)
+        self._write_rates(self.view["rates"])
+
+    def _write_rates(self, r):
+        t = TEXT[self.lang]
+        lines = [t["total_single" if r.get("single") else "total"].format(r["total"] * 100, r["none"] * 100)]
         for k, (o, f, picked, alone) in enumerate(r["by"]):
             line = t["row"].format(k + 1, o, f, picked * 100, alone * 100)
             w = self.wiki.get(o)

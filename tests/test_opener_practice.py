@@ -1,5 +1,6 @@
 """開幕テンプレ練習 (scripts/opener_practice.py): the search for how to build
 an opener with a given first bag, and following a match with it."""
+import json
 import time
 
 import opener_practice as op
@@ -541,3 +542,74 @@ def test_meisou_standard_is_what_the_wiki_says():
     rates = [round(bin(op.page_orders(base, op.route_targets(got[f"Standard S{k}"])[0], "S")).count("1") / 50.40, 2)
              for k in "①②③"]
     assert rates == [66.67, 66.67, 50.0]     # the wiki's own setup rates
+
+
+def _own_routes_entry(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {})
+    monkeypatch.setattr(op, "_MIN_COVERS", {})
+    return {"name": "X", "own_routes": [{"name": "a", "paint": ["OO........"]}, {"name": "b", "fumen": "f"},
+                                        {"name": "c", "paint": ["II........"]}],
+            "routes": [{"name": "a", "on": True}, {"name": "b", "on": False}, {"name": "c", "on": True}]}
+
+
+def test_a_deleted_route_comes_back_where_it_was(monkeypatch):
+    e = _own_routes_entry(monkeypatch)
+    assert op.delete_route(e, "b")
+    assert [r["name"] for r in op.entry_routes(e)] == ["a", "c"]
+    e = json.loads(json.dumps(e))       # (through the saved file)
+    assert op.restore_route(e, "b") == 1
+    got = op.entry_routes(e)
+    assert [(r["name"], r["on"]) for r in got] == [("a", True), ("b", False), ("c", True)]
+    assert got[1]["fumen"] == "f" and got[1]["own"] and e["deleted_routes"] == []
+
+
+def test_a_restored_route_keeps_clear_of_a_new_one_with_its_name(monkeypatch):
+    e = _own_routes_entry(monkeypatch)
+    op.delete_route(e, "a")
+    e["own_routes"].append({"name": "a", "fumen": "new"})
+    e["routes"].insert(0, {"name": "a", "on": True})
+    op.restore_route(e, "a")
+    assert {r["name"]: r.get("fumen") for r in op.entry_routes(e)}["a"] == "new"
+    assert "a 2" in [r["name"] for r in op.entry_routes(e)]
+
+
+def test_only_your_own_routes_are_deleted(monkeypatch):
+    e = _own_routes_entry(monkeypatch)
+    assert op.delete_route(e, "nope") is False and op.restore_route(e, "nope") is None
+
+
+def test_the_settings_page_is_kept_apart_from_the_deck(tmp_path, monkeypatch):
+    monkeypatch.setattr(op, "DECK_PATH", tmp_path / "practice_deck.json")
+    assert op.load_editor() == {}
+    op.save_editor({"paint": ["OO........"], "opener": "X"})
+    assert op.load_editor() == {"paint": ["OO........"], "opener": "X"}
+    assert not (tmp_path / "practice_deck.json").exists()      # (the game reloads the deck when it changes)
+    (tmp_path / "practice_editor.json").write_text("{broken", encoding="utf-8")
+    assert op.load_editor() == {}
+
+
+def test_named_decks(tmp_path, monkeypatch):
+    monkeypatch.setattr(op, "DECK_PATH", tmp_path / "practice_deck.json")
+    first = dict(op.default_deck(), openers=[op.new_entry("A")])
+    lib = op.load_library(first)
+    assert lib["current"] == "デッキ1" and lib["decks"]["デッキ1"] is first
+    assert op.library_delete(lib) is None       # (the last one stays)
+    copy = op.library_add(lib, "デッキ1", first)
+    assert lib["current"] == "デッキ1 2" and copy == first and copy is not first
+    copy["openers"].append(op.new_entry("B"))
+    assert len(first["openers"]) == 1
+    assert op.library_rename(lib, "PC用") == "PC用"
+    op.save_library(lib)
+    # the file in use wins over the library's copy of it
+    newer = dict(copy, mirror=False)
+    lib = op.load_library(newer)
+    assert lib["current"] == "PC用" and lib["decks"]["PC用"]["mirror"] is False
+    assert op.library_delete(lib) == first and lib["current"] == "デッキ1"
+    assert op.library_restore(lib, 0)["mirror"] is False and lib["current"] == "PC用" and lib["deleted"] == []
+
+
+def test_a_broken_library_keeps_the_deck_in_use(tmp_path, monkeypatch):
+    monkeypatch.setattr(op, "DECK_PATH", tmp_path / "practice_deck.json")
+    (tmp_path / "practice_decks.json").write_text("{broken", encoding="utf-8")
+    deck = op.default_deck()
+    assert op.load_library(deck)["decks"] == {"デッキ1": deck}

@@ -268,8 +268,10 @@ def practice_state(display, state):
     if _ENDLESS is None:
         import endless_gate
         _ENDLESS = endless_gate.EndlessGate()
-    if not _ENDLESS.update(LAST_FRAME["frame"], state.get("match_screen") is True):
-        return {"status": "locked", "side": "left"} if _ENDLESS.marathon else None
+    if not _ENDLESS.update(LAST_FRAME["frame"]):
+        if not _ENDLESS.marathon:
+            return None
+        return {"status": "unread" if _ENDLESS.endless is None else "locked", "side": "left"}
     import opener_practice
     cands = deck_candidates()
     if not cands:
