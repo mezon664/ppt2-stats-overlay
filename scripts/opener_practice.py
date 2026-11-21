@@ -310,7 +310,11 @@ class Practice:
     status: "wait" (the order isn't known yet / still working it out),
     "ok" (the guide shows the next piece), "maybe" (only with some of the
     pieces not seen yet: decided as they show), "no" (nothing in the deck
-    with these pieces), "off" (the board isn't part of any of them), "done"."""
+    with these pieces), "off" (the board isn't part of any of them), "done".
+
+    Once the opener is built, the wiki's 派生 of it (routes) go on from there:
+    the same statuses with "route" set, plus "end" (the board left every
+    route) and "lost" (the piece order was lost, nothing is guided)."""
 
     def __init__(self):
         self._key = None
@@ -329,12 +333,13 @@ class Practice:
         threading.Thread(target=run, daemon=True).start()
         return box
 
-    def update(self, cands, match_key, seen, from_start, board, hold, placed=None):
+    def update(self, cands, match_key, seen, from_start, board, hold, placed=None, routes=None):
         """cands: candidates(deck) ([] = off). match_key: changes with each
         match. seen: the pieces in the order they came through NEXT;
         from_start: its first is the match's first piece. board: the settled
         cells (x, row up). hold: the piece in HOLD or None. placed: pieces
-        placed so far (None: from the board). Returns the state to show."""
+        placed so far (None: from the board). routes: {opener: [Route]}, the
+        派生 to go on with. Returns the state to show."""
         if not cands:
             self._key = None
             return None
@@ -342,6 +347,11 @@ class Practice:
         if key != self._key:
             self._key, self._job, self._asked = key, None, None
             self.cands, self.pick, self.target, self.plan, self.status = cands, None, None, None, "wait"
+            self.routes, self.on_route, self.opener = routes or {}, False, None
+        if self.on_route and not from_start:
+            self._job, self._asked = None, None
+            self.status, self.plan = "lost", None   # (no index into the order any more: no guess)
+            return self._out()
         if not from_start or len(seen) < 6 or bag_order(seen[:6]) is None:
             return self._out()
         queue = tuple(seen) if len(seen) >= 7 else tuple(bag_order(seen[:6]))
@@ -351,7 +361,13 @@ class Practice:
             out, self._job = self._job["out"], None
             if out is not None and out[0] == self._asked:
                 _, self.status, self.pick, self.target, self.plan = out
+        if self.on_route:
+            return self._follow_route(board, queue, n, hold)
         if self.status == "done":
+            if self.pick and self.routes.get(self.pick[0]):
+                self.on_route, self.opener = True, self.pick[0]
+                self._job, self._asked = None, None
+                return self._follow_route(board, queue, n, hold)
             return self._out()
         if (self.plan and self.status in ("ok", "maybe") and len(self.plan) == 1 and board
                 and not board <= self.target.cells):
@@ -364,6 +380,46 @@ class Practice:
             self._asked = ask
             self._job = self._start(lambda: (ask,) + self._plan(board, queue, n, hold))
         return self._out()
+
+    def _follow_route(self, board, queue, n, hold):
+        """On a route: asks for a plan when the board settles on something new."""
+        gone = n * 4 - len(board)
+        if self.status == "done" and self._asked is not None:
+            return self._out()      # (the route's end)
+        if gone < 0 or gone % 10:
+            return self._out()      # mid-change (a falling piece or a clear): wait
+        ask = (board, queue, n, hold)
+        if self._job is None and ask != self._asked:
+            self._asked = ask
+            self._job = self._start(lambda: (ask,) + self._route_plan(board, queue, n, hold))
+        return self._out()
+
+    def _route_plan(self, board, queue, n, hold):
+        """(status, pick, target, plan) on the routes from this board: the
+        first of their pages (route in your order, the one followed first)
+        that the board is part of and the pieces seen can go on to."""
+        routes = self.routes.get(self.opener, [])
+        now = self.pick[1] if self.pick else None
+        order = sorted(routes, key=lambda r: r.name != now)
+        if not board:
+            return "done", self.pick, None, None    # a Perfect Clear
+        i = n + (1 if hold else 0)
+        reached = False
+        import time
+        until = time.monotonic() + ROUTE_SEARCH_S
+        for r in order:
+            for t in r.points:
+                reached = reached or t.cells == board
+                if not board < t.cells:
+                    continue
+                if time.monotonic() > until:
+                    return "wait", self.pick, None, None
+                got = plan_towards(t.cells, queue, board, i, hold, t.colors)
+                if got is not None and got[0]:
+                    return ("ok" if got[1] else "maybe"), (self.opener, r.name), t, list(got[0])
+        if reached:
+            return "done", self.pick, None, None
+        return "end", self.pick, None, None
 
     def _order(self):
         """(pick, Target) in the deck's order, the one followed now first."""
@@ -411,6 +467,10 @@ class Practice:
         if self.plan and self.status in ("ok", "maybe"):
             out["next"] = dict(self.plan[0])
             out["left"] = len(self.plan)
+        if self.on_route:
+            out["route"] = True
+            if self.status == "maybe":
+                out.pop("left", None)   # (how many more depends on pieces not seen)
         return out
 
 
@@ -473,6 +533,59 @@ def fumen_targets(fumen):
     return out
 
 
+# A form painted on the settings' board: rows bottom first, ten characters
+# each, "." empty, a piece's letter, or "X" for gray (any piece).
+MAX_PAINT_CELLS = 32    # 8 pieces: the first bag and the next one
+
+
+def paint_rows(cells):
+    """{(x, y): piece or "X"} as the rows a form keeps."""
+    top = max((y for _, y in cells), default=-1)
+    return ["".join(cells.get((x, y), ".") for x in range(COLS)) for y in range(top + 1)]
+
+
+def paint_cells(rows):
+    return {(x, y): v for y, row in enumerate(rows) for x, v in enumerate(row) if v != "."}
+
+
+def paint_targets(rows):
+    """A painted form as setup targets (as fumen_targets)."""
+    cells = paint_cells(rows)
+    colored = {c: v for c, v in cells.items() if v != "X"}
+    out = []
+    for t in setup_targets(cells.keys()):
+        colors = {c: p for c, p in colored.items() if c in t}
+        out.append(Target(t, colors if colors else None))
+    return out
+
+
+def paint_problem(rows):
+    """Why this painting can't be a form: "empty", "count" (not whole
+    pieces), "big" (more than 8 pieces), "shape" (the colors don't make
+    pieces, or full rows with no T-spin); None if it can."""
+    cells = paint_cells(rows)
+    if not cells:
+        return "empty"
+    if len(cells) % 4:
+        return "count"
+    if len(cells) > MAX_PAINT_CELLS:
+        return "big"
+    colors = {c: v for c, v in cells.items() if v != "X"}
+
+    @lru_cache(maxsize=None)
+    def tiles(room):
+        if not room:
+            return True
+        low = min(room, key=lambda c: (c[1], c[0]))
+        return any(low in part and all(colors.get(c, p) == p for c in part) and tiles(room - part)
+                   for p in PIECES for part in fits(p, room))
+    if not tiles(frozenset(cells)):
+        return "shape"
+    targets = [t for t in paint_targets(rows)
+               if tiles(frozenset(t.cells))]
+    return None if targets else "shape"
+
+
 def _sides(shapes):
     """The wiki's shapes split into one side and the mirrored others."""
     a, b = [], []
@@ -484,6 +597,12 @@ def _sides(shapes):
 def form_targets(opener, form, mirror):
     """The targets of one form (deck entry): [Target], mirrored ones after
     (when `mirror`)."""
+    if form.get("paint"):
+        try:
+            base = paint_targets(form["paint"])
+        except Exception:
+            return []
+        return base + ([t.mirrored() for t in base] if mirror else [])
     if form.get("fumen"):
         try:
             base = fumen_targets(form["fumen"])
@@ -565,6 +684,169 @@ def candidates(deck):
                     out.append((entry["name"], form.get("name", ""), ts))
     return out
 
+
+
+class SettledBoard:
+    """The board's cells that stayed filled over the last few readings (a
+    falling piece moves on), for the whole game."""
+
+    def __init__(self, frames=3):
+        from collections import deque
+        self._recent = deque(maxlen=frames)
+
+    def update(self, frame, box):
+        from opener_detect import read_occupancy
+        now = frozenset((x, y) for y, row in enumerate(read_occupancy(frame, box)) for x, v in enumerate(row) if v)
+        self._recent.append(now)
+        return sorted(frozenset.intersection(*self._recent))
+
+
+# --- the wiki's 派生: what the opener goes on to, from the second bag ---
+# assets/opener_routes.json (tools/opener_import/build_routes.py): each one a
+# テト譜 of boards. A board on the way is one of its pages; the guide goes to
+# the next page the board is part of, with the pieces seen so far (the page's
+# colors are the pieces it has there).
+ROUTES_PATH = Path(__file__).resolve().parent.parent / "assets" / "opener_routes.json"
+_WIKI_ROUTES = None
+MAX_PLAN_NODES = 800
+ROUTE_SEARCH_S = 1.2    # one look over all the routes (out of time: says "wait", not "off the route")
+
+
+class Route:
+    """One 派生: its name and its boards in page order (mirrored ones after)."""
+    __slots__ = ("name", "points")
+
+    def __init__(self, name, points):
+        self.name, self.points = name, points
+
+
+def route_points(fumen):
+    """The boards of a route's テト譜, in order, each once (Target, colored)."""
+    out, seen = [], set()
+    for page in decode(fumen):
+        cells, colors = set(), {}
+        for y, row in enumerate(page.board_with_piece()):
+            for x, v in enumerate(row):
+                if v:
+                    cells.add((x, y))
+                    if FUMEN_PIECES.get(v) in tuple(PIECES):
+                        colors[(x, y)] = FUMEN_PIECES[v]
+        if not cells or max(y for _, y in cells) >= 20:
+            continue
+        t = Target(cells, colors or None)
+        if t.key() not in seen:
+            seen.add(t.key())
+            out.append(t)
+    return out
+
+
+def wiki_routes(opener):
+    """[{"name", "fumen"}] the wiki lists for this opener (its shown name)."""
+    global _WIKI_ROUTES
+    if _WIKI_ROUTES is None:
+        try:
+            _WIKI_ROUTES = json.loads(ROUTES_PATH.read_text(encoding="utf-8"))["routes"]
+        except (OSError, ValueError, KeyError):
+            _WIKI_ROUTES = {}
+    return _WIKI_ROUTES.get(opener, [])
+
+
+def entry_routes(entry):
+    """The opener's routes in your order: [{"name", "fumen", "on"}]. New ones
+    the wiki has come last, switched on."""
+    wiki = {r["name"]: r for r in wiki_routes(entry["name"])}
+    out = [dict(wiki[s["name"]], on=s.get("on", True)) for s in entry.get("routes", []) if s.get("name") in wiki]
+    have = {r["name"] for r in out}
+    return out + [dict(r, on=True) for n, r in wiki.items() if n not in have]
+
+
+def _entries(deck):
+    if deck.get("mode") == "single":
+        one = single_entry(deck)
+        return [one] if one else []
+    return deck.get("openers", [])
+
+
+def deck_routes(deck):
+    """{opener: [Route]}: the routes switched on, in your order."""
+    out = {}
+    for entry in _entries(deck):
+        routes = []
+        for r in entry_routes(entry):
+            if not r["on"]:
+                continue
+            try:
+                points = route_points(r["fumen"])
+            except Exception:
+                continue
+            if deck.get("mirror", True):
+                points = points + [t.mirrored() for t in points]
+            if points:
+                routes.append(Route(r["name"], points))
+        if routes:
+            out[entry["name"]] = routes
+    return out
+
+
+def plan_towards(target, queue, board, i, hold, colors=None):
+    """From `board` towards `target` (a board with more on it) with the pieces
+    known: (steps, whole). whole: the steps reach it; else they're as far as
+    the pieces seen go, and it can still be finished. None if it can't."""
+    target, board = frozenset(target), frozenset(map(tuple, board))
+    if not board < target or (len(target) - len(board)) % 4:
+        return None
+    nodes = [0]
+
+    @lru_cache(maxsize=None)
+    def tiles(room):
+        if not room:
+            return True
+        x0, y0 = min(room, key=lambda c: (c[1], c[0]))
+        for piece in PIECES:
+            for cells in fits(piece, room):
+                if (x0, y0) in cells and all((colors or {}).get(c, piece) == piece for c in cells) \
+                        and tiles(room - cells):
+                    return True
+        return False
+
+    @lru_cache(maxsize=None)
+    def go(now, i, hold):
+        room = target - now
+        if not room:
+            return (), True
+        nodes[0] += 1
+        if nodes[0] > MAX_PLAN_NODES:
+            return None
+        options = []
+        if i < len(queue):
+            options.append((queue[i], i + 1, hold, False))
+            if hold is None and i + 1 < len(queue):
+                options.append((queue[i + 1], i + 2, queue[i], True))
+            elif hold is not None and hold != queue[i]:
+                options.append((hold, i + 1, queue[i], True))
+        if not options:
+            return (), False        # past what's been seen
+        best = None
+        for piece, ni, nh, held in options:
+            spots = landing_spots(piece, now)
+            for cells in fits(piece, room):
+                if cells not in spots or not all((colors or {}).get(c, piece) == piece for c in cells):
+                    continue
+                after = now | cells
+                if after != target and any(all((x, y) in after for x in range(COLS)) for y in {y for _, y in cells}):
+                    continue        # a row filling early clears and breaks the board
+                if not tiles(target - after):
+                    continue
+                rest = go(after, ni, nh)
+                if rest is None:
+                    continue
+                got = (({"piece": piece, "cells": sorted(cells), "hold": held},) + rest[0], rest[1])
+                if got[1]:
+                    return got
+                best = best or got
+        return best
+
+    return go(board, i, hold)
 
 
 # --- setup rates: every first bag (5040) and every 8th piece (7) ---

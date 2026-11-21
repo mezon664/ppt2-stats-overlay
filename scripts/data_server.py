@@ -237,7 +237,8 @@ def comment_stream():
     return _COMMENTS
 _GARBAGE_HOLD = None
 _PRACTICE = None
-_DECK = {"mtime": None, "cands": []}
+_DECK = {"mtime": None, "cands": [], "routes": {}}
+_PRACTICE_BOARD = None
 _ENDLESS = None
 
 
@@ -249,7 +250,9 @@ def deck_candidates():
     mtime = path.stat().st_mtime if path.exists() else None
     if mtime != _DECK["mtime"]:
         _DECK["mtime"] = mtime
-        _DECK["cands"] = opener_practice.candidates(opener_practice.load_deck())
+        deck = opener_practice.load_deck()
+        _DECK["cands"] = opener_practice.candidates(deck)
+        _DECK["routes"] = opener_practice.deck_routes(deck)
     return _DECK["cands"]
 
 
@@ -257,7 +260,7 @@ def practice_state(display, state):
     """state["practice"]: 開幕テンプレ練習 on your side (opener_practice.Practice),
     None when off. Only in マラソン with エンドレス ON (endless_gate.py): in a
     マラソン without it, just a line saying so."""
-    global _PRACTICE, _ENDLESS
+    global _PRACTICE, _ENDLESS, _PRACTICE_BOARD
     if not display.get("practice_on") or display.get("enabled") is False:
         return None
     if LAST_FRAME["frame"] is None:
@@ -276,8 +279,12 @@ def practice_state(display, state):
     side = "left"   # (マラソン has the one board)
     pp = getattr(PIPELINE, side)
     q, det = pp.queue_tracker, pp.opener_detector
-    board = [(i % 10, i // 10) for i in range(det._board.bit_length()) if det._board >> i & 1]
-    out = _PRACTICE.update(cands, id(q), list(q.seen), q.from_start, board, det._last_hold, q.pieces_placed)
+    if _PRACTICE_BOARD is None:
+        _PRACTICE_BOARD = opener_practice.SettledBoard()
+    # (the opener detector stops reading the board once the opening is over)
+    board = _PRACTICE_BOARD.update(LAST_FRAME["frame"], det.box)
+    hold = pp.hold_tracker.piece(LAST_FRAME["frame"])
+    out = _PRACTICE.update(cands, id(q), list(q.seen), q.from_start, board, hold, q.pieces_placed, _DECK["routes"])
     if out is not None:
         out["side"] = side
     return out

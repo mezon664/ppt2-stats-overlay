@@ -15,10 +15,10 @@ GRID_TOP, ROW_H = 11, 23.0
 PIECE_COLORS = {"I": (40, 190, 235), "O": (245, 200, 30), "T": (165, 70, 200), "S": (110, 200, 60),
                 "Z": (225, 55, 65), "J": (45, 95, 220), "L": (245, 135, 30)}
 TEXT = {
-    "ja": {"locked": "エンドレスをONにしてマラソンを始めると使えます", "can": "このミノ順で組めます", "wait": "ミノ順を読んでいます", "no": "このミノ順では組めません", "done": "完成！",
+    "ja": {"locked": "エンドレスをONにしてマラソンを始めると使えます", "can": "このミノ順で組めます", "end": "Wikiの派生から外れました", "lost": "ミノ順を見失いました", "more": "この先のミノしだい", "wait": "ミノ順を読んでいます", "no": "このミノ順では組めません", "done": "完成！",
            "off": "置き場所がずれました", "maybe": "8個目のミノしだい", "next": "次：{}", "hold": "HOLD してから {}",
            "title": "練習：{}", "deck": "練習：デッキ", "left": "あと{}個"},
-    "en": {"locked": "Start Marathon with Endless ON to use this", "can": "These pieces build it", "wait": "Reading the pieces", "no": "Can't be built with these pieces", "done": "Done!",
+    "en": {"locked": "Start Marathon with Endless ON to use this", "can": "These pieces build it", "end": "Off the wiki's routes", "lost": "Lost the piece order", "more": "Depends on the next pieces", "wait": "Reading the pieces", "no": "Can't be built with these pieces", "done": "Done!",
            "off": "Off the plan", "maybe": "Depends on the 8th piece", "next": "Next: {}", "hold": "HOLD, then {}",
            "title": "Practice: {}", "deck": "Practice: deck", "left": "{} to go"},
 }
@@ -80,9 +80,11 @@ class PracticeLayer(QtWidgets.QWidget):
             lines.append((t["hold"] if nxt.get("hold") else t["next"]).format(nxt.get("piece", "")))
             if st.get("left"):
                 lines[0] += "  " + t["left"].format(st["left"])
-        if status in ("locked", "wait", "no", "done", "off", "maybe"):
+        if status == "maybe" and st.get("route"):
+            lines.append(t["more"])
+        elif status in ("locked", "wait", "no", "done", "off", "maybe", "end", "lost"):
             lines.append(t[status])
-        elif status == "ok" and st.get("single"):
+        elif status == "ok" and st.get("single") and not st.get("route"):
             lines.append(t["can"])
         x1, y1, x2, _ = BOXES[side]
         font = QtGui.QFont("Meiryo")

@@ -204,3 +204,93 @@ def test_single_says_whether_it_builds():
     cands = op.candidates({"mode": "single", "single": "開幕TSD", "mirror": True, "openers": []})
     out = p.update(cands, 1, [], True, [], None, 0)
     assert out["status"] == "wait" and out["single"] is True and out["name"] == "開幕TSD"
+
+
+IMPERIAL = ("v115@Ahi0DeglBeBtg0Q4CeglCeBtR4RphlAezhQ4RpJeFKJvhAAAAUhilDeg0BeBtglwhMeAAAxgR4GeR4AtHeBtilzhAeAtg0gl"
+            "RpFeg0AeRpEeh0JetsBvhAAAA")
+
+
+def test_a_route_reads_as_boards_in_order():
+    points = op.route_points(IMPERIAL)
+    assert [len(t.cells) for t in points] == [28, 8, 8, 36, 16]
+    assert points[0].colors[(3, 0)] == "I"
+
+
+def test_plan_towards_goes_as_far_as_the_pieces_seen():
+    import itertools
+    points = op.route_points(IMPERIAL)
+    base, goal = points[1].cells, points[3]
+    pieces = sorted({goal.colors[c] for c in goal.cells - base})
+    assert len(pieces) == 7
+    order = next(q for q in itertools.permutations(pieces) if q[-1] == "T"
+                 and (op.plan_towards(goal.cells, q, base, 0, None, goal.colors) or (0, False))[1])
+    steps, whole = op.plan_towards(goal.cells, order, base, 0, None, goal.colors)
+    assert whole and len(steps) == 7 and steps[-1]["piece"] == "T"
+    part, whole = op.plan_towards(goal.cells, order[:2], base, 0, None, goal.colors)
+    assert not whole and len(part) >= 1
+    assert op.plan_towards(goal.cells, ("O", "O"), frozenset(goal.cells - {(7, 0)}), 0, None, goal.colors) is None
+
+
+def test_entry_routes_keep_your_order_and_ticks(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {"X": [{"name": "a", "fumen": "f"}, {"name": "b", "fumen": "g"},
+                                                  {"name": "c", "fumen": "h"}]})
+    e = {"name": "X", "routes": [{"name": "b", "on": False}, {"name": "gone", "on": True}]}
+    assert [(r["name"], r["on"]) for r in op.entry_routes(e)] == [("b", False), ("a", True), ("c", True)]
+
+
+def _settle(p, *args, **kw):
+    import time
+    out = p.update(*args, **kw)
+    for _ in range(400):
+        if p._job is None:
+            out2 = p.update(*args, **kw)
+            if p._job is None:
+                return out2
+        time.sleep(0.005)
+        out = p.update(*args, **kw)
+    return out
+
+
+def test_the_guide_goes_on_along_a_route_after_the_opener():
+    import itertools
+    points = op.route_points(IMPERIAL)
+    shape, after, goal = points[0], points[1], points[3]
+    t_cells = frozenset(c for c, v in shape.colors.items() if v == "T")
+    setup = shape.cells - t_cells
+    second = next(q for q in itertools.permutations(sorted({goal.colors[c] for c in goal.cells - after.cells}))
+                  if q[-1] == "T" and (op.plan_towards(goal.cells, q, after.cells, 0, None, goal.colors) or (0, 0))[1])
+    first = next(q for q in itertools.permutations("IOSZJL") if op.solve(setup, q) is not None)
+    seen = list(first) + ["T"] + list(second)
+    cands = [("X", "Wiki", [op.Target(setup)])]
+    routes = {"X": [op.Route("Imperial", points)]}
+    p = op.Practice()
+    _settle(p, cands, 1, seen, True, sorted(setup), None, 6, routes)    # the opener stands
+    out = _settle(p, cands, 1, seen, True, sorted(setup), None, 6, routes)
+    assert out["route"] is True and out["status"] == "ok" and out["next"]["piece"] == "T"
+    assert out["form"] == "Imperial"
+    out = _settle(p, cands, 1, seen, True, sorted(after.cells), None, 7, routes)    # its T-spin cleared
+    assert out["status"] == "ok" and out["next"]["piece"] in second
+    assert frozenset(map(tuple, out["next"]["cells"])) <= goal.cells - after.cells
+    assert _settle(p, cands, 1, seen, False, sorted(after.cells), None, 7, routes)["status"] == "lost"
+
+
+def test_a_painted_form():
+    # bottom row first: an O and an I, in their colors
+    rows = ["OOIIII....", "OO........"]
+    assert op.paint_problem(rows) is None
+    assert op.paint_cells(rows)[(2, 0)] == "I"
+    assert op.paint_rows(op.paint_cells(rows)) == rows
+    form = {"name": "mine", "paint": rows, "on": True}
+    plain, both = op.form_targets("x", form, False), op.form_targets("x", form, True)
+    assert len(plain) == 1 and plain[0].colors[(0, 0)] == "O" and len(both) == 2
+    assert both[1].colors[(9, 0)] == "O"
+    assert op.solve_from(plain[0].cells, tuple("OI"), [], 0, None, plain[0].colors) is not None
+    assert op.solve_from(plain[0].cells, tuple("IO"), [], 0, None, plain[0].colors) is not None
+
+
+def test_a_painting_that_cant_be_a_form():
+    assert op.paint_problem([]) == "empty"
+    assert op.paint_problem(["XXX......."]) == "count"
+    assert op.paint_problem(["XXXXXXXX..", "XXXXXXXX..", "XXXXXXXX..", "XXXXXXXX..", "XXXXXXXX.."]) == "big"
+    assert op.paint_problem(["IIOO......"]) == "shape"          # colors that make no piece
+    assert op.paint_problem(["XXXXXXXXXX", "XX........"]) == "shape"   # a full row with no T-spin

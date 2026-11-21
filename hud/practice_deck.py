@@ -33,8 +33,17 @@ TEXT = {
            "forms": "形：{}", "forms_none": "形", "forms_desc": "上の形ほど優先します。チェックを外した形は使いません。"
                                               "テト譜でミノに色を付けると、その色どおりのミノで組む形になります（灰色はどのミノでも）。",
            "form_name": "形の名前（理想形など）", "form_fumen": "テト譜（v115@…）", "delete": "削除",
+           "paint_how": "盤面で作る：色を選んで左ドラッグで塗り、右ドラッグで消します。灰色はどのミノでも入る場所です。",
+           "paint_add": "塗った形を追加", "paint_clear": "全部消す", "paint_copy": "選んだ形を写す", "gray": "灰", "erase": "消",
+           "p_empty": "盤面にミノを塗ってください。", "p_count": "塗ったマスの数が 4 の倍数ではありません。",
+           "p_big": "1巡目と次の 1 個（8 ミノ、32 マス）までの形にしてください。",
+           "p_shape": "この塗り方ではミノの形になりません（段が埋まる形は、Tスピンで消す形だけ使えます）。",
            "bad_fumen": "このテト譜は読めませんでした（テト譜の v115@ から後ろを貼ってください）。",
            "no_shape": "この形は 4 の倍数のマスでないか、置けない形でした。",
+           "routes": "2巡目以降の派生：{}", "routes_none": "2巡目以降の派生",
+           "routes_desc": "テンプレを組んだあと、Wikiに載っている派生へ案内します。上の派生ほど優先し、チェックを外した派生は使いません。"
+                          "Wikiに形が載っていない部分は案内しません。",
+           "routes_empty": "（このテンプレには、案内できる派生がWikiにありません）",
            "rates": "セットアップ率",
            "rates_desc": "1巡目の 5040 通りと 2巡目の最初の 1 個（7 通り）のすべてで、デッキのどれが組めるかを数えます。"
                          "ホールドあり。T スピンで段を消す形は、T を入れる直前の形までで数えます（テトリステンプレ整理Wiki の"
@@ -55,8 +64,18 @@ TEXT = {
            "forms": "Forms: {}", "forms_none": "Forms", "forms_desc": "Top first; unticked ones aren't used. Colored "
                                                                    "pieces in a fumen must be those pieces (gray: any).",
            "form_name": "Form name", "form_fumen": "Fumen (v115@…)", "delete": "Delete",
+           "paint_how": "Paint it: pick a color, drag with the left button to paint, the right to erase. Gray: any piece.",
+           "paint_add": "Add this shape", "paint_clear": "Clear", "paint_copy": "Copy the selected form", "gray": "Any",
+           "erase": "Erase",
+           "p_empty": "Paint some pieces on the board.", "p_count": "The painted cells aren't a multiple of 4.",
+           "p_big": "Keep it to the first bag and one more piece (8 pieces, 32 cells).",
+           "p_shape": "These colors don't make pieces (full rows only work as a T-spin).",
            "bad_fumen": "This fumen couldn't be read (paste from v115@ on).",
            "no_shape": "This shape isn't whole pieces, or can't be built.",
+           "routes": "Routes after the opener: {}", "routes_none": "Routes after the opener",
+           "routes_desc": "After the opener, guides you along the routes on the wiki. Top first; unticked ones aren't "
+                          "used. Parts the wiki doesn't draw aren't guided.",
+           "routes_empty": "(The wiki has no route to guide for this opener)",
            "rates": "Setup rates",
            "rates_desc": "Counts which of the deck builds for each of the 5040 first bags and the 7 next pieces, with "
                          "HOLD. Shapes clearing rows with a T-spin count up to just before the T.",
@@ -133,6 +152,63 @@ def draw_targets(target, w=180, h=90):
         p.fillRect(QtCore.QRectF(x0 + x * cell + 0.5, y0 + (rows - 1 - y) * cell + 0.5, cell - 1, cell - 1), col)
     p.end()
     return pm
+
+
+class BoardPainter(QtWidgets.QWidget):
+    """A board to paint a form on: the left button paints the chosen color,
+    the right one erases. cells: {(x, y up): piece or "X"}."""
+    ROWS, CELL = 10, 22
+
+    def __init__(self):
+        super().__init__()
+        self.cells = {}
+        self.color = "T"
+        self._mode = None
+        self.setFixedSize(self.CELL * 10 + 1, self.CELL * self.ROWS + 1)
+        self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+
+    def set_cells(self, cells):
+        self.cells = {c: v for c, v in cells.items() if c[1] < self.ROWS}
+        self.update()
+
+    def _at(self, pos):
+        x, y = int(pos.x() // self.CELL), self.ROWS - 1 - int(pos.y() // self.CELL)
+        return (x, y) if 0 <= x < 10 and 0 <= y < self.ROWS else None
+
+    def _apply(self, pos):
+        c = self._at(pos)
+        if c is None:
+            return
+        if self._mode == "paint" and self.color:
+            self.cells[c] = self.color
+        else:
+            self.cells.pop(c, None)
+        self.update()
+
+    def mousePressEvent(self, e):
+        right = e.button() == QtCore.Qt.MouseButton.RightButton
+        self._mode = "erase" if right or self.color is None else "paint"
+        self._apply(e.position())
+
+    def mouseMoveEvent(self, e):
+        if self._mode:
+            self._apply(e.position())
+
+    def mouseReleaseEvent(self, e):
+        self._mode = None
+
+    def paintEvent(self, e):
+        p = QtGui.QPainter(self)
+        p.fillRect(self.rect(), QtGui.QColor(20, 22, 28))
+        p.setPen(QtGui.QColor(58, 62, 72))
+        for k in range(11):
+            p.drawLine(k * self.CELL, 0, k * self.CELL, self.height())
+        for k in range(self.ROWS + 1):
+            p.drawLine(0, k * self.CELL, self.width(), k * self.CELL)
+        for (x, y), v in self.cells.items():
+            col = QtGui.QColor(*PIECE_COLORS[v]) if v in PIECE_COLORS else QtGui.QColor(150, 150, 160)
+            p.fillRect(x * self.CELL + 1, (self.ROWS - 1 - y) * self.CELL + 1, self.CELL - 1, self.CELL - 1, col)
+        p.end()
 
 
 class DeckEditor:
@@ -237,7 +313,59 @@ class DeckEditor:
         self.form_card.add(top)
         self.form_card.add(frow)
         self.form_card.add(fadd)
+        self.paint_how = ui.muted()
+        self.paint_how.setWordWrap(True)
+        self.painter = BoardPainter()
+        self.paint_group = QtWidgets.QButtonGroup(self.form_card)
+        self.paint_group.setExclusive(True)
+        palette = QtWidgets.QGridLayout()
+        palette.setSpacing(4)
+        self.paint_buttons = {}
+        for k, v in enumerate(("I", "O", "T", "S", "Z", "J", "L", "X", None)):
+            b = QtWidgets.QPushButton(v or "")
+            b.setCheckable(True)
+            b.setFixedSize(46, 30)
+            rgb = PIECE_COLORS.get(v, (150, 150, 160)) if v else (245, 245, 247)
+            ink = "#111" if v != "J" and v != "T" else "#fff"
+            b.setStyleSheet(f"QPushButton{{background:rgb{rgb};color:{ink};font-weight:700;border:2px solid transparent;"
+                            "border-radius:5px;padding:0;}QPushButton:checked{border:2px solid #111;}")
+            b.clicked.connect(lambda _=False, c=v: setattr(self.painter, "color", c))
+            self.paint_group.addButton(b)
+            self.paint_buttons[v] = b
+            palette.addWidget(b, k // 3, k % 3)
+        self.paint_buttons["T"].setChecked(True)
+        self.p_add, self.p_clear, self.p_copy = QtWidgets.QPushButton(), QtWidgets.QPushButton(), QtWidgets.QPushButton()
+        self.p_add.clicked.connect(self._add_painted)
+        self.p_clear.clicked.connect(lambda: self.painter.set_cells({}))
+        self.p_copy.clicked.connect(self._copy_form)
+        side = QtWidgets.QVBoxLayout()
+        side.addLayout(palette)
+        side.addSpacing(6)
+        for b in (self.p_copy, self.p_clear, self.p_add):
+            side.addWidget(b)
+        side.addStretch(1)
+        paint_row = QtWidgets.QHBoxLayout()
+        paint_row.addWidget(self.painter, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        paint_row.addSpacing(12)
+        paint_row.addLayout(side)
+        paint_row.addStretch(1)
+        self.form_card.add(self.paint_how)
+        self.form_card.add(paint_row)
         self.form_card.add(self.form_error)
+
+        self.route_card = ui.Card()
+        self.route_list = QtWidgets.QListWidget()
+        self.route_list.setMinimumHeight(130)
+        self.route_list.itemChanged.connect(self._route_ticked)
+        self.r_up, self.r_down = QtWidgets.QPushButton(), QtWidgets.QPushButton()
+        self.r_up.clicked.connect(lambda: self._move_route(-1))
+        self.r_down.clicked.connect(lambda: self._move_route(1))
+        rrow = QtWidgets.QHBoxLayout()
+        rrow.addWidget(self.r_up)
+        rrow.addWidget(self.r_down)
+        rrow.addStretch(1)
+        self.route_card.add(self.route_list)
+        self.route_card.add(rrow)
 
         self.rate_card = ui.Card()
         self.b_calc = QtWidgets.QPushButton()
@@ -252,7 +380,7 @@ class DeckEditor:
         crow.addWidget(self.bar, 1)
         self.rate_card.add(crow)
         self.rate_card.add(self.result)
-        self.cards = (self.deck_card, self.form_card, self.rate_card)
+        self.cards = (self.deck_card, self.form_card, self.route_card, self.rate_card)
 
     def retranslate(self, lang):
         self.lang = lang if lang in TEXT else "ja"
@@ -262,6 +390,7 @@ class DeckEditor:
         self.mode.setItemText(1, t["mode_single"])
         for b, k in ((self.b_up, "up"), (self.b_down, "down"), (self.b_remove, "remove"),
                      (self.f_up, "up"), (self.f_down, "down"), (self.f_delete, "delete"), (self.f_add, "add"),
+                     (self.r_up, "up"), (self.r_down, "down"),
                      (self.b_calc, "calc")):
             b.setText(t[k])
         self.pick.lineEdit().setPlaceholderText(t["pick"])
@@ -269,6 +398,13 @@ class DeckEditor:
         self.form_card.setDescription(t["forms_desc"])
         self.form_name.setPlaceholderText(t["form_name"])
         self.form_fumen.setPlaceholderText(t["form_fumen"])
+        self.paint_how.setText(t["paint_how"])
+        self.paint_buttons["X"].setText(t["gray"])
+        self.paint_buttons[None].setText(t["erase"])
+        self.p_add.setText(t["paint_add"])
+        self.p_clear.setText(t["paint_clear"])
+        self.p_copy.setText(t["paint_copy"])
+        self.route_card.setDescription(t["routes_desc"])
         self.rate_card.setTitle(t["rates"])
         self.rate_card.setDescription(t["rates_desc"])
         self._fill_deck(keep=True)
@@ -377,11 +513,57 @@ class DeckEditor:
             item.setCheckState(QtCore.Qt.CheckState.Checked if f.get("on", True) else QtCore.Qt.CheckState.Unchecked)
             self.form_list.addItem(item)
         self.form_list.blockSignals(False)
-        for w in (self.form_list, self.f_up, self.f_down, self.f_delete, self.form_name, self.form_fumen, self.f_add):
+        for w in (self.form_list, self.f_up, self.f_down, self.f_delete, self.form_name, self.form_fumen, self.f_add,
+                  self.p_add, self.p_copy):
             w.setEnabled(e is not None)
         if e:
             self.form_list.setCurrentRow(0)
         self._show_form()
+        self._fill_routes()
+
+    # --- the wiki's routes of the opener picked ---
+    def _fill_routes(self, row=0):
+        e = self._current()
+        t = TEXT[self.lang]
+        self.route_card.setTitle(t["routes"].format(e["name"]) if e else t["routes_none"])
+        routes = op.entry_routes(e) if e else []
+        self.route_list.blockSignals(True)
+        self.route_list.clear()
+        for r in routes:
+            item = QtWidgets.QListWidgetItem(r["name"])
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.CheckState.Checked if r["on"] else QtCore.Qt.CheckState.Unchecked)
+            self.route_list.addItem(item)
+        if e and not routes:
+            item = QtWidgets.QListWidgetItem(t["routes_empty"])
+            item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+            self.route_list.addItem(item)
+        self.route_list.blockSignals(False)
+        if routes:
+            self.route_list.setCurrentRow(max(0, min(row, len(routes) - 1)))
+        for w in (self.r_up, self.r_down):
+            w.setEnabled(bool(routes))
+
+    def _store_routes(self, e, routes):
+        e["routes"] = [{"name": r["name"], "on": r["on"]} for r in routes]
+        self._save()
+
+    def _route_ticked(self, item):
+        e = self._current()
+        r = self.route_list.row(item)
+        routes = op.entry_routes(e) if e else []
+        if 0 <= r < len(routes):
+            routes[r]["on"] = item.checkState() == QtCore.Qt.CheckState.Checked
+            self._store_routes(e, routes)
+
+    def _move_route(self, d):
+        e = self._current()
+        r = self.route_list.currentRow()
+        routes = op.entry_routes(e) if e else []
+        if 0 <= r < len(routes) and 0 <= r + d < len(routes):
+            routes[r], routes[r + d] = routes[r + d], routes[r]
+            self._store_routes(e, routes)
+            self._fill_routes(r + d)
 
     def _show_form(self, *_):
         e = self._current()
@@ -444,6 +626,38 @@ class DeckEditor:
         self.form_list.setCurrentRow(len(e["forms"]) - 1)
         self.form_name.clear()
         self.form_fumen.clear()
+
+    def _add_painted(self):
+        e = self._current()
+        if not e:
+            return
+        rows = op.paint_rows(self.painter.cells)
+        why = op.paint_problem(rows)
+        if why:
+            self.form_error.setText(TEXT[self.lang]["p_" + why])
+            self.form_error.setVisible(True)
+            return
+        self.form_error.setVisible(False)
+        e["forms"].append({"name": self.form_name.text().strip() or f"#{len(e['forms']) + 1}", "paint": rows, "on": True})
+        self._save()
+        self._fill_forms()
+        self.form_list.setCurrentRow(len(e["forms"]) - 1)
+        self.form_name.clear()
+
+    def _copy_form(self):
+        """The selected form onto the board, to make another from it."""
+        e = self._current()
+        r = self.form_list.currentRow()
+        if not e or not 0 <= r < len(e["forms"]):
+            return
+        form = e["forms"][r]
+        if form.get("paint"):
+            self.painter.set_cells(op.paint_cells(form["paint"]))
+            return
+        ts = op.form_targets(e["name"], form, False)
+        if ts:
+            colors = ts[0].colors or {}
+            self.painter.set_cells({c: colors.get(c, "X") for c in ts[0].cells})
 
     # --- rates ---
     def _calc(self):
