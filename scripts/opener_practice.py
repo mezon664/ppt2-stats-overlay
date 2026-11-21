@@ -371,6 +371,7 @@ class Practice:
         if self.status == "done":
             if self.pick and self.routes.get(self.pick[0]):
                 self.on_route, self.opener = True, self.pick[0]
+                self.base = self.target.cells if self.target is not None else None
                 self._job, self._asked = None, None
                 return self._follow_route(board, queue, n, hold)
             return self._out()
@@ -389,11 +390,11 @@ class Practice:
     def _follow_route(self, board, queue, n, hold):
         """On a route: asks for a plan when the board settles on something new."""
         gone = n * 4 - len(board)
-        if self.status == "done" and self._asked is not None:
-            return self._out()      # (the route's end)
         if gone < 0 or gone % 10:
             return self._out()      # mid-change (a falling piece or a clear): wait
         ask = (board, queue, n, hold)
+        if self._job is None and self.status == "wait" and ask == self._asked:
+            self._asked = None      # the look over the pages ran out of time: on from where it got to
         if self._job is None and ask != self._asked:
             self._asked = ask
             self._job = self._start(lambda: (ask,) + self._route_plan(board, queue, n, hold))
@@ -409,26 +410,36 @@ class Practice:
         if not board:
             return "done", self.pick, None, None    # a Perfect Clear
         i = n + (1 if hold else 0)
-        reached = inside = False
         import time
         until = time.monotonic() + ROUTE_SEARCH_S
+        key = (board, queue, n, hold)
+        scan = getattr(self, "_scan", None)
+        start, reached, inside = scan[1:] if scan and scan[0] == key else (0, False, False)
         now_key = self.target_key
         pages = [(r, t) for r in order for t in r.points]
         pages.sort(key=lambda rt: rt[1].key() != now_key)      # the page being followed first
-        for r, t in pages:
+        for k in range(start, len(pages)):
+            r, t = pages[k]
             reached = reached or t.cells == board
             for rows in page_rows(t.cells, board):
-                if time.monotonic() > until:
-                    return "wait", self.pick, None, None
+                if not _colors_whole(t, board, rows):
+                    continue
                 got = plan_towards(t.cells, queue, board, i, hold, t.colors, rows, until)
                 if got is not None and got[0]:
+                    self._scan = None
                     self.target_key = t.key()
                     view = frozenset((x, rows.index(y)) for x, y in t.cells if y in rows)
                     return ("ok" if got[1] else "maybe"), (self.opener, r.name), Target(view), list(got[0])
+                if time.monotonic() > until:    # (a page too big for one look is passed over)
+                    self._scan = (key, k if k > start else k + 1, reached, inside)
+                    return "wait", self.pick, None, None
                 inside = inside or _fits_page(t, board, rows, until)
+        self._scan = None
         if inside:
             return "stuck", self.pick, None, None
-        if reached:
+        if reached or board == getattr(self, "base", None) or board in opener_starts(self.opener):
+            # the opener stands (its T may still go in), with no route on from
+            # this board: not off anything, and it's looked at again as it changes
             return "done", self.pick, None, None
         return "end", self.pick, None, None
 
@@ -652,6 +663,13 @@ def load_deck(path=None):
     deck.setdefault("mirror", True)
     if deck.get("mode") not in ("deck", "single"):
         deck["mode"] = "deck"
+    # forms added before they became routes (2巡目以降) go on as your routes
+    for entry in deck["openers"] + list(deck.get("single_forms", {}).values()):
+        mine = [f for f in entry.get("forms", []) if f.get("source") != WIKI_FORM]
+        if mine:
+            entry["forms"] = [f for f in entry["forms"] if f.get("source") == WIKI_FORM] or new_entry(entry["name"])["forms"]
+            entry.setdefault("own_routes", []).extend(
+                {k: f[k] for k in ("name", "fumen", "paint") if k in f} for f in mine)
     return deck
 
 
@@ -724,6 +742,8 @@ class SettledBoard:
 # colors are the pieces it has there).
 ROUTES_PATH = Path(__file__).resolve().parent.parent / "assets" / "opener_routes.json"
 _WIKI_ROUTES = None
+_MIN_COVERS = None
+MIN_COVER_PATH = Path(__file__).resolve().parent.parent / "assets" / "opener_min_cover.json"
 MAX_PLAN_NODES = 800
 ROUTE_SEARCH_S = 2.0    # one look over all the routes (out of time: says "wait", not "off the route")
 
@@ -742,19 +762,37 @@ def route_points(fumen):
     out, seen = [], set()
     pages = [p for f in ([fumen] if isinstance(fumen, str) else fumen) for p in decode(f)]
     for page in pages:
-        cells, colors = set(), {}
-        for y, row in enumerate(page.board_with_piece()):
-            for x, v in enumerate(row):
-                if v:
-                    cells.add((x, y))
-                    if FUMEN_PIECES.get(v) in tuple(PIECES):
-                        colors[(x, y)] = FUMEN_PIECES[v]
-        if not cells or max(y for _, y in cells) >= 20:
+        for t in route_points_of_page(page):
+            if t.key() not in seen:
+                seen.add(t.key())
+                out.append(t)
+    return out
+
+
+def route_points_of_page(page):
+    """One テト譜 page as boards ([Target], top one first). The wiki often
+    draws several on a page, one above the other with an empty row between
+    (BT砲's 妥協形): a real board has no empty row under a block, so each
+    block of rows is a board of its own, standing on the floor."""
+    cells = {(x, y): v for y, row in enumerate(page.board_with_piece()) for x, v in enumerate(row) if v}
+    if not cells:
+        return []
+    blocks, now = [], []
+    for y in range(max(y for _, y in cells) + 1):
+        if any((x, y) in cells for x in range(COLS)):
+            now.append(y)
+        elif now:
+            blocks.append(now)
+            now = []
+    blocks.append(now)
+    out = []
+    for rows in reversed(blocks):
+        low = rows[0] if len(blocks) > 1 else 0
+        part = {(x, y - low): cells[(x, y)] for y in rows for x in range(COLS) if (x, y) in cells}
+        if max(y for _, y in part) >= 20:
             continue
-        t = Target(cells, colors or None)
-        if t.key() not in seen:
-            seen.add(t.key())
-            out.append(t)
+        colors = {c: FUMEN_PIECES[v] for c, v in part.items() if FUMEN_PIECES.get(v) in tuple(PIECES)}
+        out.append(Target(part.keys(), colors or None))
     return out
 
 
@@ -769,13 +807,199 @@ def wiki_routes(opener):
     return _WIKI_ROUTES.get(opener, [])
 
 
+def min_cover_routes(opener):
+    """The opener's 最少パターン as routes: the fewest next-bag boards covering
+    the next bag's orders (assets/opener_min_cover.json)."""
+    global _MIN_COVERS
+    if _MIN_COVERS is None:
+        try:
+            _MIN_COVERS = json.loads(MIN_COVER_PATH.read_text(encoding="utf-8"))["covers"]
+        except (OSError, ValueError, KeyError):
+            _MIN_COVERS = {}
+    got = _MIN_COVERS.get(opener)
+    if not got:
+        return []
+    n = len(got["boards"])
+    names = got.get("names") or [""] * n
+    return [{"name": f"最少パターン {k + 1}/{n}（{n}個で {got['rate'] * 100:.2f}%）" + (f" {names[k]}" if names[k] else ""),
+             "paint": rows, "cover": True} for k, rows in enumerate(got["boards"])]
+
+
+def page_orders(base, page, hold=None):
+    """Which of the next bag's orders (a bit per all_bags()) build `page` from
+    `base`, with `hold` in HOLD to begin with. The board may leave one T out
+    (most next-bag shapes are the setup, its T kept for the T-spin). Worked
+    out per set of pieces placed, so the 5040 orders share the work."""
+    room = frozenset(page.cells) - frozenset(base)
+    if len(room) % 4 or len(room) > 32:
+        return 0
+    colors = page.colors or {}
+    have = sorted(list(PIECES) + ([hold] if hold else []))
+    no_t = list(have)
+    no_t.remove("T")
+    cuts = [c for c in tilings(room)
+            if all(colors.get(x, p) == p for p, cells in c for x in cells)
+            and sorted(p for p, _ in c) in (have, no_t)]
+    target = frozenset(page.cells)
+    out = 0
+    for cut in cuts[:12]:
+        parts = list(cut)
+        whole = (1 << len(parts)) - 1
+        fit = {}
+
+        def can_place(mask, k):
+            if (mask, k) not in fit:
+                board = frozenset(base).union(*[parts[j][1] for j in range(len(parts)) if mask >> j & 1])
+                piece, cells = parts[k]
+                after = board | cells
+                ok = cells in landing_spots(piece, board) and (after == target or not any(
+                    all((x, y) in after for x in range(COLS)) for y in {y for _, y in cells}))
+                fit[(mask, k)] = ok
+            return fit[(mask, k)]
+
+        memo = {}
+
+        def go(mask, rest, held):
+            if mask == whole:
+                return True
+            key = (mask, rest, held)
+            if key in memo:
+                return memo[key]
+            options = []
+            if rest:
+                options.append((rest[0], rest[1:], held))
+                if held is None and len(rest) > 1:
+                    options.append((rest[1], rest[2:], rest[0]))
+                elif held is not None and held != rest[0]:
+                    options.append((held, rest[1:], rest[0]))
+            elif held is not None:
+                options.append((held, (), None))    # (swapped for the piece after this bag)
+            found = False
+            for piece, nrest, nheld in options:
+                for k, (p, _) in enumerate(parts):
+                    if p == piece and not mask >> k & 1 and can_place(mask, k) and go(mask | 1 << k, nrest, nheld):
+                        found = True
+                        break
+                if found:
+                    break
+            memo[key] = found
+            return found
+
+        for b, bag in enumerate(all_bags()):
+            if not out >> b & 1 and go(0, tuple(bag), hold):
+                out |= 1 << b
+    return out
+
+
+def smallest_cover(masks, seconds=4.0):
+    """(keys, orders covered): the fewest of `masks` ({key: bits}) that cover
+    all that any of them does. Keys are ranks, the wiki's order: among sets
+    of the same size, the one with the wiki's earlier boards."""
+    import time
+    every = 0
+    for m in masks.values():
+        every |= m
+    # a board whose orders an earlier board has too is never needed
+    kept = []
+    for k, m in sorted(masks.items()):
+        if not any(m | o == o for _, o in kept):
+            kept.append((k, m))
+    left, greedy = every, []
+    while left:
+        k, m = max(kept, key=lambda kv: (bin(kv[1] & left).count("1"), -kv[0]))
+        greedy.append(k)
+        left &= ~m
+    best = sorted(greedy)
+    until = time.monotonic() + seconds
+    biggest = max(bin(m).count("1") for _, m in kept)
+
+    def search(left, chosen):
+        nonlocal best
+        if not left:
+            if (len(chosen), sorted(chosen)) < (len(best), best):
+                best = sorted(chosen)
+            return
+        if time.monotonic() > until:
+            return
+        need = -(-bin(left).count("1") // biggest)
+        if len(chosen) + need > len(best):
+            return
+        low = left & -left              # some order still open: one of the boards with it is in
+        for k, m in sorted((k, m) for k, m in kept if m & low):
+            search(left & ~m, chosen + [k])
+
+    search(every, [])
+    return best, bin(every).count("1")
+
+
 def entry_routes(entry):
-    """The opener's routes in your order: [{"name", "fumen", "on"}]. New ones
-    the wiki has come last, switched on."""
-    wiki = {r["name"]: r for r in wiki_routes(entry["name"])}
-    out = [dict(wiki[s["name"]], on=s.get("on", True)) for s in entry.get("routes", []) if s.get("name") in wiki]
-    have = {r["name"] for r in out}
-    return out + [dict(r, on=True) for n, r in wiki.items() if n not in have]
+    """The opener's routes in your order: [{"name", "fumen" or "paint", "on",
+    "own"}]. Your own (added by テト譜 or painted) come first when new. Until
+    you change them, only the 最少パターン are on: the fewest boards covering
+    the next bag's orders (min_cover_routes). An opener without one: the wiki's
+    最小 patterns and the first route from each of its shapes ("start")."""
+    cover = min_cover_routes(entry["name"])
+    wiki = {r["name"]: dict(r) for r in cover + wiki_routes(entry["name"])}
+    own = {r["name"]: dict(r, own=True) for r in entry.get("own_routes", [])}
+    pool = {**wiki, **own}
+    saved = [dict(pool[s["name"]], on=s.get("on", True)) for s in entry.get("routes", []) if s.get("name") in pool]
+    have = {r["name"] for r in saved}
+    new_own = [dict(r, on=True) for n, r in own.items() if n not in have]
+    has_start = any(r.get("start") for r in wiki.values())
+    new_wiki = [dict(r, on=bool(r.get("cover")) if cover else
+                     bool(r.get("min") or r.get("start")) or (not has_start and k == 0))
+                for k, (n, r) in enumerate(wiki.items()) if n not in have and n not in own]
+    return new_own + saved + new_wiki
+
+
+def route_targets(route):
+    """The boards of one route of entry_routes."""
+    if route.get("paint"):
+        cells = paint_cells(route["paint"])
+        colors = {c: v for c, v in cells.items() if v != "X"}
+        return [Target(cells, colors or None)]
+    return route_points(route["fumen"])
+
+
+def after_clear(cells):
+    """A shape with its full rows gone (what's left after its T-spin)."""
+    full = {y for _, y in cells if all((x, y) in cells for x in range(COLS))}
+    return frozenset((x, y - sum(1 for f in full if f < y)) for x, y in cells if y not in full)
+
+
+def opener_starts(name):
+    """What a route of this opener goes on from: its shapes, and each as it is
+    after its T-spin (both sides)."""
+    out = []
+    for c in opener_shapes(name):
+        for v in (c, after_clear(c)):
+            for side in (v, mirror_cells(v)):
+                if side and side not in out:
+                    out.append(side)
+    return out
+
+
+def route_problem(opener, targets):
+    """Why these boards can't be a route of this opener: "empty", "count"
+    (an odd number of cells), "shape" (the colors don't make pieces), "far"
+    (no board goes on from the opener); None if they can."""
+    if not targets:
+        return "empty"
+    if any(len(t.cells) % 2 for t in targets):
+        return "count"
+    for t in targets:
+        colored = frozenset(t.colors or ())
+        if any(sum(1 for v in (t.colors or {}).values() if v == p) % 4 for p in PIECES):
+            return "shape"
+        try:
+            if colored and not _tile(colored, t.colors, {}, float("inf")):
+                return "shape"
+        except _OutOfTime:
+            pass
+    starts = opener_starts(opener)
+    if not any(b <= t.cells or (t.cells < b and len(b) - len(t.cells) == 4) for t in targets for b in starts):
+        return "far"
+    return None
 
 
 def _entries(deck):
@@ -794,7 +1018,7 @@ def deck_routes(deck):
             if not r["on"]:
                 continue
             try:
-                points = route_points(r["fumen"])
+                points = route_targets(r)
             except Exception:
                 continue
             if deck.get("mirror", True):
@@ -909,6 +1133,24 @@ def plan_towards(target, queue, board, i, hold, colors=None, rows=None, until=No
         return go(done, live, i, hold)
     except _OutOfTime:
         return None
+
+
+def _colors_whole(t, board, rows):
+    """A quick no: with every cell left colored, each color must be whole
+    pieces (a board that cut one of the page's pieces can't be on it)."""
+    if any(y >= len(rows) for _, y in board):
+        return False
+    done = {(x, rows[y]) for x, y in board} | {c for c in t.cells if c[1] not in rows}
+    room = t.cells - done
+    if not done <= t.cells or len(room) % 4:
+        return False
+    colors = t.colors or {}
+    if any(c not in colors for c in room):
+        return True
+    count = {}
+    for c in room:
+        count[colors[c]] = count.get(colors[c], 0) + 1
+    return all(v % 4 == 0 for v in count.values())
 
 
 def _fits_page(t, board, rows, until):

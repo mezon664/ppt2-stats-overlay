@@ -232,8 +232,8 @@ def test_plan_towards_goes_as_far_as_the_pieces_seen():
 
 
 def test_entry_routes_keep_your_order_and_ticks(monkeypatch):
-    monkeypatch.setattr(op, "_WIKI_ROUTES", {"X": [{"name": "a", "fumen": "f"}, {"name": "b", "fumen": "g"},
-                                                  {"name": "c", "fumen": "h"}]})
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {"X": [{"name": "a", "fumen": "f", "min": True}, {"name": "b", "fumen": "g"},
+                                                  {"name": "c", "fumen": "h", "min": True}]})
     e = {"name": "X", "routes": [{"name": "b", "on": False}, {"name": "gone", "on": True}]}
     assert [(r["name"], r["on"]) for r in op.entry_routes(e)] == [("b", False), ("a", True), ("c", True)]
 
@@ -332,3 +332,111 @@ def test_meisou_routes_are_the_wiki_groups():
     assert not any(n.startswith("3巡目が組める確率") or n == "3巡目テト譜" for n in names)
     route = next(r for r in op.wiki_routes("迷走砲") if r["name"] == "高火力パフェ型")
     assert isinstance(route["fumen"], list) and len(op.route_points(route["fumen"])) > 5
+
+
+def test_at_first_only_the_minimal_patterns_are_on(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {
+        "X": [{"name": "a", "fumen": "f"}, {"name": "m", "fumen": "g", "min": True}],
+        "Y": [{"name": "a", "fumen": "f"}, {"name": "b", "fumen": "g"}]})
+    assert [(r["name"], r["on"]) for r in op.entry_routes({"name": "X"})] == [("a", True), ("m", True)]
+    assert [(r["name"], r["on"]) for r in op.entry_routes({"name": "Y"})] == [("a", True), ("b", False)]
+
+
+def test_your_own_route_comes_first_and_is_guided(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {"X": [{"name": "a", "fumen": IMPERIAL, "min": True}]})
+    rows = ["OOIIII....", "OO........"]
+    e = {"name": "X", "forms": [], "own_routes": [{"name": "mine", "paint": rows}]}
+    routes = op.entry_routes(e)
+    assert routes[0]["name"] == "mine" and routes[0]["own"] and routes[0]["on"]
+    got = op.deck_routes({"mode": "deck", "mirror": False, "openers": [e]})["X"]
+    assert got[0].name == "mine" and got[0].points[0].colors[(0, 0)] == "O"
+
+
+def test_a_form_saved_before_moves_to_the_routes(tmp_path):
+    path = tmp_path / "deck.json"
+    entry = op.new_entry("迷走砲")
+    entry["forms"].append({"name": "理想形", "fumen": IMPERIAL, "on": True})
+    op.save_deck({"mode": "deck", "mirror": True, "openers": [entry]}, path)
+    got = op.load_deck(path)["openers"][0]
+    assert [f["name"] for f in got["forms"]] == ["Wiki"]
+    assert got["own_routes"] == [{"name": "理想形", "fumen": IMPERIAL}]
+
+
+def test_a_route_has_to_go_on_from_the_opener():
+    start = op.opener_starts("開幕TSD")[0]
+    good = op.Target(set(start) | {(0, 15), (1, 15)})
+    assert op.route_problem("開幕TSD", [good]) is None
+    assert op.route_problem("開幕TSD", [op.Target({(5, 12), (6, 12)})]) == "far"
+    assert op.route_problem("開幕TSD", []) == "empty"
+    assert op.route_problem("開幕TSD", [op.Target({(0, 0)})]) == "count"
+    assert op.route_problem("開幕TSD", [op.Target(start, {next(iter(start)): "T"})]) == "shape"
+
+
+def test_the_opener_standing_with_no_route_on_isnt_off_the_route():
+    far = op.Target({(x, 9) for x in range(4)})
+    setup = frozenset((x, 0) for x in range(4))
+    p = op.Practice()
+    p.routes, p.opener, p.pick, p.base = {"X": [op.Route("r", [far])]}, "X", ("X", "r"), setup
+    assert p._route_plan(setup, tuple("TIO"), 1, None)[0] == "done"
+    assert p._route_plan(frozenset((x, 1) for x in range(4)), tuple("TIO"), 1, None)[0] == "end"
+
+
+def test_the_smallest_cover_is_the_fewest_boards():
+    # the biggest board tempts a greedy pick into three; two do it
+    masks = {0: 0b0111110, 1: 0b0001111, 2: 0b1110000}
+    keys, covered = op.smallest_cover(masks)
+    assert sorted(keys) == [1, 2] and covered == 7
+
+
+def test_of_covers_as_small_the_wikis_earlier_boards_win():
+    masks = {0: 0b0011, 1: 0b1100, 2: 0b0110, 3: 0b1001}
+    assert op.smallest_cover(masks)[0] == [0, 1]
+    assert op.smallest_cover({5: 0b11, 2: 0b11})[0] == [2]
+
+
+def test_page_orders_agree_with_the_search():
+    import random
+    points = op.route_points(IMPERIAL)
+    base, goal = points[1].cells, points[3]
+    bits = op.page_orders(base, goal)
+    assert bits
+    random.seed(4)
+    bags = op.all_bags()
+    for b in random.sample(range(len(bags)), 40):
+        got = op.plan_towards(goal.cells, tuple(bags[b]) + ("I",), base, 0, None, goal.colors)
+        assert bool(bits >> b & 1) == bool(got and got[1])
+
+
+def test_the_cover_is_what_starts_on(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {"X": [{"name": "a", "fumen": "f", "min": True, "start": True}]})
+    monkeypatch.setattr(op, "_MIN_COVERS", {"X": {"rate": 1.0, "hold": None, "boards": [["OO........"], ["II........"]]}})
+    got = op.entry_routes({"name": "X"})
+    assert [r["on"] for r in got] == [True, True, False] and got[0]["name"].startswith("最少パターン 1/2")
+
+
+def test_a_next_bag_board_may_keep_its_t():
+    points = op.route_points(IMPERIAL)
+    base, goal = points[1].cells, points[3]
+    t_cells = frozenset(c for c in goal.cells - base if goal.colors[c] == "T")
+    setup = op.Target(goal.cells - t_cells, {c: v for c, v in goal.colors.items() if c not in t_cells})
+    with_t, without = op.page_orders(base, goal), op.page_orders(base, setup)
+    assert without and with_t | without == without     # (whatever builds it with the T builds it before the T)
+
+
+def test_boards_drawn_one_above_the_other_are_separate():
+    class Page:
+        def board_with_piece(self):
+            rows = [[0] * 10 for _ in range(23)]
+            rows[0][:4] = [1, 1, 1, 1]      # an I on the floor
+            rows[3][5:7] = [3, 3]           # an empty row or two, then an O
+            rows[4][5:7] = [3, 3]
+            return rows
+    top, bottom = op.route_points_of_page(Page())
+    assert top.cells == frozenset({(5, 0), (6, 0), (5, 1), (6, 1)}) and top.colors[(5, 0)] == "O"
+    assert bottom.cells == frozenset((x, 0) for x in range(4))
+
+
+def test_bt_cannon_has_its_compromise_form():
+    route = next(r for r in op.wiki_routes("BT砲") if r["name"] == "2巡目妥協")
+    assert all(max(y for _, y in t.cells) < 12 for t in op.route_points(route["fumen"]))
+    assert len(op.route_points(route["fumen"])) > 3

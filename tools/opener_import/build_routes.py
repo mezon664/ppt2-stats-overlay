@@ -30,6 +30,7 @@ import opener_practice as op  # noqa: E402
 
 RAW = Path(__file__).with_name("wiki_routes_raw.json")
 CTX = Path(__file__).with_name("wiki_routes_ctx.json")
+MINS = Path(__file__).with_name("wiki_routes_min.json")     # {page: [[heading, label, fumen]]}, labels with 最小 / 最少
 OUT = ROOT / "assets" / "opener_routes.json"
 PATTERNS = re.compile(r"パターン$|^\d+-\d+$|のリスト$")
 
@@ -83,9 +84,21 @@ def goes_on(begin, cells):
     return any(b <= cells or (cells < b and len(b) - len(cells) == 4) for b in begin)
 
 
+def leads_on(begin, t, until):
+    """One bag or so from a start to this board, its colors kept."""
+    for b in begin:
+        if not b < t.cells or len(t.cells) - len(b) > 32:
+            continue
+        rows = tuple(sorted({y for _, y in t.cells}))
+        if rows == tuple(range(len(rows))) and op._colors_whole(t, b, rows) and op._fits_page(t, b, rows, until):
+            return True
+    return False
+
+
 def main():
     raw = json.loads(RAW.read_text(encoding="utf-8"))
     ctxs = json.loads(CTX.read_text(encoding="utf-8"))
+    mins = json.loads(MINS.read_text(encoding="utf-8"))
     openers = json.loads(op.OPENERS_PATH.read_text(encoding="utf-8"))["openers"]
     routes, links, kept = {}, 0, 0
     for o in openers:
@@ -111,6 +124,39 @@ def main():
                 shown, k = f"{label} {k}", k + 1
             have.append({"name": shown, "fumen": good if len(good) > 1 else good[0]})
             kept += 1
+        # the wiki's 最小 patterns (the routes that start switched on): a route
+        # holding one is marked, one under another heading (迷走砲's S①) is added
+        for head, label, fumen in mins.get(page, []):
+            have = routes.setdefault(name, [])
+            hit = next((r for r in have if fumen == r["fumen"] or (isinstance(r["fumen"], list) and fumen in r["fumen"])),
+                       None)
+            if hit is not None:
+                hit["min"] = True
+                continue
+            try:
+                points = op.route_points(fumen)
+            except Exception:
+                continue
+            if not any(goes_on(begin, t.cells) for t in points):
+                continue
+            base = label if not head or "派生" in head else f"{head} {label}"
+            taken = {r["name"] for r in have}
+            shown, k = base, 2
+            while shown in taken:
+                shown, k = f"{base} {k}", k + 1
+            have.append({"name": shown, "fumen": fumen, "min": True})
+            kept += 1
+        if name in routes and not routes[name]:
+            del routes[name]
+    # for each shape of the opener, the first route that goes on from it
+    import time
+    for name, have in routes.items():
+        points = [op.route_points(r["fumen"]) for r in have]
+        for b in op.opener_starts(name):
+            for r, pts in zip(have, points):
+                if any(leads_on([b], t, time.monotonic() + 0.02) for t in pts):
+                    r["start"] = True
+                    break
     OUT.write_text(json.dumps({
         "_about": "Each opener's 派生 from テトリステンプレ整理Wiki (tools/opener_import/build_routes.py).",
         "source": "https://w.atwiki.jp/sasasa123/pages/1851.html",
