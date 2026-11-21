@@ -9,6 +9,12 @@ Kept: links under a 派生 heading whose テト譜 has a board that goes on from
 opener: holding one of its shapes as it stands, or as it is after its T-spin
 cleared its full rows.
 
+Links are grouped as the wiki does (wiki_routes_ctx.json: for pages with such
+groups, each link's group title and whether it's inside a fold): a "3巡目テト譜"
+starts a route named by the line above it (迷走砲's 高火力パフェ型), the links in
+its folds are that route's; a link that's only a list of patterns belongs to
+the route before it; overview links ("3巡目一覧") are left out.
+
     python tools/opener_import/build_routes.py
 """
 import json
@@ -23,7 +29,33 @@ from opener_detect import screen_name  # noqa: E402
 import opener_practice as op  # noqa: E402
 
 RAW = Path(__file__).with_name("wiki_routes_raw.json")
+CTX = Path(__file__).with_name("wiki_routes_ctx.json")
 OUT = ROOT / "assets" / "opener_routes.json"
+PATTERNS = re.compile(r"パターン$|^\d+-\d+$|のリスト$")
+
+
+def short(title):
+    """A group's title, or just its type when it ends in （…型）."""
+    m = re.search(r"[（(]([^（）()]*型)[）)]\s*$", title)
+    return m.group(1) if m else title.strip()
+
+
+def grouped(rows, ctx):
+    """[(name, [fumen])] of one page's 派生 links, the wiki's way."""
+    rows = [r for r in rows if "派生" in r[0] and r[1] and r[1] != "テト譜"]
+    if ctx is None or len(ctx) != len(rows):
+        ctx = [["", 0]] * len(rows)
+    out = []
+    for (head, label, fumen), (title, folded) in zip(rows, ctx):
+        if re.match(r"^\d巡目一覧", label):
+            continue
+        if title:                               # "3巡目テト譜"
+            out.append((short(title), [fumen]))
+        elif out and (folded or PATTERNS.search(label)):
+            out[-1][1].append(fumen)
+        else:
+            out.append((label, [fumen]))
+    return out
 
 
 def after_clear(cells):
@@ -53,6 +85,7 @@ def goes_on(begin, cells):
 
 def main():
     raw = json.loads(RAW.read_text(encoding="utf-8"))
+    ctxs = json.loads(CTX.read_text(encoding="utf-8"))
     openers = json.loads(op.OPENERS_PATH.read_text(encoding="utf-8"))["openers"]
     routes, links, kept = {}, 0, 0
     for o in openers:
@@ -60,20 +93,24 @@ def main():
         begin = starts(o)
         begin |= {op.mirror_cells(c) for c in begin}
         name = screen_name(o.get("display") or o["name"])
-        for head, label, fumen in raw.get(page, []):
-            if "派生" not in head or not label or label == "テト譜":
-                continue
+        for label, fumens in grouped(raw.get(page, []), ctxs.get(page)):
             links += 1
-            try:
-                points = op.route_points(fumen)
-            except Exception:
-                continue
-            if not any(goes_on(begin, t.cells) for t in points):
+            good = []
+            for f in fumens:
+                try:
+                    op.route_points(f)
+                    good.append(f)
+                except Exception:
+                    pass
+            if not good or not any(goes_on(begin, t.cells) for t in op.route_points(good)):
                 continue
             have = routes.setdefault(name, [])
-            if all(r["name"] != label for r in have):
-                have.append({"name": label, "fumen": fumen})
-                kept += 1
+            taken = {r["name"] for r in have}
+            shown, k = label, 2
+            while shown in taken:
+                shown, k = f"{label} {k}", k + 1
+            have.append({"name": shown, "fumen": good if len(good) > 1 else good[0]})
+            kept += 1
     OUT.write_text(json.dumps({
         "_about": "Each opener's 派生 from テトリステンプレ整理Wiki (tools/opener_import/build_routes.py).",
         "source": "https://w.atwiki.jp/sasasa123/pages/1851.html",

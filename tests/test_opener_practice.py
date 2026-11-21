@@ -294,3 +294,41 @@ def test_a_painting_that_cant_be_a_form():
     assert op.paint_problem(["XXXXXXXX..", "XXXXXXXX..", "XXXXXXXX..", "XXXXXXXX..", "XXXXXXXX.."]) == "big"
     assert op.paint_problem(["IIOO......"]) == "shape"          # colors that make no piece
     assert op.paint_problem(["XXXXXXXXXX", "XX........"]) == "shape"   # a full row with no T-spin
+
+
+def test_on_a_route_with_no_way_on_isnt_called_off_it():
+    goal = frozenset((x, y) for x in range(10) for y in range(2))
+    p = op.Practice()
+    p.routes, p.opener, p.pick = {"X": [op.Route("r", [op.Target(goal)])]}, "X", ("X", "r")
+    on_it = goal - {(0, 0), (1, 0), (0, 1), (1, 1)}
+    assert p._route_plan(on_it, tuple("ZZ"), 0, None)[0] == "stuck"
+    assert p._route_plan(frozenset({(0, 5)}), tuple("ZZ"), 0, None)[0] == "end"
+
+
+def test_a_perfect_clear_page_clears_rows_on_the_way():
+    # four rows, the two right columns open: the first O clears two rows
+    page = frozenset((x, y) for x in range(10) for y in range(4))
+    board = frozenset(c for c in page if c[0] < 8)
+    steps, whole = op.plan_towards(page, tuple("OO"), board, 0, None)
+    assert whole and [st["piece"] for st in steps] == ["O", "O"]
+    assert sorted(steps[0]["cells"]) == [(8, 0), (8, 1), (9, 0), (9, 1)]
+    assert sorted(steps[1]["cells"]) == [(8, 0), (8, 1), (9, 0), (9, 1)]    # (what was above came down)
+    # after the rows went, the board sits on the page's upper rows
+    after = frozenset((x, y) for x in range(8) for y in range(2))
+    assert (2, 3) in op.page_rows(page, after)
+    assert op.plan_towards(page, ("O",), after, 0, None, None, (2, 3))[1] is True
+
+
+def test_the_wiki_main_shape_and_its_mirror_come_first():
+    shapes = op.opener_shapes("迷走砲")
+    ts = op.form_targets("迷走砲", {"name": "Wiki", "source": op.WIKI_FORM, "on": True}, True)
+    first = op.setup_targets(shapes[0])[0]
+    assert ts[0].cells == first and ts[1].cells == op.mirror_cells(first)
+
+
+def test_meisou_routes_are_the_wiki_groups():
+    names = [r["name"] for r in op.wiki_routes("迷走砲")]
+    assert "高火力パフェ型" in names and "千鳥格子型" in names
+    assert not any(n.startswith("3巡目が組める確率") or n == "3巡目テト譜" for n in names)
+    route = next(r for r in op.wiki_routes("迷走砲") if r["name"] == "高火力パフェ型")
+    assert isinstance(route["fumen"], list) and len(op.route_points(route["fumen"])) > 5

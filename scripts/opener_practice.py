@@ -16,6 +16,7 @@ A plan is the pieces in order, each with its cells and whether HOLD is
 pressed first. Rows go up (row 0 = the bottom), like opener_detect's.
 """
 import json
+import itertools
 from functools import lru_cache
 from pathlib import Path
 
@@ -314,10 +315,13 @@ class Practice:
 
     Once the opener is built, the wiki's 派生 of it (routes) go on from there:
     the same statuses with "route" set, plus "end" (the board left every
-    route) and "lost" (the piece order was lost, nothing is guided)."""
+    route), "stuck" (still on a route, but no way on was found: a Perfect
+    Clear that clears rows on the way isn't searched) and "lost" (the piece
+    order was lost, nothing is guided)."""
 
     def __init__(self):
         self._key = None
+        self.target_key = None
 
     def _start(self, fn):
         box = {"ready": False}
@@ -348,6 +352,7 @@ class Practice:
             self._key, self._job, self._asked = key, None, None
             self.cands, self.pick, self.target, self.plan, self.status = cands, None, None, None, "wait"
             self.routes, self.on_route, self.opener = routes or {}, False, None
+            self.target_key = None
         if self.on_route and not from_start:
             self._job, self._asked = None, None
             self.status, self.plan = "lost", None   # (no index into the order any more: no guess)
@@ -404,19 +409,25 @@ class Practice:
         if not board:
             return "done", self.pick, None, None    # a Perfect Clear
         i = n + (1 if hold else 0)
-        reached = False
+        reached = inside = False
         import time
         until = time.monotonic() + ROUTE_SEARCH_S
-        for r in order:
-            for t in r.points:
-                reached = reached or t.cells == board
-                if not board < t.cells:
-                    continue
+        now_key = self.target_key
+        pages = [(r, t) for r in order for t in r.points]
+        pages.sort(key=lambda rt: rt[1].key() != now_key)      # the page being followed first
+        for r, t in pages:
+            reached = reached or t.cells == board
+            for rows in page_rows(t.cells, board):
                 if time.monotonic() > until:
                     return "wait", self.pick, None, None
-                got = plan_towards(t.cells, queue, board, i, hold, t.colors)
+                got = plan_towards(t.cells, queue, board, i, hold, t.colors, rows, until)
                 if got is not None and got[0]:
-                    return ("ok" if got[1] else "maybe"), (self.opener, r.name), t, list(got[0])
+                    self.target_key = t.key()
+                    view = frozenset((x, rows.index(y)) for x, y in t.cells if y in rows)
+                    return ("ok" if got[1] else "maybe"), (self.opener, r.name), Target(view), list(got[0])
+                inside = inside or _fits_page(t, board, rows, until)
+        if inside:
+            return "stuck", self.pick, None, None
         if reached:
             return "done", self.pick, None, None
         return "end", self.pick, None, None
@@ -609,12 +620,17 @@ def form_targets(opener, form, mirror):
         except Exception:
             return []
         return base + ([t.mirrored() for t in base] if mirror else [])
-    a, b = _sides(opener_shapes(opener))
-    out = [Target(t) for c in a for t in setup_targets(c)]
-    if mirror:
-        out += [Target(t) for c in b for t in setup_targets(c)]
-        have = {t.cells for t in out}
-        out += [Target(mirror_cells(t.cells)) for t in list(out) if mirror_cells(t.cells) not in have]
+    # in the wiki's order (its main shape first), each with its mirror right
+    # after: a variant used to come before the main shape's mirror, and was
+    # guided on bags the main shape builds mirrored
+    shapes = opener_shapes(opener)
+    out, have = [], set()
+    for c in (shapes if mirror else _sides(shapes)[0]):
+        for t in setup_targets(c):
+            for cells in ((t, mirror_cells(t)) if mirror else (t,)):
+                if cells not in have:
+                    have.add(cells)
+                    out.append(Target(cells))
     return out
 
 
@@ -709,7 +725,7 @@ class SettledBoard:
 ROUTES_PATH = Path(__file__).resolve().parent.parent / "assets" / "opener_routes.json"
 _WIKI_ROUTES = None
 MAX_PLAN_NODES = 800
-ROUTE_SEARCH_S = 1.2    # one look over all the routes (out of time: says "wait", not "off the route")
+ROUTE_SEARCH_S = 2.0    # one look over all the routes (out of time: says "wait", not "off the route")
 
 
 class Route:
@@ -721,9 +737,11 @@ class Route:
 
 
 def route_points(fumen):
-    """The boards of a route's テト譜, in order, each once (Target, colored)."""
+    """The boards of a route's テト譜 (one, or a list: a route the wiki gives
+    in several), in order, each once (Target, colored)."""
     out, seen = [], set()
-    for page in decode(fumen):
+    pages = [p for f in ([fumen] if isinstance(fumen, str) else fumen) for p in decode(f)]
+    for page in pages:
         cells, colors = set(), {}
         for y, row in enumerate(page.board_with_piece()):
             for x, v in enumerate(row):
@@ -788,35 +806,71 @@ def deck_routes(deck):
     return out
 
 
-def plan_towards(target, queue, board, i, hold, colors=None):
-    """From `board` towards `target` (a board with more on it) with the pieces
-    known: (steps, whole). whole: the steps reach it; else they're as far as
-    the pieces seen go, and it can still be finished. None if it can't."""
+def is_perfect_clear(cells):
+    """Every row the board has is full: it all clears."""
+    rows = {y for _, y in cells}
+    return bool(rows) and all(all((x, y) in cells for x in range(COLS)) for y in rows)
+
+
+def page_rows(target, board):
+    """How `board` can sit on the page `target`: tuples of the page's rows
+    still on the board, bottom up (row y of the board is the page's rows[y]).
+    A page that's a Perfect Clear loses its rows as they fill, so any of them
+    may be gone already; on another page none is."""
+    rows = sorted({y for _, y in target})
+    height = max((y + 1 for _, y in board), default=0)
+    if not is_perfect_clear(target):
+        return [tuple(rows)] if rows == list(range(len(rows))) and frozenset(board) < frozenset(target) else []
+    out = []
+    for keep in range(len(rows), max(height, 1) - 1, -1):
+        out += list(itertools.combinations(rows, keep))
+    return out
+
+
+class _OutOfTime(Exception):
+    pass
+
+
+def plan_towards(target, queue, board, i, hold, colors=None, rows=None, until=None):
+    """From `board` towards the page `target` with the pieces known: (steps,
+    whole). whole: the steps reach it; else they're as far as the pieces seen
+    go, and it can still be finished. None if it can't. The steps' cells are
+    where the piece goes on the board at that moment.
+
+    rows: the page's rows still on the board (page_rows; None: all of them).
+    On a Perfect Clear page rows clear as they fill, and what's above comes
+    down; on any other a row may only fill with the last piece (its T-spin).
+    until: time.monotonic() to give up at (then None)."""
+    import time
+    until = time.monotonic() + ROUTE_SEARCH_S if until is None else until
     target, board = frozenset(target), frozenset(map(tuple, board))
-    if not board < target or (len(target) - len(board)) % 4:
+    colors = colors or {}
+    every = sorted({y for _, y in target})
+    live = tuple(every) if rows is None else tuple(rows)
+    if any(y >= len(live) for _, y in board):
         return None
+    done = frozenset((x, live[y]) for x, y in board) | frozenset(c for c in target if c[1] not in live)
+    if not done < target or (len(target) - len(done)) % 4:
+        return None
+    clears = is_perfect_clear(target)
     nodes = [0]
 
     @lru_cache(maxsize=None)
-    def tiles(room):
+    def tiles(room, live):
+        """The cells left, as they lie on the board now, make whole pieces."""
         if not room:
             return True
-        x0, y0 = min(room, key=lambda c: (c[1], c[0]))
-        for piece in PIECES:
-            for cells in fits(piece, room):
-                if (x0, y0) in cells and all((colors or {}).get(c, piece) == piece for c in cells) \
-                        and tiles(room - cells):
-                    return True
-        return False
+        at = {(x, live.index(y)): colors.get((x, y)) for x, y in room}
+        return _tile(frozenset(at), at, {}, until)
 
     @lru_cache(maxsize=None)
-    def go(now, i, hold):
-        room = target - now
+    def go(done, live, i, hold):
+        room = target - done
         if not room:
             return (), True
         nodes[0] += 1
-        if nodes[0] > MAX_PLAN_NODES:
-            return None
+        if nodes[0] > MAX_PLAN_NODES or time.monotonic() > until:
+            raise _OutOfTime
         options = []
         if i < len(queue):
             options.append((queue[i], i + 1, hold, False))
@@ -826,18 +880,23 @@ def plan_towards(target, queue, board, i, hold, colors=None):
                 options.append((hold, i + 1, queue[i], True))
         if not options:
             return (), False        # past what's been seen
+        now = frozenset((x, live.index(y)) for x, y in done if y in live)
         best = None
         for piece, ni, nh, held in options:
-            spots = landing_spots(piece, now)
-            for cells in fits(piece, room):
-                if cells not in spots or not all((colors or {}).get(c, piece) == piece for c in cells):
+            for cells in landing_spots(piece, now):
+                if any(y >= len(live) for _, y in cells):
                     continue
-                after = now | cells
-                if after != target and any(all((x, y) in after for x in range(COLS)) for y in {y for _, y in cells}):
-                    continue        # a row filling early clears and breaks the board
-                if not tiles(target - after):
+                on_page = frozenset((x, live[y]) for x, y in cells)
+                if not on_page <= room or not all(colors.get(c, piece) == piece for c in on_page):
                     continue
-                rest = go(after, ni, nh)
+                after = done | on_page
+                full = {y for _, y in on_page if all((x, y) in after for x in range(COLS))}
+                if full and after != target and not clears:
+                    continue        # a row filling early clears and breaks the shape
+                left = tuple(y for y in live if y not in full) if clears else live
+                if not tiles(target - after, left):
+                    continue
+                rest = go(after, left, ni, nh)
                 if rest is None:
                     continue
                 got = (({"piece": piece, "cells": sorted(cells), "hold": held},) + rest[0], rest[1])
@@ -846,7 +905,50 @@ def plan_towards(target, queue, board, i, hold, colors=None):
                 best = best or got
         return best
 
-    return go(board, i, hold)
+    try:
+        return go(done, live, i, hold)
+    except _OutOfTime:
+        return None
+
+
+def _fits_page(t, board, rows, until):
+    """The board lies on the page this way and what's left makes whole pieces."""
+    done = frozenset((x, rows[y]) for x, y in board) | frozenset(c for c in t.cells if c[1] not in rows)
+    room = t.cells - done
+    if not done < t.cells or len(room) % 4:
+        return False
+    at = {(x, rows.index(y)): (t.colors or {}).get((x, y)) for x, y in room}
+    try:
+        return _tile(frozenset(at), at, {}, until)
+    except _OutOfTime:
+        return False
+
+
+def _tile(room, colors, memo, until):
+    """`room` cuts into tetrominoes, each cell's color (if any) kept."""
+    import time
+    if not room:
+        return True
+    if room in memo:
+        return memo[room]
+    if time.monotonic() > until:
+        raise _OutOfTime
+    low = min(room, key=lambda c: (c[1], c[0]))
+    found = False
+    for piece in PIECES:
+        for shape in set(SHAPES[piece]):
+            for ax, ay in shape:        # each of the shape's cells on the lowest one
+                part = frozenset((low[0] + dx - ax, low[1] + dy - ay) for dx, dy in shape)
+                if part <= room and all(colors.get(c) in (None, piece) for c in part) \
+                        and _tile(room - part, colors, memo, until):
+                    found = True
+                    break
+            if found:
+                break
+        if found:
+            break
+    memo[room] = found
+    return found
 
 
 # --- setup rates: every first bag (5040) and every 8th piece (7) ---
