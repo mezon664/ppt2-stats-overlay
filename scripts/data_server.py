@@ -284,7 +284,8 @@ def practice_state(display, state):
     # (the opener detector stops reading the board once the opening is over)
     board = _PRACTICE_BOARD.update(LAST_FRAME["frame"], det.box)
     hold = pp.hold_tracker.piece(LAST_FRAME["frame"])
-    out = _PRACTICE.update(cands, id(q), list(q.seen), q.from_start, board, hold, q.pieces_placed, _DECK["routes"])
+    out = _PRACTICE.update(cands, id(q), list(q.seen), q.from_start, board, hold, q.pieces_placed, _DECK["routes"],
+                           _PRACTICE_BOARD.last)
     if out is not None:
         out["side"] = side
     return out

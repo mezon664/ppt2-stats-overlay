@@ -440,3 +440,80 @@ def test_bt_cannon_has_its_compromise_form():
     route = next(r for r in op.wiki_routes("BT砲") if r["name"] == "2巡目妥協")
     assert all(max(y for _, y in t.cells) < 12 for t in op.route_points(route["fumen"]))
     assert len(op.route_points(route["fumen"])) > 3
+
+
+def _wait_for(p, *args):
+    import time
+    out = p.update(*args)
+    for _ in range(600):
+        if p._job is None and p._asked is not None:
+            return p.update(*args)
+        time.sleep(0.005)
+        out = p.update(*args)
+    return out
+
+
+def test_the_next_piece_showing_isnt_the_last_one_going_in():
+    import itertools
+    cands = op.candidates({"mode": "single", "single": "開幕TSD", "mirror": False, "openers": []})
+    target, order = next((t, q) for t in cands[0][2] for q in itertools.islice(itertools.permutations(op.PIECES), 400)
+                         if op.solve(t.cells, q) is not None)
+    cands = [(cands[0][0], cands[0][1], [target])]
+    plan = op.solve(target.cells, order)
+    before = frozenset(c for st in plan[:-1] for c in map(tuple, st["cells"]))
+    p = op.Practice()
+    assert _wait_for(p, cands, 1, list(order), True, sorted(before), None, len(plan) - 1)["status"] == "ok"
+    above = before | {(3, 19), (4, 19), (5, 19), (6, 19)}
+    assert p.update(cands, 1, list(order), True, sorted(above), None, len(plan) - 1)["status"] == "ok"
+    elsewhere = before | {(0, 10), (1, 10), (2, 10), (3, 10)}
+    assert p.update(cands, 1, list(order), True, sorted(elsewhere), None, len(plan))["status"] != "done"
+
+
+def test_the_last_piece_clearing_rows_is_done():
+    shape = frozenset((x, 0) for x in range(10)) | {(0, 1), (1, 1)}
+    p = op.Practice()
+    p.target = op.Target(shape)
+    assert p._last_cleared(frozenset({(0, 0), (1, 0)}), 3)
+    assert not p._last_cleared(frozenset({(0, 0), (1, 0)}), 2)
+    assert not p._last_cleared(shape, 3)
+
+
+def test_a_shape_on_the_way_to_a_bigger_one_isnt_the_end():
+    small = frozenset({(0, 0), (1, 0), (2, 0), (3, 0)})
+    big = small | {(4, 0), (5, 0), (4, 1), (5, 1)}
+    p = op.Practice()
+    p.cands, p.target = [("X", "Wiki", [op.Target(small), op.Target(big)])], None
+    got = p._plan(small, tuple("IOTSZJL"), 1, None)
+    assert got[0] == "ok" and got[2].cells == big and got[3][0]["piece"] == "O"
+    assert p._plan(small, tuple("IOTSZJL"), 1, "O")[0] == "done"       # (its piece in HOLD: that's the shape)
+
+
+def _guide():
+    p = op.Practice()
+    p.cands, p.status, p.on_route = [], "ok", False
+    p.plan = [{"piece": "O", "cells": [(0, 0), (1, 0), (0, 1), (1, 1)], "hold": False},
+              {"piece": "I", "cells": [(2, 0), (3, 0), (4, 0), (5, 0)], "hold": False}]
+    return p
+
+
+def test_the_guide_moves_on_the_moment_the_piece_is_there():
+    p = _guide()
+    p._advance(frozenset({(0, 1), (1, 1), (0, 2), (1, 2)}))     # falling, one row up
+    assert p.plan[0]["piece"] == "O"
+    p._advance(frozenset({(0, 0), (1, 0), (0, 1), (1, 1)}))
+    assert p.plan[0]["piece"] == "I" and len(p.plan) == 1
+
+
+def test_a_piece_only_passing_through_brings_the_step_back():
+    p = _guide()
+    p._advance(frozenset({(0, 0), (1, 0), (0, 1), (1, 1)}))
+    assert p.plan[0]["piece"] == "I"
+    p._advance(frozenset({(3, 18), (4, 18), (3, 19), (4, 19)}))
+    assert p.plan[0]["piece"] == "O" and len(p.plan) == 2
+
+
+def test_a_step_that_clears_rows_waits_for_the_new_plan():
+    p = _guide()
+    full = frozenset((x, 0) for x in range(10)) | {(0, 1), (1, 1)}
+    p._advance(full)
+    assert p.plan[0]["piece"] == "O"

@@ -322,6 +322,7 @@ class Practice:
     def __init__(self):
         self._key = None
         self.target_key = None
+        self._retry, self._undo = False, None
 
     def _start(self, fn):
         box = {"ready": False}
@@ -337,13 +338,15 @@ class Practice:
         threading.Thread(target=run, daemon=True).start()
         return box
 
-    def update(self, cands, match_key, seen, from_start, board, hold, placed=None, routes=None):
+    def update(self, cands, match_key, seen, from_start, board, hold, placed=None, routes=None, live=None):
         """cands: candidates(deck) ([] = off). match_key: changes with each
         match. seen: the pieces in the order they came through NEXT;
         from_start: its first is the match's first piece. board: the settled
         cells (x, row up). hold: the piece in HOLD or None. placed: pieces
         placed so far (None: from the board). routes: {opener: [Route]}, the
-        派生 to go on with. Returns the state to show."""
+        派生 to go on with. live: the cells read just now (a falling piece
+        too): the guide moves on the moment the piece it shows is there,
+        without waiting for the board to settle. Returns the state to show."""
         if not cands:
             self._key = None
             return None
@@ -353,6 +356,7 @@ class Practice:
             self.cands, self.pick, self.target, self.plan, self.status = cands, None, None, None, "wait"
             self.routes, self.on_route, self.opener = routes or {}, False, None
             self.target_key = None
+            self._retry, self._undo = False, None
         if self.on_route and not from_start:
             self._job, self._asked = None, None
             self.status, self.plan = "lost", None   # (no index into the order any more: no guess)
@@ -365,7 +369,12 @@ class Practice:
         if self._job is not None and self._job["ready"]:
             out, self._job = self._job["out"], None
             if out is not None and out[0] == self._asked:
-                _, self.status, self.pick, self.target, self.plan = out
+                if out[1] == "wait" and self.on_route and self.plan:
+                    self._retry = True      # still looking: the guide shown stays
+                else:
+                    self._retry, self._undo = False, None
+                    _, self.status, self.pick, self.target, self.plan = out
+        self._advance(None if live is None else frozenset(map(tuple, live)))
         if self.on_route:
             return self._follow_route(board, queue, n, hold)
         if self.status == "done":
@@ -375,8 +384,7 @@ class Practice:
                 self._job, self._asked = None, None
                 return self._follow_route(board, queue, n, hold)
             return self._out()
-        if (self.plan and self.status in ("ok", "maybe") and len(self.plan) == 1 and board
-                and not board <= self.target.cells):
+        if self.plan and self.status in ("ok", "maybe") and len(self.plan) == 1 and self._last_cleared(board, n):
             self.status, self.plan = "done", []   # the last piece went in and rows cleared
             return self._out()
         if n * 4 != len(board):
@@ -387,13 +395,43 @@ class Practice:
             self._job = self._start(lambda: (ask,) + self._plan(board, queue, n, hold))
         return self._out()
 
+    def _advance(self, live):
+        """The piece shown is on the board: on to the next step of the plan
+        at once (the plan is worked out again when the board has settled). If
+        it was only passing through, the step comes back."""
+        if live is None:
+            return
+        if self._undo is not None:
+            cells, plan = self._undo
+            if not cells <= live:
+                self.plan, self._undo = plan, None
+                return
+        if not self.plan or self.status not in ("ok", "maybe") or len(self.plan) < 2:
+            return
+        cells = frozenset(map(tuple, self.plan[0]["cells"]))
+        if not cells <= live:
+            return
+        if any(all((x, y) in live for x in range(COLS)) for y in {y for _, y in cells}):
+            return      # (rows clear: what's next moves down, so it waits for the new plan)
+        self._undo = (cells, self.plan)
+        self.plan = self.plan[1:]
+
+    def _last_cleared(self, board, n):
+        """The board is the shape with its full rows gone, and the count of
+        pieces says rows did go (the next piece showing above the board, or a
+        last piece put elsewhere, isn't that)."""
+        cells = self.target.cells
+        left = after_clear(cells)
+        gone = n * 4 - len(board)
+        return left != cells and board == left and gone > 0 and gone % 10 == 0
+
     def _follow_route(self, board, queue, n, hold):
         """On a route: asks for a plan when the board settles on something new."""
         gone = n * 4 - len(board)
         if gone < 0 or gone % 10:
             return self._out()      # mid-change (a falling piece or a clear): wait
         ask = (board, queue, n, hold)
-        if self._job is None and self.status == "wait" and ask == self._asked:
+        if self._job is None and (self.status == "wait" or self._retry) and ask == self._asked:
             self._asked = None      # the look over the pages ran out of time: on from where it got to
         if self._job is None and ask != self._asked:
             self._asked = ask
@@ -456,6 +494,12 @@ class Practice:
         order = self._order()
         for pick, t in order:
             if board == t.cells:
+                if hold is None:    # a shape on the way to a bigger one of the same opener isn't the end
+                    for p2, t2 in order:
+                        if p2[0] == pick[0] and board < t2.cells:
+                            more = solve_from(t2.cells, queue, board, i, hold, t2.colors)
+                            if more is not None:
+                                return "ok", p2, t2, more
                 return "done", pick, t, []
             plan = solve_from(t.cells, queue, board, i, hold, t.colors)
             if plan is not None:
@@ -520,8 +564,9 @@ def setup_targets(cells):
     rows = {y for _, y in cells if all((x, y) in cells for x in range(COLS))}
     if not rows:
         return [cells]
-    return [cells - c for p, c in {pc for t in tilings(cells) for pc in t}
-            if p == "T" and is_t_spin(c, cells - c, rows)]
+    # (sorted: a set's order changes from run to run, and the first is tried first)
+    return sorted((cells - c for p, c in {pc for t in tilings(cells) for pc in t}
+                   if p == "T" and is_t_spin(c, cells - c, rows)), key=sorted)
 
 
 class Target:
@@ -727,10 +772,12 @@ class SettledBoard:
     def __init__(self, frames=3):
         from collections import deque
         self._recent = deque(maxlen=frames)
+        self.last = frozenset()     # this reading as it is, a falling piece included
 
     def update(self, frame, box):
         from opener_detect import read_occupancy
         now = frozenset((x, y) for y, row in enumerate(read_occupancy(frame, box)) for x, v in enumerate(row) if v)
+        self.last = now
         self._recent.append(now)
         return sorted(frozenset.intersection(*self._recent))
 
