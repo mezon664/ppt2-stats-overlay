@@ -613,3 +613,65 @@ def test_a_broken_library_keeps_the_deck_in_use(tmp_path, monkeypatch):
     (tmp_path / "practice_decks.json").write_text("{broken", encoding="utf-8")
     deck = op.default_deck()
     assert op.load_library(deck)["decks"] == {"デッキ1": deck}
+
+
+def test_each_opener_can_prefer_its_mirrored_side():
+    plain = op.new_entry("迷走砲")
+    flipped = dict(op.new_entry("迷走砲"), side="mirror")
+    (_, _, a), = op.candidates({"mirror": True, "openers": [plain]})
+    (_, _, b), = op.candidates({"mirror": True, "openers": [flipped]})
+    assert b[0].cells == op.mirror_cells(a[0].cells) and b[1].cells == a[0].cells
+    assert {t.cells for t in a} == {t.cells for t in b}     # the same boards, the other first
+    (_, _, c), = op.candidates({"mirror": False, "openers": [flipped]})
+    (_, _, d), = op.candidates({"mirror": False, "openers": [plain]})
+    assert {t.cells for t in c} == {op.mirror_cells(t.cells) for t in d}    # that side alone
+
+
+def test_a_preferred_side_goes_for_the_routes_too(monkeypatch):
+    monkeypatch.setattr(op, "_WIKI_ROUTES", {})
+    monkeypatch.setattr(op, "_MIN_COVERS", {})
+    e = {"name": "X", "side": "mirror", "own_routes": [{"name": "a", "paint": ["OO........", "OO........"]}]}
+    base = op.route_targets({"paint": ["OO........", "OO........"]})[0]
+    both = op.deck_routes({"mode": "deck", "mirror": True, "openers": [e]})["X"][0].points
+    assert [t.cells for t in both] == [op.mirror_cells(base.cells), base.cells]
+    alone = op.deck_routes({"mode": "deck", "mirror": False, "openers": [e]})["X"][0].points
+    assert [t.cells for t in alone] == [op.mirror_cells(base.cells)]
+
+
+def _settled(p, cands, key, queue, board, placed):
+    import time
+    for _ in range(3000):
+        out = p.update(cands, key, list(queue), True, board, None, placed)
+        if p._job is None and p._asked is not None and out["status"] != "wait":
+            return out
+        time.sleep(0.01)
+    raise AssertionError("no answer")
+
+
+def test_pieces_that_cant_build_it_say_so_whatever_is_put_down():
+    import itertools
+    cands = deck("開幕TSD")
+    ts = cands[0][2]
+    def builds(b):
+        return any(op.solve_from(t.cells, q, frozenset(), 0, None) is not None
+                   for t in ts for q in [b] + [b + (e,) for e in op.PIECES])
+    bad = next(b for b in itertools.permutations("IOTSZJL") if not builds(b))
+    good = next(b for b in itertools.permutations("IOTSZJL") if builds(b))
+    aside = next(c for c in ([(x, y) for y in range(4)] for x in range(10))
+                 if not any(frozenset(c) <= t.cells for t in ts))
+    p = op.Practice()
+    assert _settled(p, cands, 1, bad, [], 0)["status"] == "no"
+    assert p.update(cands, 1, list(bad), True, aside, None, 1)["status"] == "no"
+    p = op.Practice()
+    assert _settled(p, cands, 2, good, aside, 1)["status"] == "off"     # these could: it's the placement
+    p = op.Practice()
+    assert _settled(p, cands, 3, bad, aside, 1)["status"] == "no"       # (first looked at after a piece)
+    assert p.update(cands, 4, list(good), True, [], None, 0)["status"] == "wait"   # the next game starts over
+
+
+def test_the_shape_name_isnt_shown_while_practising():
+    log = [{"ren_source": "opener", "opener": "STKI"}, {"ren_source": "attack"}]
+    side = {"opener": "STKI", "opener_en": "STKI", "opener_age_s": 1.0, "event_log": log}
+    op.hide_detected_opener(side)
+    assert side["opener"] is None and side["opener_en"] is None and side["opener_age_s"] is None
+    assert side["event_log"] == [{"ren_source": "attack"}] and len(log) == 2     # (the match's log stays)

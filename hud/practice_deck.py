@@ -31,6 +31,7 @@ TEXT = {
            "up": "上へ", "down": "下へ", "remove": "外す", "add": "追加", "pick": "テンプレを選ぶ（名前で絞り込み）",
            "mirror": "左右反転した形も使う", "empty": "（テンプレを追加してください）",
            "form_name": "派生の名前（理想形など）", "form_fumen": "テト譜（v115@…）", "delete": "削除", "restore": "削除した派生を戻す",
+           "side": "優先する向き", "side_wiki": "元の向き", "side_mirror": "反転",
            "decks": "使うデッキ", "deck_new": "新規", "deck_copy": "複製", "deck_rename": "名前変更",
            "deck_restore": "削除したデッキを戻す", "deck_name": "デッキの名前", "deck_n": "デッキ{}",
            "paint_how": "盤面で作る：色を選んで左ドラッグで塗り、右ドラッグで消します。灰色はどのミノでも入る場所です。",
@@ -62,6 +63,7 @@ TEXT = {
            "up": "Up", "down": "Down", "remove": "Remove", "add": "Add", "pick": "Pick an opener (type to filter)",
            "mirror": "Use the mirrored shapes too", "empty": "(Add openers)",
            "form_name": "Route name", "form_fumen": "Fumen (v115@…)", "delete": "Delete", "restore": "Restore a deleted route",
+           "side": "Preferred side", "side_wiki": "Original", "side_mirror": "Mirrored",
            "decks": "Deck in use", "deck_new": "New", "deck_copy": "Copy", "deck_rename": "Rename",
            "deck_restore": "Restore a deleted deck", "deck_name": "Deck name", "deck_n": "Deck {}",
            "paint_how": "Paint it: pick a color, drag with the left button to paint, the right to erase. Gray: any piece.",
@@ -289,9 +291,12 @@ class DeckEditor:
         decks_row = QtWidgets.QHBoxLayout()
         decks_row.addWidget(self.decks_label)
         decks_row.addWidget(self.deck_pick)
-        for b in (self.d_new, self.d_copy, self.d_rename, self.d_delete, self.d_restore):
-            decks_row.addWidget(b)
         decks_row.addStretch(1)
+        # (a row of their own: side by side they push the page past the window)
+        decks_do = QtWidgets.QHBoxLayout()
+        for b in (self.d_new, self.d_copy, self.d_rename, self.d_delete, self.d_restore):
+            decks_do.addWidget(b)
+        decks_do.addStretch(1)
         self.mode_label = QtWidgets.QLabel()
         self.mode = QtWidgets.QComboBox()
         self.mode.addItem("", "deck")
@@ -337,11 +342,28 @@ class DeckEditor:
         self.mirror.setChecked(bool(self.deck.get("mirror", True)))
         self.mirror.toggled.connect(self._mirror_toggled)
         self.deck_card.add(decks_row)
+        self.deck_card.add(decks_do)
         self.deck_card.add(mode_row)
         self.deck_card.add(self.single_now)
         self.deck_card.add(self.deck_list)
         self.deck_card.add(self.deck_buttons)
         self.deck_card.add(add)
+        self.side_label = QtWidgets.QLabel()
+        self.side_group = QtWidgets.QButtonGroup(self.deck_card)
+        self.side_buttons = {}
+        side_row = QtWidgets.QHBoxLayout()
+        side_row.addWidget(self.side_label)
+        for key in ("wiki", "mirror"):
+            b = QtWidgets.QToolButton()
+            b.setCheckable(True)
+            b.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            b.setIconSize(QtCore.QSize(100, 60))
+            b.clicked.connect(lambda _=False, k=key: self._set_side(k))
+            self.side_group.addButton(b)
+            self.side_buttons[key] = b
+            side_row.addWidget(b)
+        side_row.addStretch(1)
+        self.deck_card.add(side_row)
         self.deck_card.add(self.mirror)
 
         self.route_card = ui.Card()
@@ -452,6 +474,9 @@ class DeckEditor:
         self.pick.lineEdit().setPlaceholderText(t["pick"])
         self.mirror.setText(t["mirror"])
         self.decks_label.setText(t["decks"])
+        self.side_label.setText(t["side"])
+        self.side_buttons["wiki"].setText(t["side_wiki"])
+        self.side_buttons["mirror"].setText(t["side_mirror"])
         self.form_name.setPlaceholderText(t["form_name"])
         self.form_fumen.setPlaceholderText(t["form_fumen"])
         self.paint_how.setText(t["paint_how"])
@@ -623,6 +648,25 @@ class DeckEditor:
             self._save()
             self._fill_deck()
 
+    def _fill_side(self, e):
+        """The opener's two sides as pictures, the preferred one pressed."""
+        shapes = op.opener_shapes(e["name"]) if e else []
+        main = op.Target(shapes[0]) if shapes else None
+        for key, target in (("wiki", main), ("mirror", main.mirrored() if main else None)):
+            b = self.side_buttons[key]
+            b.setIcon(QtGui.QIcon(draw_targets(target, 100, 60)))
+            b.setEnabled(main is not None)
+            b.setChecked(bool(e) and (e.get("side") == "mirror") == (key == "mirror"))
+
+    def _set_side(self, key):
+        e = self._current()
+        if e and (e.get("side") == "mirror") != (key == "mirror"):
+            if key == "mirror":
+                e["side"] = "mirror"
+            else:
+                e.pop("side", None)
+            self._save()
+
     def _mirror_toggled(self, on):
         self.deck["mirror"] = bool(on)
         self._save()
@@ -633,6 +677,7 @@ class DeckEditor:
         e = self._current()
         t = TEXT[self.lang]
         self.route_card.setTitle(t["routes"].format(e["name"]) if e else t["routes_none"])
+        self._fill_side(e)
         routes = op.entry_routes(e) if e else []
         self.route_list.blockSignals(True)
         self.route_list.clear()

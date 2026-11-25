@@ -357,6 +357,9 @@ class Practice:
             self.routes, self.on_route, self.opener = routes or {}, False, None
             self.target_key = None
             self._retry, self._undo = False, None
+            self._cannot = False
+        if self._cannot:
+            return self._out()      # these pieces can't build it, whatever is put down now
         if self.on_route and not from_start:
             self._job, self._asked = None, None
             self.status, self.plan = "lost", None   # (no index into the order any more: no guess)
@@ -374,6 +377,9 @@ class Practice:
                 else:
                     self._retry, self._undo = False, None
                     _, self.status, self.pick, self.target, self.plan = out
+                    if self.status == "never":
+                        self.status, self._cannot = "no", True
+                        return self._out()
         self._advance(None if live is None else frozenset(map(tuple, live)))
         if self.on_route:
             return self._follow_route(board, queue, n, hold)
@@ -516,9 +522,21 @@ class Practice:
                 best = ("maybe", pick, t, good[0])
         if best:
             return best
+        if not self._buildable(queue, order):
+            return "never", None, None, None
         if not any(board <= t.cells for _, t in order):
             return "off", self.pick, self.target, None
         return "no", self.pick, self.target, None
+
+    @staticmethod
+    def _buildable(queue, order):
+        """Could this order have built anything of the deck from an empty
+        board? If not it's the pieces, not where they were put."""
+        for _, t in order:
+            for q in [queue] + [queue + (e,) for e in PIECES]:
+                if solve_from(t.cells, q, frozenset(), 0, None, t.colors) is not None:
+                    return True
+        return False
 
     def _out(self):
         out = {"status": self.status}
@@ -661,21 +679,31 @@ def _sides(shapes):
     return a, b
 
 
-def form_targets(opener, form, mirror):
-    """The targets of one form (deck entry): [Target], mirrored ones after
-    (when `mirror`)."""
+def _sided(base, mirror, flip):
+    """Boards of one side with the other: the side you prefer first (flip: the
+    mirrored one); without `mirror`, that side alone."""
+    other = [t.mirrored() for t in base]
+    if flip:
+        return other + base if mirror else other
+    return base + other if mirror else base
+
+
+def form_targets(opener, form, mirror, flip=False):
+    """The targets of one form (deck entry): [Target], the side preferred
+    first, the other after it (when `mirror`; else the preferred side alone).
+    flip: the mirrored side is the one preferred (entry["side"] == "mirror")."""
     if form.get("paint"):
         try:
             base = paint_targets(form["paint"])
         except Exception:
             return []
-        return base + ([t.mirrored() for t in base] if mirror else [])
+        return _sided(base, mirror, flip)
     if form.get("fumen"):
         try:
             base = fumen_targets(form["fumen"])
         except Exception:
             return []
-        return base + ([t.mirrored() for t in base] if mirror else [])
+        return _sided(base, mirror, flip)
     # in the wiki's order (its main shape first), each with its mirror right
     # after: a variant used to come before the main shape's mirror, and was
     # guided on bags the main shape builds mirrored
@@ -683,7 +711,8 @@ def form_targets(opener, form, mirror):
     out, have = [], set()
     for c in (shapes if mirror else _sides(shapes)[0]):
         for t in setup_targets(c):
-            for cells in ((t, mirror_cells(t)) if mirror else (t,)):
+            near, far = (mirror_cells(t), t) if flip else (t, mirror_cells(t))
+            for cells in ((near, far) if mirror else (near,)):
                 if cells not in have:
                     have.add(cells)
                     out.append(Target(cells))
@@ -850,7 +879,7 @@ def candidates(deck):
     for entry in entries:
         for form in entry.get("forms", []):
             if form.get("on", True):
-                ts = form_targets(entry["name"], form, deck.get("mirror", True))
+                ts = form_targets(entry["name"], form, deck.get("mirror", True), entry.get("side") == "mirror")
                 if ts:
                     out.append((entry["name"], form.get("name", ""), ts))
     return out
@@ -1145,6 +1174,14 @@ def route_targets(route):
     return route_points(route["fumen"])
 
 
+def hide_detected_opener(side):
+    """While practising, the name read off the board's shape (another opener
+    can share it) isn't shown: the practice says what you're building. Only
+    this broadcast's copy; the match's own record keeps it."""
+    side.update(opener=None, opener_en=None, opener_age_s=None)
+    side["event_log"] = [e for e in side.get("event_log", []) if e.get("ren_source") != "opener"]
+
+
 def after_clear(cells):
     """A shape with its full rows gone (what's left after its T-spin)."""
     full = {y for _, y in cells if all((x, y) in cells for x in range(COLS))}
@@ -1205,8 +1242,7 @@ def deck_routes(deck):
                 points = route_targets(r)
             except Exception:
                 continue
-            if deck.get("mirror", True):
-                points = points + [t.mirrored() for t in points]
+            points = _sided(points, deck.get("mirror", True), entry.get("side") == "mirror")
             if points:
                 routes.append(Route(r["name"], points))
         if routes:

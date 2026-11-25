@@ -618,6 +618,9 @@ async def broadcaster():
             state["challenge_garbage"] = None
         try:
             state["practice"] = practice_state(display, state)
+            if state["practice"] and state["practice"].get("status") not in ("locked", "unread"):
+                import opener_practice
+                opener_practice.hide_detected_opener(state[state["practice"].get("side", "left")])
         except Exception:
             log.exception("the opener practice failed")
             state["practice"] = None
