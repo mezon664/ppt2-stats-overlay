@@ -2571,7 +2571,7 @@ class HudWindow(QtWidgets.QWidget):
                              and not (getattr(self, "_follows", False) and getattr(self, "_last_geom", None) is None))
         # a game on a capture board (read through a camera: no game window here
         # to sit on) — nothing shown, but the sounds and the voice still go
-        sounds_only = (self.display.get("capture_source") == "camera" and self.display["enabled"]
+        sounds_only = (self.display.get("capture_source") in ("camera", "window") and self.display["enabled"]
                        and not self.edit_mode)
         layer.update_state(st, self.display, self._scale or 1.0, active, sounds_only=sounds_only)
 

@@ -24,6 +24,7 @@ Windows says (an exclusive Direct3D fullscreen app is running:
 SHQueryUserNotificationState) and, should that not be reported, by the
 capture staying black (FULLSCREEN_BLACK_S).
 """
+import os
 import time
 
 import mss
@@ -509,11 +510,169 @@ class CameraCapture:
         return frame, True, None, work_profile if work_profile.ok else profile
 
 
+# ---------------------------------------------------------------------------
+# Any window picked by its title: a streaming app's projector showing the
+# capture board's source (a user's request: no virtual camera needed, any
+# streaming app, lighter). Read from the window's own picture (PrintWindow),
+# so other windows over it don't matter; where that comes out black (some
+# apps draw where PrintWindow can't see), from the screen, which needs it
+# uncovered. Like the camera, no game window here for the HUD to sit on.
+# ---------------------------------------------------------------------------
+WINDOW_NONE_REASON = "読み取るウィンドウが選ばれていません (設定のホームで選んでください)"
+WINDOW_NOT_FOUND_REASON = "読み取るウィンドウが見つかりません"         # (+ its title)
+WINDOW_MINIMIZED_REASON = "読み取るウィンドウが最小化されています (最小化しないでください)"
+WINDOW_BLACK_REASON = "ウィンドウの映像が真っ黒です (プロジェクターにキャプチャーボードの映像が映っていますか？)"
+
+
+def _own_pids():
+    """This app's processes (the HUD and the server): their windows aren't offered."""
+    pids = {os.getpid()}
+    try:
+        me = psutil.Process()
+        pids.update(p.pid for p in me.parents())
+        pids.update(p.pid for p in me.children(recursive=True))
+    except Exception:
+        pass
+    return pids
+
+
+def window_titles():
+    """The titles of the windows that could be read ([] if they can't be
+    listed): visible, with a title, not this app's own, each once."""
+    own, out = _own_pids(), []
+
+    def callback(hwnd, _):
+        try:
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            title = win32gui.GetWindowText(hwnd).strip()
+            if not title or title in out:
+                return True
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if pid in own:
+                return True
+            if not win32gui.IsIconic(hwnd):
+                _, _, w, h = win32gui.GetClientRect(hwnd)
+                if w < 160 or h < 90:      # (tool strips, tray helpers: not a picture)
+                    return True
+            out.append(title)
+        except Exception:
+            pass
+        return True     # (see find_game_hwnd: never stop early)
+    try:
+        win32gui.EnumWindows(callback, None)
+    except Exception:
+        return []
+    return sorted(out, key=str.casefold)
+
+
+def find_window(title):
+    """The window with this title (else the first one whose title has it in
+    it), or None."""
+    exact, partial = None, None
+
+    def callback(hwnd, _):
+        nonlocal exact, partial
+        try:
+            if exact is None and win32gui.IsWindowVisible(hwnd):
+                text = win32gui.GetWindowText(hwnd).strip()
+                if text == title:
+                    exact = hwnd
+                elif partial is None and title.casefold() in text.casefold():
+                    partial = hwnd
+        except Exception:
+            pass
+        return True
+    if title:
+        try:
+            win32gui.EnumWindows(callback, None)
+        except Exception:
+            return None
+    return exact or partial
+
+
+class WindowCapture:
+    """The game's picture from a window picked by title (a streaming app's
+    projector). Same results as GameWindowCapture.grab."""
+
+    def __init__(self, title="", grab_window=None, grab_screen=None):
+        self.title = (title or "").strip()
+        self.hwnd = None            # (no game window: nothing of the HUD's sits on this one)
+        self.window = None          # the window read
+        self.window_only = False
+        self.last_method = "window"
+        self.last_picture = None
+        self.last_client_size = None
+        self.last_client_origin = None
+        self.started_at = None      # (as the camera's: the first picture read)
+        self._picture = PictureFinder()
+        self._sizes = SizeSettler()
+        self._dark_since = None
+        self._sct = None
+        self._grab_window = grab_window or print_window
+        self._grab_screen = grab_screen or self._screen
+
+    def close(self):
+        if self._sct is not None:
+            self._sct.close()
+            self._sct = None
+
+    def _screen(self, hwnd, w, h):
+        if self._sct is None:
+            self._sct = mss.mss()
+        left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+        return np.array(self._sct.grab({"left": left, "top": top, "width": w, "height": h}))[:, :, :3]
+
+    def grab(self):
+        if not self.title:
+            return None, False, WINDOW_NONE_REASON, None
+        if self.window is None or not win32gui.IsWindow(self.window):
+            self.window = find_window(self.title)
+            if self.window is None:
+                return None, False, f"{WINDOW_NOT_FOUND_REASON} ({self.title})", None
+        if win32gui.IsIconic(self.window):
+            return None, False, WINDOW_MINIMIZED_REASON, None
+        _, _, w, h = win32gui.GetClientRect(self.window)
+        if w <= 0 or h <= 0:
+            return None, False, "ウインドウのサイズを取得できません", None
+        if not self._sizes.update((w, h), time.monotonic()):
+            return None, False, None, None
+        frame, self.last_method = self._grab_window(self.window, w, h), "window"
+        if frame is None or is_black(frame):
+            try:
+                frame, self.last_method = self._grab_screen(self.window, w, h), "screen"
+            except Exception as e:
+                return None, False, f"キャプチャに失敗しました: {e}", None
+        if is_black(frame) or is_dark(frame):
+            if self._dark_since is None:
+                self._dark_since = time.monotonic()
+            elif time.monotonic() - self._dark_since >= DARK_HOLD_S:
+                return None, False, WINDOW_BLACK_REASON, None
+        else:
+            self._dark_since = None
+        px, py, pw, ph = self._picture.update(frame)
+        profile = compute_profile(pw, ph)
+        if not profile.ok:
+            return None, False, profile.reason, profile
+        if (pw, ph) != (w, h):
+            frame = frame[py:py + ph, px:px + pw]
+        self.last_picture = (px, py, pw, ph)
+        self.last_client_size = (pw, ph)
+        if self.started_at is None:
+            self.started_at = time.time()
+        frame, work_profile = shrink_for_recognition(frame)
+        return frame, True, None, work_profile if work_profile.ok else profile
+
+
 def make_capture(display):
-    """The capture for the settings: the PC game's window, or a camera
-    (display.capture_source "camera", display.capture_camera its number)."""
-    if (display or {}).get("capture_source") == "camera":
+    """The capture for the settings: the PC game's window, a camera
+    (display.capture_source "camera", display.capture_camera its number), or
+    a window by its title ("window", display.capture_window)."""
+    source = (display or {}).get("capture_source")
+    if source == "camera":
         return CameraCapture(int((display or {}).get("capture_camera") or 0))
+    if source == "window":
+        return WindowCapture((display or {}).get("capture_window") or "")
     return GameWindowCapture()
 
 

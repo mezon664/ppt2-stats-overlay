@@ -445,7 +445,9 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                 if mtime != choice["mtime"] or choice["want"] is None:
                     choice["mtime"] = mtime
                     d = display_settings(load_settings())
-                    choice["want"] = (d["capture_source"], d["capture_camera"] if d["capture_source"] == "camera" else None)
+                    kind = d["capture_source"]
+                    choice["want"] = (kind, d["capture_camera"] if kind == "camera" else
+                                      d["capture_window"] if kind == "window" else None)
             except Exception:
                 choice["want"] = choice["want"] or ("game", None)
         return choice["want"]
@@ -453,9 +455,11 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
     def make_capture():
         if capture_factory is not None:
             return capture_factory()
-        kind, index = wanted()
-        log.info("reading the game from %s", f"camera {index}" if kind == "camera" else "the PC game's window")
-        return live_capture.make_capture({"capture_source": kind, "capture_camera": index or 0})
+        kind, which = wanted()
+        log.info("reading the game from %s", f"camera {which}" if kind == "camera" else
+                 f"the window {which!r}" if kind == "window" else "the PC game's window")
+        return live_capture.make_capture({"capture_source": kind, "capture_camera": which or 0 if kind == "camera" else 0,
+                                          "capture_window": which if kind == "window" else ""})
     made_for = None
     diag = Diagnostic()
     cap = None

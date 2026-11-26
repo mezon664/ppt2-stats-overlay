@@ -213,11 +213,13 @@ def test_the_new_layout(tmp_path, monkeypatch):
     """The menu down the left and its pages (the mockup of 2026-11-04); a
     part's details only while it's switched on; the outline's thickness."""
     w = window(tmp_path, monkeypatch)
-    assert w.tabs.count() == 10
+    # (開幕テンプレ練習 is set aside for now: config_store.PRACTICE_READY; its page only while offered)
+    shown = config_store.PRACTICE_READY
+    assert w.tabs.count() == 10 if shown else 9
     assert w.tabs.tabText(7) == "縛りプレイ"
-    # (開幕テンプレ練習 is hidden until it's finished: the page has the win chance alone)
-    assert w.tabs.tabText(8) == "開幕テンプレ練習"
-    assert w.tabs.tabText(9).startswith("その他")
+    if config_store.PRACTICE_READY:
+        assert w.tabs.tabText(8) == "開幕テンプレ練習"
+    assert w.tabs.tabText(w.tabs.count() - 1).startswith("その他")
     assert [w.tabs.tabText(i) for i in range(3)] == ["ホーム", "表示する項目", "見た目"]
     w._show_values(display_settings({"display": {"show_event_log": False, "show_summary": True}}))
     assert w.events_card.body.isHidden() and not w.summary_card.body.isHidden()

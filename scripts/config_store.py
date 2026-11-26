@@ -185,6 +185,9 @@ DISPLAY_DEFAULTS = {
     # camera (scripts/live_capture.CameraCapture); capture_camera its number
     "capture_source": "game",
     "capture_camera": 0,
+    # "window": the window with this title (a streaming app's projector:
+    # scripts/live_capture.WindowCapture)
+    "capture_window": "",
 }
 
 # (min, max) for numeric options; out-of-range values are clamped.
@@ -258,7 +261,7 @@ DISPLAY_CHOICES = {"stats_position": STATS_POSITIONS, "style": STYLES, "language
                    "challenge_comments": ("off", "few", "normal", "many"),
                    "challenge_dopamine": ("off", "lite", "on", "max"),
                    "challenge_announcer_voice": ("heart", "adam"), "challenge_side": ("auto", "left", "right"),
-                   "capture_source": ("game", "camera")}
+                   "capture_source": ("game", "camera", "window")}
 
 
 def stats_mode(display, side):
@@ -281,6 +284,7 @@ COLOR_PATTERN = r"#[0-9a-fA-F]{6}"
 DISPLAY_PATTERNS = {"bg_color": COLOR_PATTERN, "text_color": COLOR_PATTERN, "line_color": COLOR_PATTERN,
                     "player_color_left": COLOR_PATTERN, "player_color_right": COLOR_PATTERN,
                     "font_family": r"[^\x00-\x1f]{0,100}",
+                    "capture_window": r"[^\x00-\x1f]{0,260}",
                     "font_file": r"user_fonts/[^/\\\x00-\x1f]{1,120}\.(ttf|otf|ttc)",
                     "challenge_image": r"(user_images/[^/\\\x00-\x1f]{1,120}\.(png|jpg|jpeg|webp|bmp|gif))?"}
 # 開幕テンプレ練習 (scripts/opener_practice.py) isn't offered until it's

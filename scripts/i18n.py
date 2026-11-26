@@ -32,6 +32,10 @@ _CAPTURE_EN = (
     ("カメラを開けません", "Can't open the camera (is another app using it?)"),
     ("カメラの映像が届いていません", "No picture from the camera (is OBS's virtual camera started?)"),
     ("カメラの映像が真っ黒です", "The camera's picture is black (is the virtual camera set to the capture board's source?)"),
+    ("読み取るウィンドウが選ばれていません", "No window picked to read (pick one on the Home page of the settings)"),
+    ("読み取るウィンドウが見つかりません", "The window to read isn't open"),
+    ("読み取るウィンドウが最小化されています", "The window to read is minimized (keep it open)"),
+    ("ウィンドウの映像が真っ黒です", "The window's picture is black (is the capture board on the projector?)"),
 )
 
 

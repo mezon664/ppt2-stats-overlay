@@ -186,6 +186,22 @@ TEXT = {
     "card.source": {"ja": "ゲームの読み取り元", "en": "Where the game is read from"},
     "src.game": {"ja": "PC 版（Steam）", "en": "PC version (Steam)"},
     "src.camera": {"ja": "キャプチャーボード（Switch など）", "en": "Capture board (Switch etc.)"},
+    "src.window": {"ja": "ウィンドウ", "en": "A window"},
+    "capture_window": {"ja": "ウィンドウ", "en": "Window"},
+    "win.refresh": {"ja": "一覧を更新", "en": "Refresh"},
+    "win.none": {"ja": "（選んでください）", "en": "(Pick one)"},
+    "win.gone": {"ja": "{title}（見つかりません）", "en": "{title} (not open)"},
+    "src.window_steps": {
+        "ja": "配信ソフトのプロジェクターなど、選んだウィンドウの映像を読みます（仮想カメラは要りません）。<br>"
+              "① OBS や Streamlabs で、キャプチャーボードのソースを右クリック →「ウィンドウ プロジェクター（ソース）」を開く<br>"
+              "② 下の「ウィンドウ」でそのプロジェクターを選ぶ（読めていれば下に映像が出ます）<br>"
+              "プロジェクターは最小化しないでください。<b>このアプリの表示が入ったシーンやプレビューは選ばないでください</b>（このアプリの表示まで読んでしまい、数値がずれます）。<br>"
+              "ゲーム画面の上の表示は出ません。表示は OBS（ブラウザソース）に出ます。効果音と読み上げはこの PC から鳴ります。",
+        "en": "Reads the picture of a window you pick, such as a streaming app's projector (no virtual camera needed).<br>"
+              "1. In OBS or Streamlabs, right-click the capture board's source → \"Windowed Projector (Source)\"<br>"
+              "2. Pick that projector under \"Window\" below (the picture shows below once it's read)<br>"
+              "Don't minimize the projector. <b>Don't pick a scene or preview with this app's display in it</b> (it would be read too, and the numbers go off).<br>"
+              "Nothing is shown over a game window; the display goes to OBS (the browser source). Sounds and the voice play from this PC."},
     "capture_camera": {"ja": "カメラ", "en": "Camera"},
     "cam.n": {"ja": "カメラ {n}", "en": "Camera {n}"},
     "cam.named": {"ja": "カメラ {n}：{name}", "en": "Camera {n}: {name}"},
@@ -1106,7 +1122,15 @@ class SettingsWindow(QtWidgets.QWidget):
                                     self.ch_bottom_card, self.ch_hide_card, self.ch_other_title, self.ch_cats_card,
                                     self.ch_comments_card, self.ch_dopamine_card),
                          "", "challenge")
-        self.tabs.addTab(self._build_practice_page(), "", "practice")
+        # (its page only while it's offered: config_store.PRACTICE_READY;
+        # built all the same, so the settings it holds load and save as ever)
+        self._practice_page = practice_page = self._build_practice_page()   # (kept: unshown, Qt would delete it)
+        self._tab_keys = ["tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.rating",
+                          "tab.obs", "tab.challenge"]
+        if PRACTICE_READY:
+            self.tabs.addTab(practice_page, "", "practice")
+            self._tab_keys.append("tab.practice")
+        self._tab_keys.append("tab.other")
         self.tabs.addTab(self._build_other_page(), "", "other")
         self._update_info = None
         self._update_silent = False
@@ -1275,7 +1299,7 @@ class SettingsWindow(QtWidgets.QWidget):
         # etc.) through OBS's virtual camera (user's request: scripts/live_capture.CameraCapture)
         self.source_card = ui.Card()
         self.capture_source = ui.Segmented()
-        for key in ("game", "camera"):
+        for key in ("game", "camera", "window"):
             self.capture_source.addItem("", key)
         self.capture_source.currentIndexChanged.connect(self._changed)
         self.capture_source.currentIndexChanged.connect(lambda _i: self._source_picked())
@@ -1295,10 +1319,21 @@ class SettingsWindow(QtWidgets.QWidget):
         self.camera_preview = QtWidgets.QLabel()
         self.camera_preview.setFixedHeight(180)
         self.camera_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        # a window by its title (a streaming app's projector: live_capture.WindowCapture)
+        self.window_steps = QtWidgets.QLabel()
+        self.window_steps.setWordWrap(True)
+        self.window_steps.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.capture_window = QtWidgets.QComboBox()
+        self.capture_window.setMinimumWidth(260)
+        self.capture_window.currentIndexChanged.connect(self._changed)
+        self.window_refresh = QtWidgets.QPushButton()
+        self.window_refresh.clicked.connect(lambda: self._fill_windows())
         self._camera_rows = [self.camera_steps,
-                             _as_widget(self._row("capture_camera", _hbox(self.capture_camera))),
-                             self.camera_status, self.camera_preview]
-        for w in self._camera_rows:
+                             _as_widget(self._row("capture_camera", _hbox(self.capture_camera)))]
+        self._window_rows = [self.window_steps,
+                             _as_widget(self._row("capture_window", _hbox(self.capture_window, self.window_refresh)))]
+        self._read_rows = [self.camera_status, self.camera_preview]     # (both: what's read now)
+        for w in self._camera_rows + self._window_rows + self._read_rows:
             self.source_card.add(w)
         # what the server reads now (logs/last_seen.jpg, every few seconds): to pick the right camera
         self._preview_mtime = None
@@ -1334,6 +1369,23 @@ class SettingsWindow(QtWidgets.QWidget):
         box.setCurrentIndex(max(0, box.findData(keep if keep is not None else 0)))
         box.blockSignals(False)
 
+    def _fill_windows(self, keep=None):
+        """The windows that could be read, by title; a saved one that isn't
+        open now stays, marked "not open"."""
+        import live_capture
+        box = self.capture_window
+        keep = (box.currentData() or "") if keep is None else keep
+        titles = live_capture.window_titles()
+        box.blockSignals(True)
+        box.clear()
+        box.addItem(self.tr_("win.none"), "")
+        for title in titles:
+            box.addItem(title, title)
+        if keep and keep not in titles:
+            box.addItem(self.tr_("win.gone").format(title=keep), keep)
+        box.setCurrentIndex(max(0, box.findData(keep)))
+        box.blockSignals(False)
+
     def obs_camera_index(self):
         import live_capture
         names = self._camera_names or []
@@ -1348,13 +1400,19 @@ class SettingsWindow(QtWidgets.QWidget):
             obs = self.obs_camera_index()
             if obs is not None and self.capture_camera.currentData() != obs:
                 self.capture_camera.setCurrentIndex(self.capture_camera.findData(obs))
+        if not self._loading and self.capture_source.currentData() == "window":
+            self._fill_windows()    # (listed afresh: the projector may have been opened since)
         self._source_rows_shown()
 
     def _source_rows_shown(self):
-        on = self.capture_source.currentData() == "camera"
+        source = self.capture_source.currentData()
         for w in getattr(self, "_camera_rows", ()):
-            w.setVisible(on)
-        if on:
+            w.setVisible(source == "camera")
+        for w in getattr(self, "_window_rows", ()):
+            w.setVisible(source == "window")
+        for w in getattr(self, "_read_rows", ()):
+            w.setVisible(source in ("camera", "window"))
+        if source in ("camera", "window"):
             self._refresh_camera_preview()
 
     def _refresh_camera_status(self):
@@ -1381,7 +1439,7 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _refresh_camera_preview(self):
         """The picture the server read last (logs/last_seen.jpg), while 'capture board' is chosen."""
-        if not self.isVisible() or self.capture_source.currentData() != "camera":
+        if not self.isVisible() or self.capture_source.currentData() not in ("camera", "window"):
             return
         self._refresh_camera_status()
         path = ROOT / "logs" / "preview.jpg"   # (the picture alone: scripts/diagnostic.py)
@@ -2483,8 +2541,7 @@ class SettingsWindow(QtWidgets.QWidget):
         t = self.tr_
         self.setWindowTitle(t("title"))
         self._paint_enabled()
-        for i, key in enumerate(("tab.home", "tab.items", "tab.look", "tab.place", "tab.stats", "tab.rating",
-                                 "tab.obs", "tab.challenge", "tab.practice", "tab.other")):
+        for i, key in enumerate(self._tab_keys):
             self.tabs.setTabText(i, t(key))
         for key, lab in self._page_titles.items():
             lab.setText(t(key))
@@ -2502,8 +2559,12 @@ class SettingsWindow(QtWidgets.QWidget):
         for c in (self.show_on_hud, self.show_on_obs):
             c.setToolTip(t("show_on_tip"))
         self.source_card.setTitle(t("card.source"))
-        for i, key in enumerate(("game", "camera")):
+        for i, key in enumerate(("game", "camera", "window")):
             self.capture_source.setItemText(i, t("src." + key))
+        self.window_steps.setText(t("src.window_steps"))
+        self.window_refresh.setText(t("win.refresh"))
+        if self.capture_window.count():
+            self.capture_window.setItemText(0, t("win.none"))
         self._fill_cameras()
         self.camera_steps.setText(t("src.camera_steps"))
         self.autostart_card.setTitle(t("autostart"))
@@ -3098,6 +3159,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.challenge_off_in_rated.setChecked(d["challenge_off_in_rated"])
         self.capture_source.setCurrentIndex(max(0, self.capture_source.findData(d["capture_source"])))
         self._fill_cameras(keep=d["capture_camera"])
+        self._fill_windows(keep=d["capture_window"])
         self._source_rows_shown()
         self.mosaic_switch.setChecked(d["challenge_mosaic"] != "off")
         self.mosaic_metric.setCurrentIndex(max(0, self.mosaic_metric.findData(d["challenge_mosaic"])))
@@ -3180,6 +3242,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "challenge_off_in_rated": self.challenge_off_in_rated.isChecked(),
             "capture_source": self.capture_source.currentData(),
             "capture_camera": self.capture_camera.currentData(),
+            "capture_window": self.capture_window.currentData() or "",
             "challenge_mosaic": self.mosaic_metric.currentData() if self.mosaic_switch.isChecked() else "off",
             "challenge_mosaic_max": float(self.mosaic_max.value())
             if (self.mosaic_metric.currentData() == "time" or not self.mosaic_auto.isChecked()) else 0.0,
