@@ -13,7 +13,8 @@ ASSETS = (Path(__file__).resolve().parent.parent / "assets" / "ui").as_posix()
 
 # Color themes (user: the navy looked too much like every AI-made app, other
 # ideas?). Each sets the menu down the left, the page behind the cards and the
-# accent; the cards stay white. Chosen on その他 (ui.theme in the settings).
+# accent; the cards stay white. Only DEFAULT_THEME is used: the choice on その他
+# was taken off (user, 2026-11-27); the others are kept to go back to.
 THEMES = {
     # the first design (2026-11-04)
     "navy": {"nav": "#141a2e", "nav_selected": "#2a3558", "nav_hover": "#1e2742", "nav_text": "#c9d1e6",

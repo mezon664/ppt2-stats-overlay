@@ -360,14 +360,15 @@ TEXT = {
     "items": {"ja": "数値", "en": "Numbers"},
     "items_hint": {"ja": "盤面の横に出す数値。チェックで表示、つかむか ▲▼ で並べ替え（上から順）",
                    "en": "The numbers beside the boards. Tick to show, drag or ▲▼ to reorder (top to bottom)"},
-    "item.apm": {"ja": "APM（1分あたりの火力）", "en": "APM (attack per minute)"},
-    "item.pps": {"ja": "PPS（1秒あたりのミノ数）", "en": "PPS (pieces per second)"},
-    "item.app": {"ja": "APP（1ミノあたりの火力）", "en": "APP (attack per piece)"},
+    "item.apm": {"ja": "APM（1分間に相手へ送った攻撃量）", "en": "APM (attack sent to the opponent per minute)"},
+    "item.pps": {"ja": "PPS（1秒間に置いたミノの個数）", "en": "PPS (pieces placed per second)"},
+    "item.app": {"ja": "APP（1ミノあたりの攻撃量）", "en": "APP (attack per piece)"},
     "item.attack": {"ja": "攻撃の合計（送った段数）", "en": "Attack (lines sent)"},
     "item.pieces": {"ja": "置いたミノ数", "en": "Pieces placed"},
     "item.ren": {"ja": "今のREN", "en": "Current combo"},
     "item.b2b": {"ja": "B2B（続いている回数）", "en": "Back-to-Back chain"},
-    "item.vs": {"ja": "VS SCORE（(火力＋掘った段数)÷秒×100）", "en": "VS score ((attack + garbage cleared) per second x 100)"},
+    "item.vs": {"ja": "VS SCORE（［攻撃量＋消したおじゃまのライン数］÷ 秒数 × 100）",
+                "en": "VS score ([attack + garbage cleared] ÷ seconds × 100)"},
     "move_up": {"ja": "▲", "en": "▲"}, "move_down": {"ja": "▼", "en": "▼"},
     "labels": {"ja": "表示名（空欄＝標準）", "en": "Names shown (blank = default)"},
     "parts_shown": {"ja": "ほかの表示", "en": "Other parts"},
@@ -649,11 +650,6 @@ TEXT = {
                             "en": "Back to the default size, colors and background for everything"},
     "card_reset_look_part": {"ja": "この部分の大きさ・色・背景を全体と同じに戻します",
                              "en": "This part's size, colors and background back to the overall ones"},
-    "theme": {"ja": "設定画面の色", "en": "Window colors"},
-    "theme.navy": {"ja": "紺", "en": "Navy"},
-    "theme.light": {"ja": "ライト", "en": "Light"},
-    "theme.game": {"ja": "ゲーム風", "en": "Game"},
-    "theme.mono": {"ja": "モノクロ", "en": "Mono"},
 }
 
 
@@ -1074,9 +1070,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self._font_loaded_family = None
         self._ui_preferences = load_settings(persist_defaults=False).get("ui", {})
         self._settings_on_top = bool(self._ui_preferences.get("settings_on_top", False))
-        theme = self._ui_preferences.get("theme") if isinstance(self._ui_preferences, dict) else None
-        self._theme = theme if theme in ui.THEMES else ui.DEFAULT_THEME
-        self.setStyleSheet(ui.apply_theme(self._theme))
+        # (one look: the choice of colors was taken off, user 2026-11-27; a
+        # saved ui.theme is left as it is and not read)
+        self.setStyleSheet(ui.apply_theme(ui.DEFAULT_THEME))
         if self._settings_on_top:
             self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         # True while controls are being filled in (building, loading a file or
@@ -1478,7 +1474,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.items_box = ui.Card()
         row = QtWidgets.QHBoxLayout()
         self.items = QtWidgets.QListWidget()
-        self.items.setMinimumHeight(196)
+        self.items.setMinimumHeight(222)   # (all eight rows: VS SCORE made it eight)
         self.items.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
         for key in STAT_ITEMS:
             it = QtWidgets.QListWidgetItem("")
@@ -1951,12 +1947,6 @@ class SettingsWindow(QtWidgets.QWidget):
         self.on_top_check.setChecked(self._settings_on_top)
         self.on_top_check.toggled.connect(self._set_settings_on_top)
         self.window_card.add(self.on_top_check)
-        self.theme_pick = ui.Segmented()
-        for key in ui.THEME_ORDER:
-            self.theme_pick.addItem("", key)
-        self.theme_pick.setCurrentIndex(ui.THEME_ORDER.index(self._theme))
-        self.theme_pick.currentIndexChanged.connect(self._theme_picked)
-        self.window_card.add(self._row("theme", _hbox(self.theme_pick)))
 
         self.update_card = ui.Card()
         self._build_update_section(self.update_card)
@@ -2706,8 +2696,6 @@ class SettingsWindow(QtWidgets.QWidget):
         self.language_card.setTitle(t("card.language"))
         self.window_card.setTitle(t("card.window"))
         self.on_top_check.setText(t("settings_on_top"))
-        for i, key in enumerate(ui.THEME_ORDER):
-            self.theme_pick.setItemText(i, t("theme." + key))
         for card in self._card_reset_cards:
             card.reset_button.setText(t("card_reset"))
             card.reset_button.setToolTip(t("card_reset_tip"))
@@ -3321,21 +3309,6 @@ class SettingsWindow(QtWidgets.QWidget):
         # keep the chosen language: resetting the display shouldn't switch it
         self._show_values(display_settings({"display": {**DISPLAY_DEFAULTS, "language": self.lang}}))
         self._changed()
-
-    def _theme_picked(self, *_):
-        """The window's own colors (ui_kit.THEMES), kept in ui.theme."""
-        self._theme = self.theme_pick.currentData()
-        self.setStyleSheet(ui.apply_theme(self._theme))
-        self.tabs.refresh_icons()
-        self.drag_button.setIcon(ui.icon("place", "#ffffff"))
-        for w in self.findChildren(ui.Switch):
-            w.update()
-        self.update()
-        settings = load_settings()
-        preferences = settings.get("ui", {})
-        preferences["theme"] = self._theme
-        settings["ui"] = preferences
-        save_settings(settings)
 
     # --- "元に戻す" on each card (user: one for each item) ---
     def _add_card_resets(self):
