@@ -36,6 +36,7 @@ _CAPTURE_EN = (
     ("読み取るウィンドウが見つかりません", "The window to read isn't open"),
     ("読み取るウィンドウが最小化されています", "The window to read is minimized (keep it open)"),
     ("ウィンドウの映像が真っ黒です", "The window's picture is black (is the capture board on the projector?)"),
+    ("ぷよテト2 のウィンドウは", "Read Puyo Puyo Tetris 2's own window as \"PC version\" (Home page of the settings)"),
 )
 
 

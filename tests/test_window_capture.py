@@ -41,19 +41,36 @@ def test_says_why_when_it_cant_read(monkeypatch):
 
 
 @pytest.mark.skipif(not FRAME, reason="recording not here")
-def test_reads_the_windows_own_picture_and_falls_back_to_the_screen(monkeypatch):
+def test_reads_the_screen_unless_something_is_over_the_window(monkeypatch):
+    """Its own picture (PrintWindow) makes a window draw itself again each
+    time: the game's flickered. Only used while something covers it."""
     _fake(monkeypatch)
+    monkeypatch.setattr(live_capture, "_is_game_window", lambda h: False)
     game = read_image(str(FRAME[100]))
-    shots = []
-    cap = live_capture.WindowCapture("Projector", grab_window=lambda h, w, hh: game,
-                                     grab_screen=lambda h, w, hh: shots.append(1) or game)
+    own = []
+    cap = live_capture.WindowCapture("Projector", grab_window=lambda h, w, hh: own.append(1) or game,
+                                     grab_screen=lambda h, w, hh: game, uncovered=lambda h, w, hh: True)
     frame, ok, reason, profile = cap.grab()
-    assert ok and reason is None and profile.ok and cap.last_method == "window" and not shots
+    assert ok and reason is None and profile.ok and cap.last_method == "screen" and not own
+    cap = live_capture.WindowCapture("Projector", grab_window=lambda h, w, hh: game,
+                                     grab_screen=lambda h, w, hh: np.zeros_like(game), uncovered=lambda h, w, hh: False)
+    frame, ok, reason, profile = cap.grab()
+    assert ok and cap.last_method == "window"     # (covered: its own picture)
     black = np.zeros_like(game)
     cap = live_capture.WindowCapture("Projector", grab_window=lambda h, w, hh: black,
-                                     grab_screen=lambda h, w, hh: game)
+                                     grab_screen=lambda h, w, hh: game, uncovered=lambda h, w, hh: False)
     frame, ok, reason, profile = cap.grab()
-    assert ok and cap.last_method == "screen"     # (where the window's own picture comes out black)
+    assert ok and cap.last_method == "screen"     # (its own picture black: the screen all the same)
+
+
+def test_the_games_own_window_is_left_to_pc_version(monkeypatch):
+    _fake(monkeypatch)
+    monkeypatch.setattr(live_capture, "_is_game_window", lambda h: True)
+    drawn = []
+    cap = live_capture.WindowCapture("Projector", grab_window=lambda h, w, hh: drawn.append(1),
+                                     grab_screen=lambda h, w, hh: drawn.append(1))
+    frame, ok, reason, _ = cap.grab()
+    assert not ok and "PC 版" in reason and not drawn       # (never made to draw itself again)
 
 
 def test_this_apps_own_windows_arent_offered(monkeypatch):
@@ -63,6 +80,7 @@ def test_this_apps_own_windows_arent_offered(monkeypatch):
     monkeypatch.setattr(live_capture.win32gui, "IsWindowVisible", lambda h: True)
     monkeypatch.setattr(live_capture.win32gui, "GetWindowText", lambda h: wins[h][0])
     monkeypatch.setattr(live_capture.win32process, "GetWindowThreadProcessId", lambda h: (0, wins[h][1]))
+    monkeypatch.setattr(live_capture.psutil, "Process", lambda pid: type("P", (), {"name": lambda self: "obs64.exe"})())
     monkeypatch.setattr(live_capture.win32gui, "IsIconic", lambda h: False)
     monkeypatch.setattr(live_capture.win32gui, "GetClientRect", lambda h: (0, 0, 50, 30) if h == 4 else (0, 0, 800, 450))
     assert live_capture.window_titles() == ["Projector"]

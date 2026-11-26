@@ -513,15 +513,41 @@ class CameraCapture:
 # ---------------------------------------------------------------------------
 # Any window picked by its title: a streaming app's projector showing the
 # capture board's source (a user's request: no virtual camera needed, any
-# streaming app, lighter). Read from the window's own picture (PrintWindow),
-# so other windows over it don't matter; where that comes out black (some
-# apps draw where PrintWindow can't see), from the screen, which needs it
-# uncovered. Like the camera, no game window here for the HUD to sit on.
+# streaming app, lighter). Read from the screen while nothing is over it;
+# from the window's own picture (PrintWindow) only when something is, as that
+# makes the window draw itself again each time — the game's own window
+# flickered with it (user's report), so that one isn't offered at all ("PC
+# 版" reads it). Like the camera, no game window here for the HUD to sit on.
 # ---------------------------------------------------------------------------
 WINDOW_NONE_REASON = "読み取るウィンドウが選ばれていません (設定のホームで選んでください)"
 WINDOW_NOT_FOUND_REASON = "読み取るウィンドウが見つかりません"         # (+ its title)
 WINDOW_MINIMIZED_REASON = "読み取るウィンドウが最小化されています (最小化しないでください)"
 WINDOW_BLACK_REASON = "ウィンドウの映像が真っ黒です (プロジェクターにキャプチャーボードの映像が映っていますか？)"
+WINDOW_GAME_REASON = "ぷよテト2 のウィンドウは「PC 版」で読んでください (設定のホーム)"
+
+
+def _is_game_window(hwnd):
+    try:
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        return psutil.Process(pid).name().lower() == PROCESS_NAME.lower()
+    except Exception:
+        return False
+
+
+def _uncovered(hwnd, w, h):
+    """Nothing over the window's client area (looked at in a 4x4 grid of points):
+    the screen shows it as it is."""
+    try:
+        left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+        root = win32gui.GetAncestor(hwnd, 2)       # GA_ROOT
+        for fx in (0.1, 0.37, 0.63, 0.9):
+            for fy in (0.1, 0.37, 0.63, 0.9):
+                at = win32gui.WindowFromPoint((int(left + fx * w), int(top + fy * h)))
+                if not at or win32gui.GetAncestor(at, 2) != root:
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 def _own_pids():
@@ -551,6 +577,8 @@ def window_titles():
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             if pid in own:
                 return True
+            if psutil.Process(pid).name().lower() == PROCESS_NAME.lower():
+                return True     # (the game itself: read as "PC 版")
             if not win32gui.IsIconic(hwnd):
                 _, _, w, h = win32gui.GetClientRect(hwnd)
                 if w < 160 or h < 90:      # (tool strips, tray helpers: not a picture)
@@ -595,7 +623,7 @@ class WindowCapture:
     """The game's picture from a window picked by title (a streaming app's
     projector). Same results as GameWindowCapture.grab."""
 
-    def __init__(self, title="", grab_window=None, grab_screen=None):
+    def __init__(self, title="", grab_window=None, grab_screen=None, uncovered=None):
         self.title = (title or "").strip()
         self.hwnd = None            # (no game window: nothing of the HUD's sits on this one)
         self.window = None          # the window read
@@ -611,6 +639,7 @@ class WindowCapture:
         self._sct = None
         self._grab_window = grab_window or print_window
         self._grab_screen = grab_screen or self._screen
+        self._uncovered = uncovered or _uncovered
 
     def close(self):
         if self._sct is not None:
@@ -630,6 +659,8 @@ class WindowCapture:
             self.window = find_window(self.title)
             if self.window is None:
                 return None, False, f"{WINDOW_NOT_FOUND_REASON} ({self.title})", None
+        if _is_game_window(self.window):
+            return None, False, WINDOW_GAME_REASON, None
         if win32gui.IsIconic(self.window):
             return None, False, WINDOW_MINIMIZED_REASON, None
         _, _, w, h = win32gui.GetClientRect(self.window)
@@ -637,12 +668,21 @@ class WindowCapture:
             return None, False, "ウインドウのサイズを取得できません", None
         if not self._sizes.update((w, h), time.monotonic()):
             return None, False, None, None
-        frame, self.last_method = self._grab_window(self.window, w, h), "window"
-        if frame is None or is_black(frame):
+        frame = None
+        if self._uncovered(self.window, w, h):
             try:
                 frame, self.last_method = self._grab_screen(self.window, w, h), "screen"
             except Exception as e:
                 return None, False, f"キャプチャに失敗しました: {e}", None
+        if frame is None or is_black(frame):
+            own = self._grab_window(self.window, w, h)
+            if own is not None and not is_black(own):
+                frame, self.last_method = own, "window"
+            elif frame is None:     # (covered, and its own picture is black: the screen it is)
+                try:
+                    frame, self.last_method = self._grab_screen(self.window, w, h), "screen"
+                except Exception as e:
+                    return None, False, f"キャプチャに失敗しました: {e}", None
         if is_black(frame) or is_dark(frame):
             if self._dark_since is None:
                 self._dark_since = time.monotonic()
