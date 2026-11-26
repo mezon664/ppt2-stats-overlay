@@ -280,6 +280,7 @@ def match_one(frame, tmpl_img, window):
 class LabelState:
     active: bool = False
     below_exit_run: int = 0
+    dipped: bool = False      # fell below its exit threshold since it started (see restart below)
     start_t: float = None
     best_conf: float = 0.0
     best_pos: tuple = None
@@ -397,6 +398,18 @@ class BannerTracker:
             enter_th = ENTER_THRESHOLDS.get(label, ENTER_THRESHOLD)
             exit_th = EXIT_THRESHOLDS.get(label, EXIT_THRESHOLD)
             exit_grace = EXIT_GRACE_FRAMES_OVERRIDES.get(label, EXIT_GRACE_FRAMES)
+            # The same clear banner again while the last one is still up (two
+            # T-SPIN Doubles in a row): the game starts it over, sliding in from
+            # its start, so it drops for a frame or two (1.00 -> 0.39 -> back to
+            # 1.00 in the 2026-06-07 recording) — too short to end it, and the
+            # second clear went uncounted (user-checked match: 3 T-SPIN Doubles
+            # missed, 14 lines). Back at its entry level after a drop: a new
+            # banner. It still needs a clear flash of its own line count to
+            # count (live_pipeline._keep_flash_backed_banners): a fade's flicker
+            # has none left to take.
+            if st.active and label in RAW_CLEAR_LABELS and st.dipped and conf >= enter_th:
+                self.banner_events.append((round(st.start_t, 2), round(t, 2), label, round(float(st.best_conf), 3)))
+                st = self.states[label] = LabelState()
             if not st.active:
                 if conf >= enter_th:
                     st.active = True
@@ -464,6 +477,7 @@ class BannerTracker:
             else:
                 st.best_conf = max(st.best_conf, conf)
                 if conf < exit_th:
+                    st.dipped = True
                     st.below_exit_run += 1
                     if st.below_exit_run >= exit_grace:
                         self.banner_events.append((round(st.start_t, 2), round(t, 2), label, round(float(st.best_conf), 3)))

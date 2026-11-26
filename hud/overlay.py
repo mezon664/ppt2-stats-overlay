@@ -1529,6 +1529,11 @@ SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format; None = 
 )   # shown: the ones in display.summary_items (same order as config_store.SUMMARY_ITEMS)
 
 
+# a finished match is kept once its result is complete (state["result_final"]),
+# or after this long all the same (frames stopped coming right at the end)
+KEEP_WAIT_S = 3.0
+
+
 def summary_side(side):
     """One player's row values for the summary, from their snapshot."""
     side = side or {}
@@ -2816,8 +2821,17 @@ class HudWindow(QtWidgets.QWidget):
             return
         frozen = bool(state.get("frozen"))
         was, self._was_frozen = self._was_frozen, frozen
-        if not frozen or was is not False:
+        if not frozen:
+            self._keep_since = None
             return
+        if was is False:        # it ended here (not frozen already when the HUD came up)
+            self._keep_since = time.monotonic()
+        since = getattr(self, "_keep_since", None)
+        # kept once the server says the result is complete (result_final: the
+        # clear that won it counted too); a while later all the same if it never does
+        if since is None or (state.get("result_final") is False and time.monotonic() - since < KEEP_WAIT_S):
+            return
+        self._keep_since = None
         try:
             record = opener_stats.match_record(state)
             if record and opener_stats.add(record):
@@ -2957,9 +2971,12 @@ class HudWindow(QtWidgets.QWidget):
                     self.cats[sd].prepare(self._cat, self._scale * CAT_SCALE * part_value(self.display, "opener", "scale"))
 
     def _summary_ready(self):
-        """A match was played and has ended: the server froze the numbers."""
+        """A match was played and has ended: the server froze the numbers and
+        counted the clears still waiting (result_final), so the summary
+        doesn't first show the last one missing."""
         st = self._last_state
-        return bool(st.get("frozen")) and (st.get("match_elapsed_s") or 0) > 0
+        return (bool(st.get("frozen")) and (st.get("match_elapsed_s") or 0) > 0
+                and st.get("result_final") is not False)
 
     # --- position adjust (drag) mode, toggled from the settings window ---
     def set_edit_mode(self, on):

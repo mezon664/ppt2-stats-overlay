@@ -22,7 +22,7 @@ from apm_tracker import APMWindowTracker
 from board_read import board_is_clear, LEFT_BOX, RIGHT_BOX
 from capture_profile import scale_box, REFERENCE_PROFILE
 from match_boundary import MatchBoundaryDetector, _orange_ratio
-from flash_clear_detector import FlashClearDetector, MAX_LINES_PER_EVENT
+from flash_clear_detector import FlashClearDetector, MAX_LINES_PER_EVENT, lit_rows
 from queue_tracker import NextQueueTracker
 from levels import Levels
 from hold_tracker import HoldTracker
@@ -234,7 +234,10 @@ class PlayerPipeline:
         self._first_t = None        # first frame this pipeline saw (match start when no GO! time)
         self.opener_t = None        # game time the opener was recognized (for the short popup)
         self._clear_flash_times = []   # flash edges with 1-4 lit rows not yet attributed to a placement
-        self._banner_flash_times = []  # the same flashes, each usable to back one banner event
+        # the same flashes, each usable to back one banner event: (t, rows lit
+        # at its first frame, the most rows lit over its first FLASH_GROW_S)
+        self._banner_flash_times = []
+        self._held_banners = []        # banners waiting for their flash to grow: (event, until)
         self.rejected_banner_count = 0
         self._last_placement_t = None
         self._pending_breaks = []      # REN breaks waiting for older clears to resolve first
@@ -467,9 +470,19 @@ class PlayerPipeline:
                 self._pending_flashes.append({"flash_t": t, "n_lines": n_lines})
                 if 1 <= n_lines <= MAX_LINES_PER_EVENT:
                     self._clear_flash_times.append(t)
-                    self._banner_flash_times.append((t, n_lines))
+                    self._banner_flash_times.append((t, n_lines, n_lines))
+        elif self.flash_detector._active and self._banner_flash_times:
+            # a flash's rows can come out over its first frames: one of them
+            # under the letters of the last banner (TETRIS over the next row a
+            # T-SPIN Double took: 1 row read at its first frame, 2 from 0.14s on)
+            f, n, peak = self._banner_flash_times[-1]
+            if t - f <= self.FLASH_GROW_S:
+                k = len(lit_rows(frame, self.flash_detector.box))
+                if peak < k <= MAX_LINES_PER_EVENT:
+                    self._banner_flash_times[-1] = (f, n, k)
 
         new_events = self._keep_flash_backed_banners(new_events, t, streak_before)
+        new_events = self._release_held_banners(t) + new_events
 
         # REN break: a placement (NEXT queue advance) with no clear flash since
         # the previous placement — see queue_tracker.py. Queued rather than
@@ -514,15 +527,21 @@ class PlayerPipeline:
         of rows that banner clears — that held for every real banner in the
         recordings (TETRIS 4, T-SPIN Double 2, T-SPIN Single 1) — so one real
         plain clear can't lend its flash to a false TETRIS right after it."""
-        self._banner_flash_times = [(f, n) for f, n in self._banner_flash_times
+        self._banner_flash_times = [(f, n, p) for f, n, p in self._banner_flash_times
                                     if t - f <= self.BANNER_FLASH_WINDOW_S]
         if not new_events:
             return new_events
         accepted = []
         for ev in new_events:
             want = BANNER_LINES.get(ev["clear_type"])
-            match = next((i for i, (_, n) in enumerate(self._banner_flash_times)
+            match = next((i for i, (_, n, _p) in enumerate(self._banner_flash_times)
                           if want is None or n == want), None)
+            growing = next((f for f, n, _p in self._banner_flash_times
+                            if want is not None and n < want and t - f <= self.FLASH_GROW_S), None)
+            if match is None and growing is not None:
+                # its flash read fewer rows at first: wait a moment for the rest
+                self._held_banners.append((ev, growing + self.FLASH_GROW_S + 0.05))
+                continue
             if match is None:
                 self.rejected_banner_count += 1
                 log.info("[%s] t=%.2f %s banner ignored (no matching clear flash before it)",
@@ -542,6 +561,36 @@ class PlayerPipeline:
                     ev["ren_count"] = ren
                 ev["btb"] = is_b2b_eligible(self.table, ev["clear_type"]) and b2b >= min_streak
         return accepted
+
+    # how long a clear flash's lit rows may keep coming out (see process_frame)
+    FLASH_GROW_S = 0.3
+
+    def _release_held_banners(self, t):
+        """Held banners (_keep_flash_backed_banners) whose flash has come out to
+        their line count now count, on the streak from here; past their time,
+        they're dropped as any banner without its flash."""
+        out, keep = [], []
+        min_streak = self.table["back_to_back"]["min_consecutive_for_bonus"]
+        for ev, until in self._held_banners:
+            want = BANNER_LINES.get(ev["clear_type"])
+            match = next((i for i, (_, n, p) in enumerate(self._banner_flash_times) if n < want == p), None)
+            if match is not None:
+                self._banner_flash_times.pop(match)
+                ren, b2b = self.tracker.streak.register_clear(self.table, ev["clear_type"])
+                if ev["ren_source"] != "screen":
+                    ev["ren_count"] = ren
+                ev["btb"] = is_b2b_eligible(self.table, ev["clear_type"]) and b2b >= min_streak
+                log.info("[%s] t=%.2f %s banner counted once its flash showed %d rows",
+                         self.side, t, ev["clear_type"], want)
+                out.append(ev)
+            elif t <= until:
+                keep.append((ev, until))
+            else:
+                self.rejected_banner_count += 1
+                log.info("[%s] t=%.2f %s banner ignored (its flash never showed %s rows)",
+                         self.side, t, ev["clear_type"], want)
+        self._held_banners = keep
+        return out
 
     def _discard_hold_advance(self, placements, t):
         """Drops the one queue advance caused by HoldTracker's confirmed
@@ -1261,6 +1310,12 @@ class MatchPipeline:
             "recognition": {"fps": round(self.fps, 1), "frame_count": self.frame_count},
             "match_reset_count": self.match_reset_count,
             "frozen": self._frozen and not self._startup_wait,
+            # the result is complete: the clears still waiting when the match
+            # ended have been counted (PlayerPipeline.settle, up to
+            # SETTLE_AFTER_END_S). Until then the last clear — the one that
+            # won it, often — is missing: a REN that finished the opponent
+            # left max REN one short and its lines out (user's report)
+            "result_final": self._frozen and getattr(self, "_settle_until", None) is None,
             # who won the match just finished ("left" / "right"; None until then)
             "winner": getattr(self, "winner", None) if self._frozen else None,
             "match_screen": self.match_screen,   # the overlays hide while False (see MATCH_SCREEN_HIDE_S)

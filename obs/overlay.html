@@ -1165,7 +1165,8 @@ function place() {
   const clockTop = CLOCK_BOTTOM_Y * s - clock.h;
   clock.x = int((CLOCK_CENTER_X + d.clock_offset_x) * s - clock.w / 2);
   clock.y = int(clockTop + d.clock_offset_y * s);
-  summary.visible = !!(d.show_summary && st.frozen && (st.match_elapsed_s || 0) > 0);
+  // (once the clears still waiting at the end are counted: result_final)
+  summary.visible = !!(d.show_summary && st.frozen && (st.match_elapsed_s || 0) > 0 && st.result_final !== false);
   summary.x = int((CLOCK_CENTER_X + d.summary_offset_x) * s - summary.w / 2);
   summary.y = int((SUMMARY_TOP_Y + d.summary_offset_y) * s);
   versus.visible = isVersus && anyStat;
