@@ -372,6 +372,11 @@ class PlayerPipeline:
         last = getattr(self, "_last_flash_t", None)
         return last is not None and t - last <= self.CLEARS_LATELY_S
 
+    def _big_clears_lately(self, t):
+        """A flash of 3 rows or more lately: TETRIS is looked for (banner_detect.ON_DEMAND)."""
+        last = getattr(self, "_last_big_flash_t", None)
+        return last is not None and t - last <= self.CLEARS_LATELY_S
+
     def settle(self, frame, t):
         """Right after the match ended (victory banner): only the clears that
         were still waiting are finished — the T-SPIN / TETRIS banner of one may
@@ -382,7 +387,7 @@ class PlayerPipeline:
         streak = self.tracker.streak
         streak_before = (streak.consecutive_clears, streak.b2b_streak)
         before = len(self.tracker.attack_events)
-        self.tracker.update(frame, t, clears=self._clears_lately(t))
+        self.tracker.update(frame, t, clears=self._clears_lately(t), big_clears=self._big_clears_lately(t))
         new_events = self._keep_flash_backed_banners(self.tracker.attack_events[before:], t, streak_before)
         self._emit_banner_events(new_events, t)
         self._resolve_pending_flashes(t)
@@ -390,6 +395,12 @@ class PlayerPipeline:
     def flush(self):
         """Settling is over: every clear still waiting counts as it was measured."""
         self._resolve_pending_flashes(float("inf"))
+
+    def clears_waiting(self):
+        """A clear seen but not counted yet (its banner's time not over), or a
+        banner waiting for its flash: the result isn't complete without it."""
+        return bool(self._held_banners) or any(1 <= pf["n_lines"] <= MAX_LINES_PER_EVENT
+                                               for pf in self._pending_flashes)
 
     def _emit_banner_events(self, new_events, t):
         """Banner-confirmed clears: each takes its own pending flash (so it
@@ -427,7 +438,9 @@ class PlayerPipeline:
             self._last_flash_t = t
         real = flash_edge and 1 <= (self.flash_detector.last_edge_row_count or 0) <= MAX_LINES_PER_EVENT
         self.dig.update(frame, self.flash_detector.last_edge_rows if real else None, self.flash_detector._active)
-        self.tracker.update(frame, t, clears=self._clears_lately(t))
+        if flash_edge and (self.flash_detector.last_edge_row_count or 0) >= 3:
+            self._last_big_flash_t = t
+        self.tracker.update(frame, t, clears=self._clears_lately(t), big_clears=self._big_clears_lately(t))
         self.last_frame_ok_t = t
         new_events = self.tracker.attack_events[before:]
         # T-SPINs that cleared no line: not clears (no attack), but counted
@@ -1283,9 +1296,17 @@ class MatchPipeline:
         for side in (self.left, self.right):
             if side.apm.match_start_t is None:
                 side.apm.match_start_t = self.start_t
-        for side in ("left", "right"):
-            if not self.puyo[side]:       # a Puyo side isn't read at all
-                getattr(self, side).process_frame(frame, t)
+        # (a Puyo side isn't read at all.) The two sides share nothing, and most
+        # of their time is OpenCV's, which lets go of Python's lock: read at the
+        # same time, a frame takes about the longer side's time, not the sum
+        sides = [getattr(self, sd) for sd in ("left", "right") if not self.puyo[sd]]
+        if len(sides) == 2:
+            other = _side_pool().submit(sides[1].process_frame, frame, t)
+            sides[0].process_frame(frame, t)
+            other.result()
+        else:
+            for side in sides:
+                side.process_frame(frame, t)
         self._last_t = t
         self.frame_count += 1
         now_wall = time.time()
@@ -1315,7 +1336,10 @@ class MatchPipeline:
             # SETTLE_AFTER_END_S). Until then the last clear — the one that
             # won it, often — is missing: a REN that finished the opponent
             # left max REN one short and its lines out (user's report)
-            "result_final": self._frozen and getattr(self, "_settle_until", None) is None,
+            # (at once when nothing is waiting: the summary shows right away
+            # then, user's request; only a last clear still being made out holds it)
+            "result_final": self._frozen and (getattr(self, "_settle_until", None) is None or not any(
+                getattr(self, sd).clears_waiting() for sd in ("left", "right") if not self.puyo[sd])),
             # who won the match just finished ("left" / "right"; None until then)
             "winner": getattr(self, "winner", None) if self._frozen else None,
             "match_screen": self.match_screen,   # the overlays hide while False (see MATCH_SCREEN_HIDE_S)
@@ -1325,6 +1349,18 @@ class MatchPipeline:
             # look like a countdown) they never claim a match is starting.
             "waiting_start": self._awaiting_go_since is not None or self._startup_wait,
         }
+
+
+_SIDE_POOL = None
+
+
+def _side_pool():
+    """One worker thread for the second side of a frame (MatchPipeline.process_frame)."""
+    global _SIDE_POOL
+    if _SIDE_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _SIDE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="side")
+    return _SIDE_POOL
 
 
 class VideoReplaySource:

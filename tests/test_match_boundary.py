@@ -24,13 +24,13 @@ def test_victory_edge_fires_once_on_sustained_presence(monkeypatch):
     det = MatchBoundaryDetector()
     scores = [0.1, 0.9, 0.9, 0.9, 0.1]  # rises above YATTA_ENTER, stays, then drops
 
-    def fake_match(frame, tmpl, window):
+    def fake_match(frame, tmpls, halves, window):
         # called once per side (left/right) per frame; both must see the same
         # score for a given frame index, so index by frame count, not call count.
         return scores[int(frame[0, 0, 0])]
 
     import match_boundary
-    monkeypatch.setattr(match_boundary, "_match", fake_match)
+    monkeypatch.setattr(match_boundary, "_match_two_step", fake_match)
 
     edges = []
     for i in range(5):

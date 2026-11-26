@@ -77,6 +77,12 @@ YATTA_FILE = SCRIPTS_DIR / ".." / "assets" / "templates" / "t_yatta_live.png"
 # while it's up, <= 0.45 on everything else in the Japanese and English bursts)
 YEAH_FILE = SCRIPTS_DIR / ".." / "assets" / "templates" / "t_yeah_live.png"
 YATTA_ENTER, YATTA_EXIT = 0.70, 0.50
+# Looked for at half size first, and at full size only where that finds
+# something like it: the two large templates on both sides were a third of the
+# time a frame takes. At half size the banner itself still scores far above
+# this, and nothing else comes near it (every recording: the same frames
+# found, the same full-size scores where it matters)
+YATTA_PRECHECK = 0.35
 
 
 def _match(frame, tmpl, window):
@@ -87,6 +93,20 @@ def _match(frame, tmpl, window):
         return 0.0
     res = cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED)
     return float(cv2.minMaxLoc(res)[1])
+
+
+def _half(img):
+    return cv2.resize(img, (max(1, img.shape[1] // 2), max(1, img.shape[0] // 2)), interpolation=cv2.INTER_AREA)
+
+
+def _match_two_step(frame, tmpls, halves, window):
+    """The best of these templates in the window: at half size first (YATTA_PRECHECK)."""
+    x1, y1, x2, y2 = window
+    small = _half(frame[y1:y2, x1:x2])
+    rough = max((_match(small, h, (0, 0, small.shape[1], small.shape[0])) for h in halves), default=0.0)
+    if rough < YATTA_PRECHECK:
+        return rough
+    return max(_match(frame, tmpl, window) for tmpl in tmpls)
 
 
 class MatchBoundaryDetector:
@@ -105,6 +125,7 @@ class MatchBoundaryDetector:
         self.yatta_tmpl = scale_template(self._yatta_tmpl_raw, self.profile)
         self._yeah_tmpl_raw = read_image(YEAH_FILE)
         self.yeah_tmpl = scale_template(self._yeah_tmpl_raw, self.profile)
+        self._halves = (_half(self.yatta_tmpl), _half(self.yeah_tmpl))
         self.go_region = scale_box(GO_REGION, self.profile)
         self.yatta_window_left = scale_box(YATTA_WINDOW_LEFT, self.profile)
         self.yatta_window_right = scale_box(YATTA_WINDOW_RIGHT, self.profile)
@@ -129,8 +150,7 @@ class MatchBoundaryDetector:
         go_conf = _orange_ratio(frame, self.go_region)
         if self.watch_victory:
             by_side = {
-                side: max(_match(frame, tmpl, window)
-                          for tmpl in (self.yatta_tmpl, self.yeah_tmpl))      # Japanese / English game
+                side: _match_two_step(frame, (self.yatta_tmpl, self.yeah_tmpl), self._halves, window)   # Japanese / English game
                 for side, window in (("left", self.yatta_window_left), ("right", self.yatta_window_right))
             }
         else:

@@ -232,6 +232,14 @@ MINI_DOUBLE_THRESHOLD = 0.7   # "Double" under "Mini", and above "Single": a Min
 
 MERGE_WINDOW_S = 0.5  # banners starting within this many seconds of each other -> one attack event
 
+# Read only at the moment they're needed, not every frame (matching is most of
+# the time a frame takes): the small "Single" / "Double" under a Mini only as
+# "Mini" first comes up (that's all they're for: MINI_SINGLE_THRESHOLD), and
+# TETRIS only after a flash of 3 or more rows (update(big_clears=True)) — a
+# TETRIS banner counts only with a 4-row flash before it, and a flash can read
+# a row short at first (live_pipeline.FLASH_GROW_S).
+ON_DEMAND = {"tspin_mini_single", "tspin_mini_double"}
+
 
 def load_templates():
     out = {}
@@ -351,20 +359,25 @@ class BannerTracker:
                 return int(label.split("_")[1])
         return None
 
-    def update(self, frame, t, clears=True):
-        """clears: a clear flash was seen lately (CLEAR_GATED)."""
+    def _match(self, frame, t, label):
+        cfg = self.templates[label]
+        window = scale_box(window_for_side(label, cfg["window"], self.side), self.profile)
+        tmpl_img = scale_template(template_for_side(cfg, self.side), self.profile)
+        conf, pos = match_one(frame, tmpl_img, window)
+        self.match_log.append((round(t, 2), label, round(float(conf), 3), pos))
+        return conf, pos
+
+    def update(self, frame, t, clears=True, big_clears=True):
+        """clears: a clear flash was seen lately (CLEAR_GATED); big_clears: one
+        of 3 rows or more (TETRIS)."""
         raw_scores = {}
         raw_pos = {}
-        for label, cfg in self.templates.items():
-            if not clears and (label in CLEAR_GATED or label in REN_LABELS):
+        for label in self.templates:
+            if (not clears and (label in CLEAR_GATED or label in REN_LABELS)) or label in ON_DEMAND \
+                    or (label == "tetris" and not big_clears):
                 raw_scores[label], raw_pos[label] = 0.0, None
                 continue
-            window = scale_box(window_for_side(label, cfg["window"], self.side), self.profile)
-            tmpl_img = scale_template(template_for_side(cfg, self.side), self.profile)
-            conf, pos = match_one(frame, tmpl_img, window)
-            raw_scores[label] = conf
-            raw_pos[label] = pos
-            self.match_log.append((round(t, 2), label, round(float(conf), 3), pos))
+            raw_scores[label], raw_pos[label] = self._match(frame, t, label)
 
         if (self.debug_dump_dir and t >= self._debug_dump_cooldown_until
                 and any(raw_scores.get(l, 0) >= self.debug_dump_threshold for l in self.debug_dump_labels)):
@@ -412,6 +425,9 @@ class BannerTracker:
                 st = self.states[label] = LabelState()
             if not st.active:
                 if conf >= enter_th:
+                    if label == "tspin_mini" and clears:     # (ON_DEMAND: read now)
+                        for sub in ON_DEMAND & set(self.templates):
+                            raw_scores[sub], raw_pos[sub] = self._match(frame, t, sub)
                     st.active = True
                     st.start_t = t
                     st.best_conf = conf

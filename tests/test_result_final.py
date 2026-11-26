@@ -66,3 +66,18 @@ def test_the_hud_keeps_a_match_once_its_result_is_complete(monkeypatch):
     assert [k["n"] for k in kept] == [2]          # once, with the result complete
     keep(hud, {"frozen": True, "result_final": True, "n": 4})
     assert len(kept) == 1
+
+
+@pytest.mark.skipif(not FRAMES, reason="recording not here")
+def test_with_nothing_waiting_the_result_is_there_at_once():
+    """burst_ren as it was: the last clear was counted before the win (1.6 s),
+    so the result is complete the moment the match ends."""
+    pipe = lp.MatchPipeline()
+    for f in FRAMES:
+        t = float(re.search(r"_t(\d+\.\d+)", f).group(1))
+        pipe.process_frame(read_image(f), t)
+        s = pipe.snapshot()
+        if s["frozen"] and s["match_elapsed_s"] > 5:
+            assert s["result_final"] and s["left"]["match_stats"]["max_ren"] == 12
+            return
+    raise AssertionError("the match didn't end")
