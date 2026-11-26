@@ -45,7 +45,7 @@ const HOLD_RIGHT_X = { left: 191, right: 797 }, OPENER_HOLD_TOP_Y = 172;
 const NAMEBAR_RIGHT_X = 466, NAMEBAR_LEFT_X = 762, NAMEBAR_TOP_Y = 608;
 const OPENER_TOP_CENTER_X = 615.6, OPENER_TOP_Y = 14;
 const POPUP_S = 4.0, POPUP_IN_S = 0.25, POPUP_FADE_S = 1.2;
-const GAUGE_MAX = { apm: 120, pps: 4, app: 1, attack: 100, pieces: 300, ren: 12, b2b: 10 };
+const GAUGE_MAX = { apm: 120, pps: 4, app: 1, attack: 100, pieces: 300, ren: 12, b2b: 10, vs: 200 };
 const NEW_STYLES = ["frame", "slash", "hex", "meter", "tower", "minimal", "trend", "broadcast", "sport"];
 const FRAMES = { frame: "frame", slash: "slash", hex: "square", tower: "square", meter: "rounded", trend: "rounded", minimal: "none",
                  broadcast: "square", sport: "slash" };
@@ -53,9 +53,9 @@ const NEW_STYLE_GAP = 6;
 const TREND_SAMPLES = 60;
 const TEXT_OUTLINE_RATIO = 0.10, OPENER_NAME_THICKEN = 0.4;
 const STATE_RGB = [253, 230, 138], STATUS_RGB = [252, 165, 165];
-const STAT_KEYS = ["apm", "pps", "app", "attack", "pieces", "ren", "b2b"];
-const VALUE_TEMPLATES = { apm: "DDD.D", pps: "D.DD", app: "D.DD", attack: "DDD", pieces: "DDDD", ren: "DD", b2b: "xDD" };
-const DEFAULT_LABELS = { apm: "APM", pps: "PPS", app: "APP", attack: "ATK", pieces: "PIECES", ren: "REN", b2b: "B2B" };
+const STAT_KEYS = ["apm", "pps", "app", "attack", "pieces", "ren", "b2b", "vs"];
+const VALUE_TEMPLATES = { apm: "DDD.D", pps: "D.DD", app: "D.DD", attack: "DDD", pieces: "DDDD", ren: "DD", b2b: "xDD", vs: "DDD.D" };
+const DEFAULT_LABELS = { apm: "APM", pps: "PPS", app: "APP", attack: "ATK", pieces: "PIECES", ren: "REN", b2b: "B2B", vs: "VS" };
 const DEFAULT_LABELS_EN = { ...DEFAULT_LABELS, ren: "COMBO" };   // the English game says "Combo" for REN
 const UI_TEXT = {
   ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", capture_down: "認識不可",
@@ -379,14 +379,14 @@ function fmtValue(key, v) {
   if (v == null) return "--";
   if (key === "b2b") return v ? `x${v}` : "--";      // no chain going
   if (key === "attack" || key === "pieces" || key === "ren") return String(int(v));
-  return Number(v).toFixed(key === "apm" ? 1 : 2);
+  return Number(v).toFixed(key === "apm" || key === "vs" ? 1 : 2);
 }
 const fmtClock = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 const isPuyo = (side) => !!(side && (side.puyo || side.hidden));
 function sideValues(side) {
   side = side || {};
   return { apm: (side.apm || {}).apm, pps: side.pps, app: side.app, attack: side.attack,
-           pieces: side.pieces, ren: side.ren, b2b: side.b2b };
+           pieces: side.pieces, ren: side.ren, b2b: side.b2b, vs: side.vs };
 }
 const hexCells = (n) => Array.from({ length: n }, (_, i) => [i % 2, Math.floor(i / 2) + (i % 2 ? 0.5 : 0)]);
 const gaugeFrac = (key, v) => v == null ? 0 : clamp01(v / GAUGE_MAX[key]);

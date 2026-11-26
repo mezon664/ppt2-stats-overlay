@@ -214,7 +214,9 @@ def test_the_new_layout(tmp_path, monkeypatch):
     part's details only while it's switched on; the outline's thickness."""
     w = window(tmp_path, monkeypatch)
     assert w.tabs.count() == 10
-    assert w.tabs.tabText(7) == "縛りプレイ" and w.tabs.tabText(8) == "開幕テンプレ練習"
+    assert w.tabs.tabText(7) == "縛りプレイ"
+    # (開幕テンプレ練習 is hidden until it's finished: the page has the win chance alone)
+    assert w.tabs.tabText(8) == "開幕テンプレ練習"
     assert w.tabs.tabText(9).startswith("その他")
     assert [w.tabs.tabText(i) for i in range(3)] == ["ホーム", "表示する項目", "見た目"]
     w._show_values(display_settings({"display": {"show_event_log": False, "show_summary": True}}))

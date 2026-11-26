@@ -315,6 +315,37 @@ class GarbageHold:
         return self.shown
 
 
+class DigCounter:
+    """Garbage rows cleared this match (VS SCORE's "garbage cleared"). A
+    clear takes the rows its flash lights (flash_clear_detector.lit_rows, 0
+    the bottom row); those below the garbage the board had just before are
+    garbage dug out. Garbage only comes in on a piece that clears nothing,
+    so a clear's rows are never mixed up with garbage rising. "Just before":
+    the count of the last two frames that agreed, not taken while a flash is
+    on (its white rows aren't grey).
+    Checked against debug_frames/burst2 (left: 1 + 2 + 4 + 1 rows, each
+    clear looked at) and the other versus recordings (tests/test_mosaic.py)."""
+
+    def __init__(self, box):
+        self.box = box              # the board's GRID in the frame
+        self.cleared = 0
+        self._raw, self._last, self._run, self._settled = 0, None, 0, 0
+
+    def update(self, frame, rows=None, flash_on=False):
+        """One frame; rows: the rows a clear's flash lit on this frame (a real
+        clear, 1-4 of them), else None."""
+        if rows:
+            self.cleared += sum(1 for r in rows if r < self._settled)
+        x1, y1, x2, y2 = self.box
+        g = count_garbage(frame[y1:y2, x1:x2], self._raw)
+        self._raw = g
+        self._run = self._run + 1 if g == self._last else 1
+        self._last = g
+        if self._run >= 2 and not flash_on:
+            self._settled = g
+        return self.cleared
+
+
 def garbage_state(display, state, frame=None, count=None, hold=None):
     """state["challenge_garbage"]: {"side", "rows"} — that many garbage rows at
     the bottom of the board (count(frame, side): opener_detect.garbage_rows),

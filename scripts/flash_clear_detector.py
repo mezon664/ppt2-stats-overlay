@@ -86,7 +86,14 @@ ROW_PITCH_OF_BAND = 23.0 / 23.55
 
 
 def count_lit_rows(frame, box):
-    """Returns how many board rows are (almost) entirely near-white in this
+    return len(lit_rows(frame, box))
+
+
+def lit_rows(frame, box):
+    """The board rows (0 the bottom one) that count_lit_rows counts: which
+    rows a clear takes away (live_pipeline: how many of them were garbage).
+
+    count_lit_rows: how many board rows are (almost) entirely near-white in this
     exact frame — the measured line count for a clear caught at its flash's
     rising edge. Not clamped to MAX_LINES_PER_EVENT here (the caller decides
     what an out-of-range count means — likely the wrong frame was used, e.g.
@@ -116,8 +123,8 @@ def count_lit_rows(frame, box):
         outside = (cum[edges[0]] + cum[-1] - cum[edges[-1]]) / pitch
         muddle = sum(min(m, 1 - m) for m in means) + outside
         if best is None or muddle < best[0] - 1e-9 or (abs(muddle - best[0]) <= 1e-9 and abs(step) < abs(best[2])):
-            best = (muddle, sum(1 for m in means if m > ROW_LIT_RATIO), step)
-    return best[1]
+            best = (muddle, [ROWS - 1 - r for r, m in enumerate(means) if m > ROW_LIT_RATIO], step)
+    return sorted(best[1])
 
 
 def count_lit_bands(frame, box):
@@ -145,6 +152,7 @@ class FlashClearDetector:
         self._active = False
         self.last_ratio = 0.0
         self.last_edge_row_count = None  # set on the frame an edge fires; see count_lit_rows
+        self.last_edge_rows = []         # those rows, 0 the bottom one (lit_rows)
         # Live play (post-calibration) showed far more edges than the original
         # validation clip ever had — the box covers the WHOLE playfield, so any
         # bright moment unrelated to a line clear (light-colored pieces, a
@@ -162,7 +170,8 @@ class FlashClearDetector:
             edge = True
             # Measured at THIS exact frame, not a later one — see count_lit_rows'
             # docstring for why a later "peak" frame over-counts.
-            self.last_edge_row_count = count_lit_rows(frame, self.box)
+            self.last_edge_rows = lit_rows(frame, self.box)
+            self.last_edge_row_count = len(self.last_edge_rows)
         elif self._active and ratio < EXIT_RATIO:
             self._active = False
         if edge and self.debug_dump_dir:

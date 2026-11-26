@@ -283,10 +283,15 @@ DISPLAY_PATTERNS = {"bg_color": COLOR_PATTERN, "text_color": COLOR_PATTERN, "lin
                     "font_family": r"[^\x00-\x1f]{0,100}",
                     "font_file": r"user_fonts/[^/\\\x00-\x1f]{1,120}\.(ttf|otf|ttc)",
                     "challenge_image": r"(user_images/[^/\\\x00-\x1f]{1,120}\.(png|jpg|jpeg|webp|bmp|gif))?"}
+# 開幕テンプレ練習 (scripts/opener_practice.py) isn't offered until it's
+# finished (user, 2026-11-26): its settings are hidden and the server runs
+# none of it, whatever practice_on says. True brings it all back.
+PRACTICE_READY = False
+
 # What the stat block can show (see stat_items):
 #   apm / pps / app  as before; attack = lines sent this match; pieces = pieces placed;
 #   ren = the current REN; b2b = the current Back-to-Back chain
-STAT_ITEMS = ("apm", "pps", "app", "attack", "pieces", "ren", "b2b")
+STAT_ITEMS = ("apm", "pps", "app", "attack", "pieces", "ren", "b2b", "vs")
 LABEL_PATTERN = r"[^\x00-\x1f<>]{1,12}"
 # What the end-of-match summary can show, top to bottom: tspin = all T-spins;
 # tspin_single / _double / _triple / _mini = each kind on its own row

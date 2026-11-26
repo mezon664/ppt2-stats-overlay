@@ -41,9 +41,17 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "hud"))
 
-from config_store import load_settings  # noqa: E402
-import psutil  # noqa: E402
-from server_control import identify, identify_legacy, request_shutdown, server_pid_is_ours  # noqa: E402
+
+from startup_error import show_startup_error  # noqa: E402  (stdlib only: works on any Python)
+
+
+try:
+    from config_store import load_settings  # noqa: E402
+    import psutil  # noqa: E402
+    from server_control import identify, identify_legacy, request_shutdown, server_pid_is_ours  # noqa: E402
+except Exception as e:      # (the PC's own Python without the app's libraries, mostly)
+    show_startup_error(e)
+    raise SystemExit(1)
 
 
 def server_already_running(host, port):
@@ -279,4 +287,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        show_startup_error(e)
+        raise SystemExit(1)

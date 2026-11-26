@@ -252,7 +252,7 @@ class Band(QtWidgets.QWidget):
 PLAYER_COLORS = {"left": (59, 142, 234), "right": (229, 72, 77)}        # 1P blue / 2P red
 PLAYER_TEXT_COLORS = {"left": (140, 200, 255), "right": (255, 154, 158)}  # lighter, for text
 # Gauge style: the value that fills the bar (higher values just show it full).
-GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0, "attack": 100.0, "pieces": 300.0, "ren": 12.0, "b2b": 10.0}
+GAUGE_MAX = {"apm": 120.0, "pps": 4.0, "app": 1.0, "attack": 100.0, "pieces": 300.0, "ren": 12.0, "b2b": 10.0, "vs": 200.0}
 OUTLINE_RGB = (27, 36, 64)
 
 # display.text_weight (0-100, a slider) -> (BOLD, SEMI, THICKEN); same as
@@ -590,10 +590,10 @@ def paint_frame(p, r, kind, u, a, opacity, accent=None):
 # widest digit — so the label beside a value stays put as the number changes
 # (user report: APM etc. shifted left and right with every update).
 VALUE_TEMPLATES = {"apm": "{0}{0}{0}.{0}", "pps": "{0}.{0}{0}", "app": "{0}.{0}{0}",
-                   "attack": "{0}{0}{0}", "pieces": "{0}{0}{0}{0}", "ren": "{0}{0}", "b2b": "x{0}{0}"}
+                   "attack": "{0}{0}{0}", "pieces": "{0}{0}{0}{0}", "ren": "{0}{0}", "b2b": "x{0}{0}", "vs": "{0}{0}{0}.{0}"}
 # The stats' labels; display.labels can reword any of them (set_labels).
 DEFAULT_LABELS = {"apm": "APM", "pps": "PPS", "app": "APP", "attack": "ATK",
-                  "pieces": "PIECES", "ren": "REN", "b2b": "B2B"}
+                  "pieces": "PIECES", "ren": "REN", "b2b": "B2B", "vs": "VS"}
 DEFAULT_LABELS_EN = {**DEFAULT_LABELS, "ren": "COMBO"}   # the English game says "Combo" for REN
 LABELS = dict(DEFAULT_LABELS)
 
@@ -637,7 +637,7 @@ def fmt_value(key, value):
         return f"x{value}" if value else "--"   # no chain going
     if key in ("attack", "pieces", "ren"):
         return str(int(value))
-    return f"{value:.1f}" if key == "apm" else f"{value:.2f}"   # pps / app: 2 decimals
+    return f"{value:.1f}" if key in ("apm", "vs") else f"{value:.2f}"   # pps / app: 2 decimals
 
 
 def is_puyo(side):
@@ -666,7 +666,7 @@ def side_values(side):
     side = side or {}
     return {"apm": (side.get("apm") or {}).get("apm"), "pps": side.get("pps"), "app": side.get("app"),
             "attack": side.get("attack"), "pieces": side.get("pieces"),
-            "ren": side.get("ren"), "b2b": side.get("b2b")}
+            "ren": side.get("ren"), "b2b": side.get("b2b"), "vs": side.get("vs")}
 
 
 WHITE = (255, 255, 255)   # the main text color (display.text_color; see set_colors)
@@ -741,7 +741,7 @@ class StatBlock(Band):
     "gauge", "text"). The content hugs the board side of the block (mode =
     stats_position); sizes are reference px x u."""
 
-    KEYS = ("apm", "pps", "app", "attack", "pieces", "ren", "b2b")   # config_store.STAT_ITEMS
+    KEYS = ("apm", "pps", "app", "attack", "pieces", "ren", "b2b", "vs")   # config_store.STAT_ITEMS
     WIDTH = {"band": 92, "pop": 104, "gauge": 104, "text": 104, "simple": 92}
     # gauge: the label + value sit in the GAUGE_TEXT_W nearest the board, so
     # the label starts about where the band style's text does (80 in from the

@@ -33,7 +33,7 @@ cv2.setNumThreads(1)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from live_pipeline import MatchPipeline, VideoReplaySource  # noqa: E402
-from config_store import load_settings, display_settings, CONFIG_PATH
+from config_store import load_settings, display_settings, CONFIG_PATH, PRACTICE_READY
 from i18n import capture_message_en
 from server_control import handle_control_message
 
@@ -261,7 +261,7 @@ def practice_state(display, state):
     None when off. Only in マラソン with エンドレス ON (endless_gate.py): in a
     マラソン without it, just a line saying so."""
     global _PRACTICE, _ENDLESS, _PRACTICE_BOARD
-    if not display.get("practice_on") or display.get("enabled") is False:
+    if not PRACTICE_READY or not display.get("practice_on") or display.get("enabled") is False:
         return None
     if LAST_FRAME["frame"] is None:
         return None

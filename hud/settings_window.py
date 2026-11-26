@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from config_store import (default_font, FONT_V)
 from config_store import (load_settings, save_settings, display_settings, preset_of, preset_file,
                           read_preset_file, part_value, DISPLAY_DEFAULTS, DISPLAY_RANGES, STAT_ITEMS, PARTS,
-                          SUMMARY_ITEMS, OPENER_LANGUAGES, stats_mode)
+                          SUMMARY_ITEMS, OPENER_LANGUAGES, stats_mode, PRACTICE_READY)
 import opener_stats
 import rating
 import mosaic
@@ -138,7 +138,7 @@ LOOK_TARGETS = ("all",) + PARTS
 LOOK_KEYS = ("scale", "background_opacity", "bg_color", "text_color", "line_color")
 COLOR_KEYS = ("bg_color", "text_color", "line_color")   # what 全体をこの色に合わせる copies
 DEFAULT_LABELS = {"apm": "APM", "pps": "PPS", "app": "APP", "attack": "ATK",
-                  "pieces": "PIECES", "ren": "REN", "b2b": "B2B"}   # same as hud/overlay.py
+                  "pieces": "PIECES", "ren": "REN", "b2b": "B2B", "vs": "VS"}   # same as hud/overlay.py
 DEFAULT_LABELS_EN = {**DEFAULT_LABELS, "ren": "COMBO"}   # English: the game says "Combo"
 
 TEXT = {
@@ -351,6 +351,7 @@ TEXT = {
     "item.pieces": {"ja": "置いたミノ数", "en": "Pieces placed"},
     "item.ren": {"ja": "今のREN", "en": "Current combo"},
     "item.b2b": {"ja": "B2B（続いている回数）", "en": "Back-to-Back chain"},
+    "item.vs": {"ja": "VS SCORE（(火力＋掘った段数)÷秒×100）", "en": "VS score ((attack + garbage cleared) per second x 100)"},
     "move_up": {"ja": "▲", "en": "▲"}, "move_down": {"ja": "▼", "en": "▼"},
     "labels": {"ja": "表示名（空欄＝標準）", "en": "Names shown (blank = default)"},
     "parts_shown": {"ja": "ほかの表示", "en": "Other parts"},
@@ -645,8 +646,8 @@ PREVIEW_W, PREVIEW_H = 92, 57   # the design cards on 見た目 (smaller, five a
 DESIGN_COLUMNS = 5
 LOOK_PREVIEW_W, LOOK_PREVIEW_H = 520, 140   # the preview on 見た目
 OVERVIEW_W = 520   # the whole screen under it (user: the overview on 見本 too)
-SAMPLE_LEFT = {"apm": {"apm": 77.8}, "pps": 2.09, "app": 0.62, "attack": 112, "pieces": 181, "ren": 3, "b2b": 2}
-SAMPLE_RIGHT = {"apm": {"apm": 43.2}, "pps": 1.74, "app": 0.41, "attack": 62, "pieces": 151, "ren": 0, "b2b": 0}
+SAMPLE_LEFT = {"apm": {"apm": 77.8}, "pps": 2.09, "app": 0.62, "attack": 112, "pieces": 181, "ren": 3, "b2b": 2, "vs": 98.4}
+SAMPLE_RIGHT = {"apm": {"apm": 43.2}, "pps": 1.74, "app": 0.41, "attack": 62, "pieces": 151, "ren": 0, "b2b": 0, "vs": 61.2}
 
 
 def render_style_preview(style, d, size=None, u=0.85, full=False):
@@ -1874,6 +1875,9 @@ class SettingsWindow(QtWidgets.QWidget):
         # the deck: openers in order, their forms, the setup rates (hud/practice_deck.py)
         from practice_deck import DeckEditor
         self.deck_editor = DeckEditor(practice_names())
+        if not PRACTICE_READY:      # not offered yet (config_store.PRACTICE_READY)
+            for card in (self.practice_card, *self.deck_editor.cards):
+                card.setVisible(False)
         return self._page("page.practice", self.practice_card, *self.deck_editor.cards)
 
     def _build_other_page(self):

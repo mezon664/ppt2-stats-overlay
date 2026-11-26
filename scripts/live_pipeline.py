@@ -27,6 +27,7 @@ from queue_tracker import NextQueueTracker
 from levels import Levels
 from hold_tracker import HoldTracker
 from gameplay_gate import GameplayGate, ON_SCREEN_THRESHOLD
+from mosaic import DigCounter, GRID as GARBAGE_GRID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("live_pipeline")
@@ -251,6 +252,7 @@ class PlayerPipeline:
         # the first one's grace window was silently dropped entirely
         # (confirmed bug: fast consecutive plain clears never showed up).
         self._pending_flashes = []
+        self.dig = DigCounter(scale_box(GARBAGE_GRID[self.side], self.profile or REFERENCE_PROFILE))   # garbage rows cleared (VS SCORE)
         self.confirmed_flash_clear_count = 0  # flash events that measured a real line count
         self.dismissed_flash_count = 0  # flash events with no lit rows at all (not a real clear)
         self._pc_active = False      # PERFECT CLEAR banner on screen last frame
@@ -420,6 +422,8 @@ class PlayerPipeline:
         flash_edge = self.flash_detector.update(frame, t)
         if flash_edge:
             self._last_flash_t = t
+        real = flash_edge and 1 <= (self.flash_detector.last_edge_row_count or 0) <= MAX_LINES_PER_EVENT
+        self.dig.update(frame, self.flash_detector.last_edge_rows if real else None, self.flash_detector._active)
         self.tracker.update(frame, t, clears=self._clears_lately(t))
         self.last_frame_ok_t = t
         new_events = self.tracker.attack_events[before:]
@@ -599,6 +603,11 @@ class PlayerPipeline:
             # current REN (game numbering) and Back-to-Back chain (clears that
             # got the BtB bonus in a row: the streak minus its first clear)
             "attack": self.apm.total_lines,
+            # VS SCORE (TETR.IO's): (lines sent + garbage cleared) / pieces x PPS x 100,
+            # that is the two per second x 100
+            "garbage_cleared": self.dig.cleared,
+            "vs": round((self.apm.total_lines + self.dig.cleared) / elapsed_s * 100, 1)
+                  if elapsed_s and elapsed_s >= 1.0 and self.queue_tracker.pieces_placed else None,
             "ren": self.tracker.streak.ren_count,
             "b2b": max(0, self.tracker.streak.b2b_streak - 1),
             "capture_ok": self.last_frame_ok_t is not None and (now - self.last_frame_ok_t) < 2.0,
