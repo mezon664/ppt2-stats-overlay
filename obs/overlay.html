@@ -59,20 +59,20 @@ const DEFAULT_LABELS = { apm: "APM", pps: "PPS", app: "APP", attack: "ATK", piec
 const DEFAULT_LABELS_EN = { ...DEFAULT_LABELS, ren: "COMBO" };   // the English game says "Combo" for REN
 const UI_TEXT = {
   ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", capture_down: "認識不可",
-        summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP",
+        summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_vs: "VS SCORE",
         s_lines: "送った段数", s_pieces: "置いたミノ", s_max_ren: "最大REN",
         s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
         s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
         connecting: "接続中...", disconnected: "切断されました。再接続中..." },
   en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", capture_down: "Can't read the game",
-        summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP",
+        summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_vs: "VS SCORE",
         s_lines: "Lines sent", s_pieces: "Pieces", s_max_ren: "Max combo",
         s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
         s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
         connecting: "Connecting...", disconnected: "Disconnected. Reconnecting..." },
 };
 const SUMMARY_ROWS = [   // [key, label, decimals; null = text] (hud/overlay.py SUMMARY_ROWS)
-  ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2],
+  ["opener", "s_opener", null], ["apm", "s_apm", 1], ["pps", "s_pps", 2], ["app", "s_app", 2], ["vs", "s_vs", 1],
   ["lines_sent", "s_lines", 0], ["pieces", "s_pieces", 0], ["max_ren", "s_max_ren", 0], ["tetris", "s_tetris", 0],
   ["tspin", "s_tspin", 0], ["tspin_single", "s_tss", 0], ["tspin_double", "s_tsd", 0], ["tspin_triple", "s_tst", 0],
   ["tspin_mini", "s_tsm", 0], ["perfect_clear", "s_pc", 0]];

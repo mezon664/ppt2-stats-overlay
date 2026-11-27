@@ -123,6 +123,7 @@ DISPLAY_DEFAULTS = {
     # top center (scripts/session_stats.py). Off until switched on.
     "show_session": False,
     # which rows the summary shows (any of SUMMARY_ITEMS, always in that order)
+    # (VS SCORE can be added, off at first: user's request)
     "summary_items": ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin",
                       "perfect_clear"],
     "show_opener": True,         # show the recognized opener (開幕テンプレ)
@@ -299,7 +300,7 @@ STAT_ITEMS = ("apm", "pps", "app", "attack", "pieces", "ren", "b2b", "vs")
 LABEL_PATTERN = r"[^\x00-\x1f<>]{1,12}"
 # What the end-of-match summary can show, top to bottom: tspin = all T-spins;
 # tspin_single / _double / _triple / _mini = each kind on its own row
-SUMMARY_ITEMS = ("opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin",
+SUMMARY_ITEMS = ("opener", "apm", "pps", "app", "vs", "lines_sent", "pieces", "max_ren", "tetris", "tspin",
                  "tspin_single", "tspin_double", "tspin_triple", "tspin_mini", "perfect_clear")
 PARTS = ("stats", "clock", "events", "summary", "opener")
 PART_KEYS = {"scale": "scale", "background_opacity": "background_opacity",

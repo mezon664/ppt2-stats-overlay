@@ -404,6 +404,7 @@ TEXT = {
     "summary_items": {"ja": "試合結果に出す項目", "en": "Summary rows"},
     "sum.opener": {"ja": "開幕テンプレ", "en": "Opener"},
     "sum.apm": {"ja": "APM", "en": "APM"}, "sum.pps": {"ja": "PPS", "en": "PPS"}, "sum.app": {"ja": "APP", "en": "APP"},
+    "sum.vs": {"ja": "VS SCORE", "en": "VS SCORE"},
     "sum.lines_sent": {"ja": "送った段数", "en": "Lines sent"},
     "sum.pieces": {"ja": "置いたミノ", "en": "Pieces"},
     "sum.max_ren": {"ja": "最大REN", "en": "Max combo"},

@@ -138,3 +138,18 @@ def test_summary_items():
     assert picked["summary_items"] == ["apm", "tspin_single", "tspin_double"]   # known ones, in the fixed order
     assert display_settings({"display": {"summary_items": "x"}})["summary_items"] == d
     assert set(SUMMARY_ITEMS) >= {"tspin_single", "tspin_double", "tspin_triple"}
+
+
+def test_vs_score_can_be_in_the_summary_but_starts_off():
+    """User: VS SCORE in the match summary too, off at first."""
+    from config_store import SUMMARY_ITEMS
+    assert "vs" in SUMMARY_ITEMS and "vs" not in display_settings({})["summary_items"]
+    picked = display_settings({"display": {"summary_items": ["vs", "apm", "app"]}})["summary_items"]
+    assert picked == ["apm", "app", "vs"]                       # right after APP
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hud"))
+    from overlay import SUMMARY_ROWS, UI_TEXT, summary_side
+    row = next(r for r in SUMMARY_ROWS if r[0] == "vs")
+    assert UI_TEXT["ja"][row[1]] == UI_TEXT["en"][row[1]] == "VS SCORE"
+    assert summary_side({"vs": 173.2, "match_stats": {}})["vs"] == 173.2
+    html = (Path(__file__).resolve().parent.parent / "obs" / "overlay.html").read_text(encoding="utf-8")
+    assert '["vs", "s_vs", 1]' in html and 's_vs: "VS SCORE"' in html
