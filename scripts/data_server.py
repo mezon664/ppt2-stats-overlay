@@ -78,12 +78,16 @@ def prune_debug_frames():
     if not DEBUG_DUMP_DIR or not DEBUG_DIR.exists():
         return
     try:
-        mine = [p for p in DEBUG_DIR.glob("*.png") if p.stat().st_mtime >= RUN_STARTED]
+        # (os.scandir: its entries carry the time already — a glob and a stat
+        # per file took 2-5 s over the 63,000 frames kept there)
+        with os.scandir(DEBUG_DIR) as it:
+            mine = [(e.stat().st_mtime, e.path) for e in it
+                    if e.name.endswith(".png") and e.is_file() and e.stat().st_mtime >= RUN_STARTED]
         if len(mine) <= DEBUG_MAX_FILES:
             return
-        mine.sort(key=lambda p: p.stat().st_mtime)
-        for p in mine[:len(mine) - DEBUG_MAX_FILES]:
-            p.unlink(missing_ok=True)
+        mine.sort()
+        for _, path in mine[:len(mine) - DEBUG_MAX_FILES]:
+            Path(path).unlink(missing_ok=True)
     except Exception as e:
         log.warning("couldn't prune debug frames: %s", e)
 CAPTURE_STATUS = {"ok": False, "message": "starting"}
@@ -589,12 +593,16 @@ async def broadcaster():
     hz = settings.get("server", {}).get("broadcast_hz", 10)
     period = 1.0 / hz
     tick = 0
+    prune = None
     display = display_settings(settings)
     settings_mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else None
     while True:
         tick += 1
-        if tick % (hz * 30) == 0:  # ~30s
-            await asyncio.get_running_loop().run_in_executor(None, prune_debug_frames)
+        if tick % (hz * 30) == 0 and (prune is None or prune.done()):  # ~30s
+            # not waited for: while it ran, nothing was sent — the HUD got no
+            # state for ~5 s every ~38 s and dropped an opener name just shown
+            # (user: a late name showed only for a moment)
+            prune = asyncio.get_running_loop().run_in_executor(None, prune_debug_frames)
         if tick % hz == 0:  # ~1s: pick up display changes saved to the settings file
             try:
                 mtime = CONFIG_PATH.stat().st_mtime
