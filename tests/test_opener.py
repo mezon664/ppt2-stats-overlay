@@ -25,7 +25,8 @@ def test_shown_names_drop_the_variant_in_parentheses():
     assert screen_name("パフェ積み(中あけ)") == "パフェ積み"
     assert screen_name("りねパフェ（左凸）") == "りねパフェ"
     assert screen_name("T土台りねパフェ") == "T土台りねパフェ"
-    assert not any("(" in n or "（" in n for n, *_ in OPENERS)
+    # (a face like "(οωο)パフェ" stays: only the variant at the end goes)
+    assert not any(n.rstrip().endswith((")", "）")) for n, *_ in OPENERS)
 
 
 def test_every_shape_matches_its_own_opener():
@@ -211,7 +212,7 @@ def test_english_names_drop_their_bracket_part_too():
     """User: no (…) part in English either, same as the Japanese names."""
     from opener_detect import load_english
     names = load_english().values()
-    assert names and not any("(" in n or "（" in n for n in names)
+    assert names and not any(n.rstrip().endswith((")", "）")) for n in names)
 
 
 def test_a_first_bag_piece_held_and_a_second_bag_piece_down():
@@ -228,8 +229,9 @@ def test_a_first_bag_piece_held_and_a_second_bag_piece_down():
     l_piece = next(p for p in od.PLACEMENTS["L"] if p & shape == p)
     z_piece = next(p for p in od.PLACEMENTS["Z"] if not p & shape)
     board = (shape & ~l_piece) | z_piece
-    assert want in idx.match_with_hold(board, [z_piece], "L")
-    assert want in idx.match_with_hold(board | l_piece, [z_piece], None)
+    # (the L still in HOLD: not guessed where it goes, user judged those wrong)
+    assert idx.match_with_hold(board, [z_piece], "L") == []
+    assert want in idx.match_with_hold(board | l_piece, [z_piece], None)   # once it's down
     assert idx.match_with_hold(board, [z_piece], "T") == []        # not the piece in HOLD: nothing
     assert idx.match_with_hold(board, [], "L") == []                # no landed piece to take out
 
@@ -254,6 +256,28 @@ def test_a_held_piece_of_a_kind_already_down_is_the_next_bags():
     z = m([(8, 2), (9, 2), (7, 3), (8, 3)])
     i2 = m([(9, 3), (9, 4), (9, 5), (9, 6)])     # the next bag's I down after it
     assert idx.match_with_hold(board | z | i2, list(pieces.values()) + [z, i2], "J") == ["はちみつ砲"]
+
+
+def test_two_of_a_kind_down_is_not_a_first_bag_shape():
+    """User: building はちみつ砲, 山岳積み / しろみつ砲 came up. Its first six
+    and the next bag's J where its L goes is that shape exactly; two Js are
+    down, so it isn't a first bag. Once the L is in too, はちみつ砲."""
+    import opener_detect as od
+    idx = od.openers()
+
+    def m(cells):
+        return sum(1 << (r * od.COLS + c) for c, r in cells)
+    first = [m([(0, 0), (1, 0), (0, 1), (1, 1)]), m([(2, 0), (2, 1), (2, 2), (3, 1)]),
+             m([(3, 0), (4, 0), (4, 1), (5, 1)]), m([(6, 0), (7, 0), (8, 0), (9, 0)]),
+             m([(7, 1), (8, 1), (9, 1), (7, 2)]), m([(8, 2), (9, 2), (7, 3), (8, 3)])]
+    j2 = m([(9, 3), (9, 4), (8, 4), (7, 4)])       # the next bag's J, where the L goes
+    board = sum(first) | j2
+    rows = [[bool(board >> (r * od.COLS + c) & 1) for c in range(od.COLS)] for r in range(od.ROWS)]
+    assert "山岳積み" in idx.match(rows)                      # the shape itself is 山岳積み's
+    assert od._two_of_a_kind(first + [j2], board)          # but two Js are down
+    assert not od._two_of_a_kind(first, sum(first))
+    l_piece = m([(0, 2), (0, 3), (0, 4), (1, 2)])
+    assert idx.match_with_hold(board | l_piece, first + [j2, l_piece], None) == ["はちみつ砲"]
 
 
 def test_landed_pieces_are_noted():
@@ -372,3 +396,27 @@ def test_a_held_piece_that_could_go_two_ways_names_nothing():
     # down, so that T is the next bag's: nothing, see
     # test_a_held_piece_of_a_kind_already_down_is_the_next_bags)
     assert index.match_with_hold(board, landed, "T") == []
+
+
+def test_only_a_bracket_at_the_end_is_dropped_from_a_name():
+    """User: "パフェ" came up — "(οωο)パフェ" with its face taken off."""
+    from opener_detect import screen_name
+    assert screen_name("(οωο)パフェ") == "(οωο)パフェ"
+    assert screen_name("パフェ積み(中あけ)") == "パフェ積み"
+    assert screen_name("りねパフェ（左凸）") == "りねパフェ"
+    assert screen_name("DTT(TT)積み(Zホールド)") == "DTT(TT)積み"
+
+
+def test_a_shared_shape_waits_for_the_piece_that_tells_them_apart(monkeypatch):
+    """User: 山岳積み and 山岳積み2号 differ only in their L / J, and
+    ガムシロ積み's six pieces aren't 婿TD. A shape several openers share,
+    some of which go on to a bigger one, isn't named after two more pieces
+    but only once the opening is over (or a bigger shape comes)."""
+    import opener_detect as od
+    det = od.OpenerDetector("left")
+    idx = od.openers()
+    det._pending = (["山岳積み2号", "山岳積み"], 6, 24)
+    assert det._pending_waits_for_its_last_piece(idx)
+    det._pending = (["開幕TSD"], 6, 24)
+    assert not det._pending_waits_for_its_last_piece(idx)
+

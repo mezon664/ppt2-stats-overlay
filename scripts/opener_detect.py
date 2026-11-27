@@ -19,8 +19,8 @@ board is then the shape without the held piece and with one more piece, or,
 once the held piece goes in, the whole shape plus one more piece. So each
 piece is noted as it lands (the 4 cells that appear), and when nothing
 matches exactly each landed piece is taken out in turn: what's left must be
-a whole shape, or a shape once a piece of the kind in HOLD (its color) is put
-back somewhere. (Indexing every shape without each of its pieces instead
+a whole shape — named once the held piece is down, not guessed while it's
+still in HOLD (user judged those guesses wrong). (Indexing every shape without each of its pieces instead
 took 1.5 million entries and 527 MB.)
 
 Garbage (お邪魔) received during the opening pushes the shape up: whole
@@ -197,6 +197,13 @@ def _is_tetromino(mask):
     return tuple(sorted((x - mx, y - my) for x, y in cells)) in ALL_TURNS
 
 
+def _two_of_a_kind(landed, mask):
+    """Two landed pieces of the same kind on this board (a bag has one of each)."""
+    kinds = [_kind(p) for p in landed if p & mask == p]
+    kinds = [k for k in kinds if k]
+    return len(kinds) != len(set(kinds))
+
+
 def _kind(mask):
     """The piece kind (I, O, T, S, Z, J, L) of a landed piece, from its
     outline (each of the 19 outlines belongs to one kind), or None."""
@@ -215,7 +222,10 @@ MAX_NAMES = 2
 def screen_name(name):
     """The name as shown: without its （…）/(…) variant part — パフェ積み(中あけ)
     and りねパフェ(左凸) show as パフェ積み / りねパフェ (user's request)."""
-    return re.sub(r"\s*[（(][^）)]*[）)]", "", name).strip() or name
+    # only a (…) at the end: "(οωο)パフェ" showed as "パフェ" (user: what's パフェ?)
+    while re.search(r"\s*[（(][^（）()]*[）)]\s*$", name) and not re.fullmatch(r"\s*[（(][^（）()]*[）)]\s*", name):
+        name = re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", name)
+    return name.strip()
 
 
 class Shape(tuple):
@@ -309,24 +319,22 @@ class OpenerIndex:
         the piece kind in HOLD, or None."""
         n = bin(mask).count("1")
         shapes = []   # the whole shapes this board can be
+        down = [p for p in landed if p & mask == p]
+        kinds = [_kind(p) for p in down]
+        twice = {k for k in kinds if k and kinds.count(k) > 1}
         for piece in landed:
             if piece & mask != piece:
                 continue
+            if twice and _kind(piece) not in twice:
+                continue   # two of a kind down: the next bag's piece is one of those two
             rest = mask & ~piece
             if n - 4 in self.counts and self.by_mask.get(rest):   # the held piece went in after it: the whole shape
                 shapes.append(rest)
-            # still held: the shape once it's put back. Not when a piece of
-            # that kind is already on the board: a bag has one of each, so the
-            # held one is most likely the next bag's (user: はちみつ砲 one piece
-            # short, an O held, came up as 山岳積み2号 — its L taken out, an O
-            # put in). A wrong name is worse than none.
-            if hold in PLACEMENTS and n in self.counts and not any(
-                    _kind(p) == hold for p in landed if p & mask == p):
-                shapes += [rest | p for p in PLACEMENTS[hold] if not p & rest and self.by_mask.get(rest | p)]
-        # More than one shape: which it is depends on where a piece goes —
-        # the Z still held makes パフェ積み in one place and 新MT砲 in another,
-        # and "パフェ積み / 新MT砲" showed until the Z went in (user: another
-        # name for a moment). Nothing is named until it's on the board.
+            # (A piece still in HOLD isn't put back where it might go: that
+            # was a guess, and the user judged those names wrong — 迷走砲 with
+            # its I not yet down, はちみつ砲 one piece short as 山岳積み2号 or
+            # 上弦積み, a loose stack as "パフェ". The name comes once it's down.)
+        # More than one shape: not named
         if len(set(shapes)) != 1:
             return []
         return list(self.by_mask[shapes[0]])
@@ -503,9 +511,17 @@ class OpenerDetector:
         if lifted:   # the shape sits on top of the garbage it was pushed up by
             occupancy = occupancy[lifted:] + [[False] * COLS for _ in range(lifted)]
         mask = _mask(occupancy)
+        self._seen_mask = mask
         self._note_landing(mask, placed)
         index = openers()
         found = index.match_cells(occupancy, self.placements)
+        if found and _two_of_a_kind(self.landed, mask):
+            # Two pieces of one kind down: a piece of the next bag is in it,
+            # so it isn't a first bag's shape. はちみつ砲's first six and the
+            # next bag's J where its L goes is 山岳積み / しろみつ砲 exactly
+            # (user: building はちみつ砲, another name came up). The hold case
+            # below names it once the first bag is complete.
+            found = []
         names = [name for name, _ in found]
         if names and bin(mask).count("1") < FULL_BAG_CELLS:
             # see STEP_SHORT_PIECES
@@ -531,9 +547,18 @@ class OpenerDetector:
             names = openers().match_with_hold(mask, self.landed, hold)
             if names:
                 return self._announce(names, bin(mask).count("1"))
-        if self._pending is not None and self.placements - self._pending[1] >= WAIT_PIECES:
+        if (self._pending is not None and self.placements - self._pending[1] >= WAIT_PIECES
+                and not self._pending_waits_for_its_last_piece(index)):
             return self._announce(*self._pending[::2])
         return None
+
+    def _pending_waits_for_its_last_piece(self, index):
+        """Several openers share the shape kept back, and some go on to a
+        bigger one: which it is shows with the next piece (user: 山岳積み and
+        山岳積み2号 are the same but for their L / J; ガムシロ積み, not 婿TD).
+        Kept back until the opening is over then, unless a bigger shape comes."""
+        names, _, cells = self._pending
+        return len(names) > 1 and any(index.max_cells.get(n, 0) > cells for n in names)
 
     def _announce(self, names, cells=0):
         self._pending = None
@@ -547,8 +572,11 @@ class OpenerDetector:
             # what it was named from (user: another name showed for a moment
             # while building パフェ積み, and nothing told which board it was)
             import logging
+            # (the board as matched on this frame — the settled one lags a
+            # few frames, and the logged boards didn't show what was named)
             logging.getLogger("opener").info(
-                "[%s] named %s from board %s | landed %s | placements %d", self.side, name, _draw_mask(self._board),
-                " ".join(_draw_mask(p) for p in self.landed), self.placements)
+                "[%s] named %s from board %s | landed %s | hold %s | placements %d", self.side, name,
+                _draw_mask(getattr(self, "_seen_mask", self._board)),
+                " ".join(_draw_mask(p) for p in self.landed), self._last_hold, self.placements)
             return name
         return None

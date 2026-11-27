@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>テンプレ判定チェック</title>
+<style>
+:root{--bg:#f6f6f8;--fg:#1b1b1f;--card:#fff;--line:#ddd;--muted:#666;--ok:#2e8b57;--ng:#c0392b;--unk:#888}
+@media (prefers-color-scheme:dark){:root{--bg:#141418;--fg:#eee;--card:#1f1f25;--line:#333;--muted:#aaa}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,"Yu Gothic UI",sans-serif}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px;z-index:2}
+header h1{font-size:17px;margin:0 0 4px}
+header .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+main{max-width:900px;margin:0 auto;padding:12px 16px 80px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:0 0 12px}
+.card.ok{border-left:6px solid var(--ok)}.card.ng{border-left:6px solid var(--ng)}.card.unk{border-left:6px solid var(--unk)}
+.head{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}.no,.cnt{color:var(--muted);font-size:13px}
+.body{display:flex;gap:16px;flex-wrap:wrap}.refs .lbl{font-size:12px;color:var(--muted)}
+.figs{display:flex;gap:8px;flex-wrap:wrap}figure{margin:0}figcaption{font-size:11px;color:var(--muted);max-width:90px}
+.now{margin-top:6px;font-size:13px;color:#d48a00}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.card.ok button[data-v=ok]{background:var(--ok);color:#fff}.card.ng button[data-v=ng]{background:var(--ng);color:#fff}
+.card.unk button[data-v=unk]{background:var(--unk);color:#fff}
+input{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);flex:1;min-width:160px}
+textarea{width:100%;height:120px;box-sizing:border-box;margin-top:6px}
+.hide-done .card.ok,.hide-done .card.ng,.hide-done .card.unk{display:none}
+</style></head><body>
+<header><h1>テンプレ判定チェック（<!--TOTAL-->件・回数の多い順）</h1>
+<div class="bar"><span id="prog"></span><label><input type="checkbox" id="hide" style="flex:none;min-width:0"> 判定済みを隠す</label>
+<button id="copy">結果をコピー</button></div>
+<textarea id="out" readonly hidden></textarea></header>
+<main id="list">
+<!--CARDS-->
+</main>
+<script>
+const KEY="opener_check_v1";let marks={};try{marks=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(marks))}catch(e){}};
+const cards=[...document.querySelectorAll(".card")];
+function paint(){let n=0;for(const c of cards){const m=marks[c.dataset.id];c.classList.remove("ok","ng","unk");
+ if(m){c.classList.add(m.v);n++;c.querySelector("input").value=m.note||""}}
+ document.getElementById("prog").textContent=`判定済み ${n} / ${cards.length}`}
+for(const c of cards){c.querySelectorAll("button").forEach(b=>b.onclick=()=>{const id=c.dataset.id;
+  marks[id]={v:b.dataset.v,note:c.querySelector("input").value};save();paint()});
+ c.querySelector("input").oninput=e=>{const id=c.dataset.id;marks[id]={v:(marks[id]||{}).v||"ng",note:e.target.value};save();paint()}}
+document.getElementById("hide").onchange=e=>document.getElementById("list").classList.toggle("hide-done",e.target.checked);
+document.getElementById("copy").onclick=async()=>{const lines=cards.filter(c=>marks[c.dataset.id]).map(c=>{const m=marks[c.dataset.id];
+  return `#${+c.dataset.id+1} ${m.v} | ${c.dataset.name} | ${c.dataset.board}${m.note?" | 正: "+m.note:""}`});
+ const t=lines.join("\n");const o=document.getElementById("out");o.hidden=false;o.value=t;
+ try{await navigator.clipboard.writeText(t);document.getElementById("copy").textContent="コピーしました"}catch(e){o.select()}};
+paint();
+</script></body></html>
