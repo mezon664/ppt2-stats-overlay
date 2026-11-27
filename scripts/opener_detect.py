@@ -197,6 +197,17 @@ def _is_tetromino(mask):
     return tuple(sorted((x - mx, y - my) for x, y in cells)) in ALL_TURNS
 
 
+def _kind(mask):
+    """The piece kind (I, O, T, S, Z, J, L) of a landed piece, from its
+    outline (each of the 19 outlines belongs to one kind), or None."""
+    cells = [(i % COLS, i // COLS) for i in range(MASK_ROWS * COLS) if mask >> i & 1]
+    if len(cells) != 4:
+        return None
+    mx, my = min(x for x, _ in cells), min(y for _, y in cells)
+    outline = tuple(sorted((x - mx, y - my) for x, y in cells))
+    return next((k for k, turns in TURNS.items() if outline in turns), None)
+
+
 # A board shared by several openers shows this many names, then "ほか".
 MAX_NAMES = 2
 
@@ -304,7 +315,13 @@ class OpenerIndex:
             rest = mask & ~piece
             if n - 4 in self.counts and self.by_mask.get(rest):   # the held piece went in after it: the whole shape
                 shapes.append(rest)
-            if hold in PLACEMENTS and n in self.counts:  # still held: the shape once it's put back
+            # still held: the shape once it's put back. Not when a piece of
+            # that kind is already on the board: a bag has one of each, so the
+            # held one is most likely the next bag's (user: はちみつ砲 one piece
+            # short, an O held, came up as 山岳積み2号 — its L taken out, an O
+            # put in). A wrong name is worse than none.
+            if hold in PLACEMENTS and n in self.counts and not any(
+                    _kind(p) == hold for p in landed if p & mask == p):
                 shapes += [rest | p for p in PLACEMENTS[hold] if not p & rest and self.by_mask.get(rest | p)]
         # More than one shape: which it is depends on where a piece goes —
         # the Z still held makes パフェ積み in one place and 新MT砲 in another,

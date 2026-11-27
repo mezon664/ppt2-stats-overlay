@@ -234,6 +234,28 @@ def test_a_first_bag_piece_held_and_a_second_bag_piece_down():
     assert idx.match_with_hold(board, [], "L") == []                # no landed piece to take out
 
 
+def test_a_held_piece_of_a_kind_already_down_is_the_next_bags():
+    """User: はちみつ砲 with only its Z still to come came up as 山岳積み2号 —
+    the L taken out as if from the next bag, the O in HOLD put back. The O is
+    already down, so the held one is the next bag's: nothing is named then,
+    and the whole はちみつ砲 still is once its Z is in."""
+    import opener_detect as od
+    idx = od.openers()
+
+    def m(cells):
+        return sum(1 << (r * od.COLS + c) for c, r in cells)
+    pieces = {"O": m([(0, 0), (1, 0), (0, 1), (1, 1)]), "T": m([(2, 0), (2, 1), (2, 2), (3, 1)]),
+              "S": m([(3, 0), (4, 0), (4, 1), (5, 1)]), "I": m([(6, 0), (7, 0), (8, 0), (9, 0)]),
+              "J": m([(7, 1), (8, 1), (9, 1), (7, 2)]), "L": m([(0, 2), (0, 3), (0, 4), (1, 2)])}
+    assert all(od._kind(p) == k for k, p in pieces.items())
+    board = sum(pieces.values())
+    for hold in ("O", "L", "S", None):
+        assert "山岳積み2号" not in idx.match_with_hold(board, list(pieces.values()), hold), hold
+    z = m([(8, 2), (9, 2), (7, 3), (8, 3)])
+    i2 = m([(9, 3), (9, 4), (9, 5), (9, 6)])     # the next bag's I down after it
+    assert idx.match_with_hold(board | z | i2, list(pieces.values()) + [z, i2], "J") == ["はちみつ砲"]
+
+
 def test_landed_pieces_are_noted():
     import opener_detect as od
     d = od.OpenerDetector("left")
@@ -346,4 +368,7 @@ def test_a_held_piece_that_could_go_two_ways_names_nothing():
                                  "#........./##......../#.........", ".......###/.........#/........../..........")]
     index = od.openers()
     assert index.match_with_hold(board, landed, "Z") == []
-    assert index.match_with_hold(board, landed, "T") == ["Sホールドパフェ2号"]   # one way only: still named
+    # (a T in HOLD went one way only, Sホールドパフェ2号 — but a T is already
+    # down, so that T is the next bag's: nothing, see
+    # test_a_held_piece_of_a_kind_already_down_is_the_next_bags)
+    assert index.match_with_hold(board, landed, "T") == []
