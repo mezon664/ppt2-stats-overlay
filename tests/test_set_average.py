@@ -32,23 +32,14 @@ def _frame(folder, t):
     ("burst_boundary", 94.7, ("stars", 1, 0, False)),    # one won
     ("burst_boundary", 149.5, ("stars", 1, 0, False)),   # マッチポイント
     ("burst_break", 20.0, ("digits", None, None, False)),   # 2★ WIN ★9: not 0-0 (a 9 isn't a 0)
+    ("burst_set", 20.0, ("digits", 0, 0, True)),            # 0★ WIN ★0: a set starts
+    ("burst_set", 60.0, ("digits", 0, None, False)),        # 0★ WIN ★1
+    ("burst_set", 280.0, ("digits", None, None, False)),    # 1★ WIN ★4 (a 4 isn't a 0 either)
 ])
 def test_the_counter_is_read(folder, t, want):
     frame, profile = _frame(folder, t)
     r = set_counter.read(frame, profile)
     assert r is not None and (r["mode"], r["left"], r["right"], r["zero"]) == want
-
-
-def test_a_zero_is_told_from_a_nine():
-    import cv2
-    import numpy as np
-    zero = np.zeros((20, 14), np.uint8)
-    cv2.ellipse(zero, (7, 10), (5, 8), 0, 0, 360, 255, 3)
-    nine = np.zeros((20, 14), np.uint8)
-    cv2.circle(nine, (7, 6), 4, 255, 3)
-    cv2.line(nine, (10, 6), (9, 18), 255, 3)
-    assert set_counter._is_zero(zero)
-    assert not set_counter._is_zero(nine)
 
 
 def _match(t, winner, apm, start):
@@ -73,7 +64,7 @@ def test_the_set_starts_at_0_0_and_counts_the_match_just_over(tmp_path):
     s = tr.update(_state(200, 50, frozen=True, counter=one, winner="right", apm=100.0), history, now=1120)
     assert s["matches"] == 2 and s["wins"] == {"left": 1, "right": 1}
     assert s["left"]["apm"] == pytest.approx(90.0)            # (80 + 100) / 2, the old set left out
-    assert s["left"]["tetris"] == pytest.approx(1.5)
+    assert "tetris" not in s["left"]                          # (only APM, PPS, APP, VS SCORE: user)
     assert s["right"]["apm"] == pytest.approx(60.0)
     history = history + [_match(1121, "right", 100.0, 200)]   # once kept, not counted twice
     assert tr.update(_state(200, 50, frozen=True, counter=one, winner="right", apm=100.0), history,
@@ -101,3 +92,24 @@ def test_the_summary_shows_the_averages_when_asked():
     assert "{n}" in UI_TEXT["ja"]["set_title"] and "{v}" in UI_TEXT["ja"]["set_avg"]
     html = (ROOT / "obs" / "overlay.html").read_text(encoding="utf-8")
     assert "summary_set_average: false" in html and "summary.set = state.set" in html
+
+
+def test_each_match_keeps_its_set_and_the_stats_group_them(tmp_path):
+    """User: the set averages in the stats too. Each match keeps the set it
+    was in (its start); the stats group the kept matches by it."""
+    import opener_stats
+    tr = set_stats.SetTracker(reset_path=tmp_path / "reset.json")
+    zero = {"mode": "stars", "left": 0, "right": 0, "zero": True}
+    st = _state(100, 2, counter=zero)
+    tr.update(st, [], now=1000)
+    over = _state(100, 50, frozen=True, counter=zero, winner="left", apm=90.0)
+    over["set"] = tr.update(over, [], now=1050)
+    rec = opener_stats.match_record(over, now=1051)
+    assert rec["set"] == over["set"]["since"]
+    def m(t, s, win, apm):
+        return {"t": t, "set": s, "winner": win, "left": {"stats": {"apm": apm}}, "right": {"stats": {"apm": 50.0}}}
+    sets = set_stats.group_sets([m(10, 5, "left", 80), m(20, 5, "right", 100), m(40, 30, "right", 60),
+                                 {"t": 50, "winner": "left", "left": {}, "right": {}}])   # (one kept before: no set)
+    assert [s["start"] for s in sets] == [30, 5]                 # newest first
+    assert sets[1]["matches"] == 2 and sets[1]["wins"] == {"left": 1, "right": 1}
+    assert sets[1]["left"]["apm"] == pytest.approx(90.0)

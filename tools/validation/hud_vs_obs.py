@@ -52,10 +52,8 @@ def state_for(display, frozen=False):
           "capture": {"ok": True}, "result_final": True}
     if display.get("summary_set_average"):   # 連戦平均 (scripts/set_stats.py)
         st["set"] = {"matches": 3, "wins": {"left": 2, "right": 1},
-                     "left": {"apm": 70.1, "pps": 1.95, "app": 0.6, "lines_sent": 98.3, "max_ren": 4.3, "tetris": 5.0,
-                              "tspin": 7.7, "perfect_clear": 0.3},
-                     "right": {"apm": 51.0, "pps": 1.8, "app": 0.47, "lines_sent": 70.0, "max_ren": 2.0, "tetris": 2.0,
-                               "tspin": 3.3, "perfect_clear": 0.0}}
+                     "left": {"apm": 70.1, "pps": 1.95, "app": 0.6, "vs": 150.2},
+                     "right": {"apm": 51.0, "pps": 1.8, "app": 0.47, "vs": 101.0}}
     return st
 
 

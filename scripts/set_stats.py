@@ -16,9 +16,9 @@ SIDES = ("left", "right")
 RESET_PATH = Path(__file__).resolve().parent.parent / "config" / "set_reset.json"
 # with no counter to read, a match this long after the last one starts a new set
 SET_GAP_S = 600.0
-# averaged (the summary's number rows; the opener isn't)
-KEYS = ("apm", "pps", "app", "vs", "lines_sent", "pieces", "max_ren", "tetris", "tspin",
-        "tspin_single", "tspin_double", "tspin_triple", "tspin_mini", "perfect_clear")
+# averaged: only these (user: APM, PPS, APP and VS SCORE are enough, in the
+# summary too — its other rows get no average line)
+KEYS = ("apm", "pps", "app", "vs")
 
 
 def reset_now(path=RESET_PATH, now=None):
@@ -39,6 +39,36 @@ def _numbers(side_state):
     """One player's numbers as the summary shows them (live state)."""
     import opener_stats
     return opener_stats.match_numbers(side_state or {})
+
+
+def _averages(rows, side):
+    sums, counts = {}, {}
+    for r in rows:
+        stats = (r.get(side) or {}).get("stats") or {}
+        for k in KEYS:
+            v = stats.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                sums[k] = sums.get(k, 0.0) + v
+                counts[k] = counts.get(k, 0) + 1
+    return {k: sums[k] / counts[k] for k in sums}
+
+
+def group_sets(matches, limit=None):
+    """The kept matches by the set they were in (their "set": the set's start),
+    newest set first: [{"start", "end", "matches", "wins": {side: n},
+    "left": {key: average}, "right": ...}]. Matches kept before sets were noted
+    have none and aren't in any."""
+    groups = {}
+    for m in matches:
+        s = m.get("set")
+        if isinstance(s, (int, float)) and not isinstance(s, bool) and m.get("winner") in SIDES                 and isinstance(m.get("t"), (int, float)):
+            groups.setdefault(s, []).append(m)
+    out = []
+    for start, ms in sorted(groups.items(), reverse=True):
+        out.append({"start": start, "end": max(m["t"] for m in ms), "matches": len(ms),
+                    "wins": {sd: sum(1 for m in ms if m["winner"] == sd) for sd in SIDES},
+                    **{sd: _averages(ms, sd) for sd in SIDES}})
+    return out[:limit] if limit else out
 
 
 class SetTracker:
@@ -86,15 +116,8 @@ class SetTracker:
                               else {"stats": _numbers(state.get(sd))}) for sd in SIDES} | {"winner": state["winner"]})
         if not rows:
             return None
-        out = {"matches": len(rows), "wins": {sd: sum(1 for r in rows if r["winner"] == sd) for sd in SIDES}}
+        out = {"matches": len(rows), "wins": {sd: sum(1 for r in rows if r["winner"] == sd) for sd in SIDES},
+               "since": round(self.since)}   # (kept with each match: the set it was in, group_sets)
         for sd in SIDES:
-            sums, counts = {}, {}
-            for r in rows:
-                stats = r[sd].get("stats") or {}
-                for k in KEYS:
-                    v = stats.get(k)
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
-                        sums[k] = sums.get(k, 0.0) + v
-                        counts[k] = counts.get(k, 0) + 1
-            out[sd] = {k: sums[k] / counts[k] for k in sums}
+            out[sd] = _averages(rows, sd)
         return out

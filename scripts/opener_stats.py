@@ -29,6 +29,9 @@ def match_record(state, now=None):
            "match_start_t": state.get("match_start_t")}
     if state.get("you_side") in SIDES:   # which side was you (今日の成績: scripts/session_stats.py)
         out["you"] = state["you_side"]
+    since = (state.get("set") or {}).get("since")
+    if isinstance(since, (int, float)) and not isinstance(since, bool):
+        out["set"] = since   # the set it was in (its start): 連戦ごと in the stats (set_stats.group_sets)
     for side in SIDES:
         data = state.get(side) or {}
         if data.get("puyo"):

@@ -53,8 +53,13 @@ def _is_zero(mask):
     # a 0's hole runs nearly top to bottom: only a stroke above and below it.
     # A 9's (burst_break: hole 8 of 16 px, 7 px of stroke under it) or a 6's
     # leaves much more on one side.
+    # A 4's little triangle is in its middle too (a live recording, burst_set:
+    # "★4" read as 0): a 0's hole is most of its height (14 of 16 px) and a
+    # big share of its box (0.38; the 4's 0.11, the 9's 0.2).
     top_gap, bottom_gap = hy - gy, (gy + gh) - (hy + hh)
-    return top_gap <= 0.3 * gh and bottom_gap <= 0.3 * gh and hh >= 0.45 * gh and gw <= 0.9 * gh
+    hole_share = cv2.contourArea(contours[holes[0]]) / float(gw * gh)
+    return (top_gap <= 0.3 * gh and bottom_gap <= 0.3 * gh and hh >= 0.65 * gh and hole_share >= 0.25
+            and gw <= 0.9 * gh)
 
 
 def _side(frame, box, scale):

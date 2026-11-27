@@ -282,6 +282,14 @@ TEXT = {
                 "en": "Matches that end with a winner are recorded automatically as they end (not ones left or "
                       "restarted midway). A Puyo Puyo side isn't counted. The last 500 matches are kept."},
     "st.clear": {"ja": "記録を消す", "en": "Clear the record"},
+    "sets.title": {"ja": "連戦ごとの平均", "en": "Each set's averages"},
+    "sets.desc": {"ja": "1P / 2P の順。連戦の区切りは試合結果の「連戦の平均」と同じです（WIN の星が 0-0 の試合から）。",
+                  "en": "1P / 2P. Sets are split as in the summary's set averages (from a match whose WIN stars read 0-0)."},
+    "sets.col_when": {"ja": "日時", "en": "When"},
+    "sets.col_matches": {"ja": "試合", "en": "Matches"},
+    "sets.col_score": {"ja": "勝敗", "en": "Score"},
+    "sets.empty": {"ja": "まだありません。これからの試合から、連戦ごとに記録されます。",
+                   "en": "None yet. Sets are recorded from the matches played from now on."},
     "st.clear_confirm": {"ja": "試合の統計の記録をすべて消しますか？", "en": "Clear every match from the match stats?"},
     "st.tip": {"ja": "{name}: {used} 試合（{share}）　勝率 {rate}",
                "en": "{name}: {used} matches ({share})  win rate {rate}"},
@@ -405,7 +413,8 @@ TEXT = {
     "sum.opener": {"ja": "開幕テンプレ", "en": "Opener"},
     "sum.apm": {"ja": "APM", "en": "APM"}, "sum.pps": {"ja": "PPS", "en": "PPS"}, "sum.app": {"ja": "APP", "en": "APP"},
     "sum.vs": {"ja": "VS SCORE", "en": "VS SCORE"},
-    "summary_set_average": {"ja": "連戦の平均も出す（数値の下に小さく）", "en": "Also show the set's averages (small, under each number)"},
+    "summary_set_average": {"ja": "連戦の平均も出す（APM・PPS・APP・VS SCORE の下に小さく）",
+                            "en": "Also show the set's averages (small, under APM, PPS, APP and VS SCORE)"},
     "summary_set_average_tip": {
         "ja": "画面下の WIN の星が 0-0 の試合から、連戦の平均を数え直します。星が読めないときは、前の試合から10分以上空いたら数え直します。",
         "en": "The set's averages start over at a match whose WIN stars read 0-0 (or, with no stars to read, after a 10-minute break)."},
@@ -2373,7 +2382,51 @@ class SettingsWindow(QtWidgets.QWidget):
         self.st_last.currentIndexChanged.connect(self._opener_stats_options_changed)
         self.st_vs.currentIndexChanged.connect(self._opener_stats_options_changed)
         self._build_today_card()
-        return self._page("page.stats", self.today_card, self.stats_card)
+        self._build_sets_card()
+        return self._page("page.stats", self.today_card, self.sets_card, self.stats_card)
+
+    # --- 連戦ごとの平均 (scripts/set_stats.group_sets; a user's request) ---
+    SET_COLUMNS = (("apm", "APM", 1), ("pps", "PPS", 2), ("app", "APP", 2), ("vs", "VS SCORE", 1))
+    SETS_SHOWN = 30
+
+    def _build_sets_card(self):
+        self.sets_card = ui.Card()
+        lay = self.sets_card.body_layout
+        self.sets_desc = ui.muted()
+        lay.addWidget(self.sets_desc)
+        self.sets_table = QtWidgets.QTableWidget(0, 3 + len(self.SET_COLUMNS))
+        self.sets_table.verticalHeader().setVisible(False)
+        self.sets_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.sets_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.sets_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.sets_table.setMinimumHeight(150)
+        head = self.sets_table.horizontalHeader()
+        for c in range(self.sets_table.columnCount()):
+            head.setSectionResizeMode(c, QtWidgets.QHeaderView.ResizeMode.Stretch if c == 0
+                                      else QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        lay.addWidget(self.sets_table)
+        self.sets_empty = ui.muted()
+        lay.addWidget(self.sets_empty)
+
+    def refresh_sets(self, matches=None):
+        import datetime
+        import set_stats
+        t = self.tr_
+        sets = set_stats.group_sets(opener_stats.load() if matches is None else matches, self.SETS_SHOWN)
+        self.sets_empty.setText(t("sets.empty"))
+        self.sets_empty.setVisible(not sets)
+        self.sets_table.setRowCount(len(sets))
+        for r, s in enumerate(sets):
+            when = datetime.datetime.fromtimestamp(s["start"]).strftime("%m/%d %H:%M")
+            cells = [when, str(s["matches"]), f'{s["wins"]["left"]} - {s["wins"]["right"]}']
+            for key, _, dec in self.SET_COLUMNS:
+                vals = [(s.get(sd) or {}).get(key) for sd in ("left", "right")]
+                cells.append(" / ".join("--" if v is None else f"{v:.{dec}f}" for v in vals))
+            for c, text in enumerate(cells):
+                item = QtWidgets.QTableWidgetItem(text)
+                if c:
+                    item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                self.sets_table.setItem(r, c, item)
 
     # --- 今日の成績 (scripts/session_stats.py; the server works it out, the HUD passes it on) ---
     TODAY_TILES = (("record", "rate", "streak", "rating"), ("apm", "pps", "app"))
@@ -2470,6 +2523,10 @@ class SettingsWindow(QtWidgets.QWidget):
                                                  t("st.col_win")])
         self.st_note.setText(t("st.note"))
         self.st_clear.setText(t("st.clear"))
+        self.sets_card.setTitle(t("sets.title"))
+        self.sets_desc.setText(t("sets.desc"))
+        self.sets_table.setHorizontalHeaderLabels([t("sets.col_when"), t("sets.col_matches"), t("sets.col_score")]
+                                                  + [name for _, name, _ in self.SET_COLUMNS])
         self.refresh_opener_stats()
 
     def _opener_stats_options_changed(self, *_):
@@ -2501,6 +2558,7 @@ class SettingsWindow(QtWidgets.QWidget):
         t = self.tr_
         n, side = self.st_last.currentData(), self.st_side.currentData()
         matches = opener_stats.load()
+        self.refresh_sets(matches)
         rows, total, picked = opener_stats.tally(matches, n, side, self._stats_english(), self.st_vs.currentData())
         won = sum(w for _, _, w in rows)
         if total:
