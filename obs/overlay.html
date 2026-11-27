@@ -60,12 +60,14 @@ const DEFAULT_LABELS_EN = { ...DEFAULT_LABELS, ren: "COMBO" };   // the English 
 const UI_TEXT = {
   ja: { frozen: "試合終了", paused: "試合中断中", waiting: "スタート待ち", capture_down: "認識不可",
         summary: "試合結果", s_opener: "開幕", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_vs: "VS SCORE",
+        set_title: "連戦 {n}試合の平均（{l}-{r}）", set_avg: "平均 {v}",
         s_lines: "送った段数", s_pieces: "置いたミノ", s_max_ren: "最大REN",
         s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "パーフェクト",
         s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
         connecting: "接続中...", disconnected: "切断されました。再接続中..." },
   en: { frozen: "Match over", paused: "Paused", waiting: "Waiting for start", capture_down: "Can't read the game",
         summary: "Match summary", s_opener: "Opener", s_apm: "APM", s_pps: "PPS", s_app: "APP", s_vs: "VS SCORE",
+        set_title: "Set average, {n} matches ({l}-{r})", set_avg: "avg {v}",
         s_lines: "Lines sent", s_pieces: "Pieces", s_max_ren: "Max combo",
         s_tetris: "TETRIS", s_tspin: "T-SPIN", s_pc: "Perfect clear",
         s_tss: "T-SPIN Single", s_tsd: "T-SPIN Double", s_tst: "T-SPIN Triple", s_tsm: "T-SPIN Mini",
@@ -85,6 +87,7 @@ const DEFAULTS = { style: "gauge", always_show: false, force_show: false, enable
   stats_right_offset_x: 0, stats_right_offset_y: 0, opener_offset_x: 0, opener_offset_y: 0,
   opener_left_offset_x: 0, opener_left_offset_y: 0, opener_right_offset_x: 0, opener_right_offset_y: 0,
   show_on_hud: true, show_on_obs: true, show_summary: true, show_session: false, show_opener: true, opener_display: "board", background_opacity: 0.85,
+  summary_set_average: false,
   stat_items: ["apm", "pps", "app"], labels: {}, player_color_left: "#3b8eea", player_color_right: "#e5484d",
   parts: {}, show_clock: true, show_event_log: false, event_log_count: 3,
   summary_items: ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear"] };
@@ -864,6 +867,10 @@ function clockPaint(ctx, c) {
 
 // --- SummaryBlock ---
 const SUM_W = 212, SUM_TITLE_H = 28, SUM_ROW_H = 20, SUM_COL_X = 0.2;
+// 連戦平均 (hud/overlay.py SET_*): a small line under each number and the title
+const SET_MIN_MATCHES = 2, SET_AVG_H = 12, SET_TITLE_H = 14, SET_AVG_PX = 10;
+const setShown = (m) => !!(m.setAverage && m.set && (m.set.matches || 0) >= SET_MIN_MATCHES);
+const fmtTpl = (t, o) => t.replace(/\{(\w+)\}/g, (_, k) => o[k]);
 const summary = newPart({ style: "band", language: "ja", openerLanguage: "ja", duration: 0, sides: { left: {}, right: {} }, rows: SUMMARY_ROWS });
 function summarySide(side) {
   side = side || {};
@@ -900,17 +907,21 @@ function summaryTextLines(m, side, key) {
   return wrapLines(v, 12 * m.u, BOLD, 2 * SUM_W * m.u * SUM_COL_X - 12 * m.u, SUM_TEXT_LINES);
 }
 function summaryRowHeights(m) {
+  const shown = setShown(m);
+  // (only a row with an average to show grows: hud/overlay.py _has_avg)
+  const hasAvg = (key) => ["left", "right"].some((sd) => (m.set[sd] || {})[key] != null);
   return m.rows.map(([key, , dec]) => {
     const n = dec === null ? Math.max(1, ...["left", "right"].map((sd) => (summaryTextLines(m, sd, key) || []).length)) : 1;
-    return SUM_ROW_H + (n - 1) * SUM_TEXT_LINE_H;
+    return SUM_ROW_H + (n - 1) * SUM_TEXT_LINE_H + (shown && dec !== null && hasAvg(key) ? SET_AVG_H : 0);
   });
 }
+const summaryTitleH = (m) => SUM_TITLE_H + (setShown(m) ? SET_TITLE_H : 0);
 function summaryResize(m) {
   m.w = int(SUM_W * m.u);
-  m.h = int((SUM_TITLE_H + summaryRowHeights(m).reduce((s, h) => s + h, 0) + 8) * m.u);
+  m.h = int((summaryTitleH(m) + summaryRowHeights(m).reduce((s, h) => s + h, 0) + 8) * m.u);
 }
-function summaryConfigure(m, style, language, u, items) {
-  Object.assign(m, { style, language, u });
+function summaryConfigure(m, style, language, u, items, setAverage) {
+  Object.assign(m, { style, language, u, setAverage: !!setAverage });
   m.rows = SUMMARY_ROWS.filter(([k]) => !Array.isArray(items) || items.includes(k));
   summaryResize(m);
 }
@@ -931,10 +942,17 @@ function summaryPaint(ctx, m) {
   const ui = UI_TEXT[m.language];
   const outline = (st === "text" || st === "minimal") ? 1.3 * u : 0;
   drawText(ctx, W / 2, 20 * u, `${ui.summary}  ${fmtClock(m.duration)}`, 15 * u, BOLD, WHITE, "center", outline, a);
+  const shown = setShown(m);
+  if (shown) {
+    const wins = m.set.wins || {};
+    drawText(ctx, W / 2, (20 + SET_TITLE_H) * u, fmtTpl(ui.set_title, { n: m.set.matches, l: wins.left || 0, r: wins.right || 0 }),
+             SET_AVG_PX * u, SEMI, SOFT, "center", outline, a);
+  }
   const heights = summaryRowHeights(m);
-  let top = SUM_TITLE_H + 4;
+  let top = summaryTitleH(m) + 4;
   m.rows.forEach(([key, labelKey, dec], i) => {
-    const base = (top + 15) * u, extra = (heights[i] - SUM_ROW_H) * u;   // a text row of several lines
+    const base = (top + 15) * u;
+    const extra = shown && dec !== null ? 0 : (heights[i] - SUM_ROW_H) * u;   // a text row of several lines
     top += heights[i];
     drawText(ctx, W / 2, base + extra / 2, ui[labelKey], 12 * u, SEMI, SOFT, "center", outline, a);
     for (const [side, x] of [["left", W * SUM_COL_X], ["right", W * (1 - SUM_COL_X)]]) {
@@ -951,6 +969,9 @@ function summaryPaint(ctx, m) {
       }
       const v = data[key];
       drawText(ctx, x, base, v == null ? "--" : Number(v).toFixed(dec), 15 * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a);
+      const avg = shown ? (m.set[side] || {})[key] : null;
+      if (avg != null) drawText(ctx, x, base + SET_AVG_H * u, fmtTpl(ui.set_avg, { v: Number(avg).toFixed(dec === 0 ? 1 : dec) }),
+                                SET_AVG_PX * u, SEMI, SOFT, "center", outline, a);
     }
   });
 }
@@ -1101,7 +1122,7 @@ function layout() {
   look(clock, "clock"); clock.style = d.style; clock.u = pu("clock"); clockResize(clock);
   look(session, "clock"); session.style = d.style; session.u = pu("clock"); clockResize(session);
   look(summary, "summary"); summary.openerLanguage = openerLanguage();
-  summaryConfigure(summary, d.style, d.language, pu("summary"), d.summary_items);
+  summaryConfigure(summary, d.style, d.language, pu("summary"), d.summary_items, d.summary_set_average);
   for (const b of Object.values(badges)) {
     look(b, "opener");
     Object.assign(b, { mode: d.opener_display === "cat" ? "board" : d.opener_display, style: d.style, language: d.language, u: pu("opener") });
@@ -2300,6 +2321,7 @@ function render(state) {
   versus.puyo = { left: isPuyo(state.left), right: isPuyo(state.right) };
   summary.duration = state.match_elapsed_s || 0;
   summary.sides = { left: summarySide(state.left), right: summarySide(state.right) };
+  summary.set = state.set || null;   // 連戦平均 (scripts/set_stats.py)
   summaryResize(summary);   // long opener names: more lines, a taller box
   // dim rather than hide when capture is down: the numbers are the last real measurement
   for (const p of [stats.left, stats.right, events.left, events.right, versus, clock, session, summary, ...Object.values(badges)]) p.dim = stale;

@@ -44,10 +44,15 @@ def match_record(state, now=None):
 AVERAGED = ("apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin", "perfect_clear")
 
 
+# kept too, for the set's averages in the summary (scripts/set_stats.py), not averaged here
+ALSO_KEPT = ("tspin_single", "tspin_double", "tspin_triple", "tspin_mini")
+
+
 def match_numbers(data):
     stats = data.get("match_stats") or {}
-    out = {"apm": (data.get("apm") or {}).get("apm"), "pps": data.get("pps"), "app": data.get("app")}
-    out.update({k: stats.get(k) for k in AVERAGED if k not in out})
+    out = {"apm": (data.get("apm") or {}).get("apm"), "pps": data.get("pps"), "app": data.get("app"),
+           "vs": data.get("vs")}
+    out.update({k: stats.get(k) for k in AVERAGED + ALSO_KEPT if k not in out})
     return {k: v for k, v in out.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
 

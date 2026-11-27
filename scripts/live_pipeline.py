@@ -56,6 +56,10 @@ HOLD_ADJUST_WINDOW_S = 1.0
 # After the victory banner, the clears still waiting are finished for this
 # long: the longest a banner can follow its flash (FLASH_GRACE_BY_LINES_S, 1.1)
 SETTLE_AFTER_END_S = 1.2
+# the set's WIN counter is read in a match's first few seconds, and taken once
+# this many reads agree (scripts/set_counter.py, set_stats.py)
+SET_COUNTER_S = 6.0
+SET_COUNTER_AGREE = 3
 BANNER_LINES = {"clear_4": 4, "tspin_double": 2, "tspin_single": 1, "tspin_triple": 3, "tspin_mini": 1,
                 "tspin_mini_double": 2}
 
@@ -976,6 +980,8 @@ class MatchPipeline:
         self._result_held = False
         self.frame_count = 0
         self.match_reset_count += 1
+        self._set_reads = []        # the set's WIN counter, read in the match's first seconds
+        self.set_counter = None
 
     def _trace_go(self, frame, raw_t, orange, note):
         """Keeps the GO! region of a between-matches frame (half size) with its
@@ -1309,6 +1315,7 @@ class MatchPipeline:
                 side.process_frame(frame, t)
         self._last_t = t
         self.frame_count += 1
+        self._read_set_counter(frame, t)
         now_wall = time.time()
         if self._last_fps_t is None:
             self._last_fps_t = now_wall
@@ -1316,6 +1323,26 @@ class MatchPipeline:
             self.fps = (self.frame_count - self._last_fps_count) / (now_wall - self._last_fps_t)
             self._last_fps_t = now_wall
             self._last_fps_count = self.frame_count
+
+    def _read_set_counter(self, frame, t):
+        """The set's WIN counter (scripts/set_counter.py), read every few
+        frames in the match's first SET_COUNTER_S seconds: once SET_COUNTER_AGREE
+        reads say the same, that's it (for the set's averages, set_stats.py)."""
+        if getattr(self, "set_counter", None) is not None or self.start_t is None                 or t - self.start_t > SET_COUNTER_S or self.frame_count % 3:
+            return
+        import set_counter
+        from capture_profile import compute_profile
+        profile = self.profile if getattr(self.profile, "ok", False) else compute_profile(frame.shape[1], frame.shape[0])
+        r = set_counter.read(frame, profile)
+        if r is None:
+            return
+        reads = getattr(self, "_set_reads", None)
+        if reads is None:
+            reads = self._set_reads = []
+        reads.append(r)
+        if sum(1 for x in reads if x == r) >= SET_COUNTER_AGREE:
+            self.set_counter = r
+            log.info("set counter: %s", r)
 
     def snapshot(self):
         elapsed = round((self._last_t - self.start_t), 2) if self.start_t is not None else 0
@@ -1343,6 +1370,7 @@ class MatchPipeline:
             # who won the match just finished ("left" / "right"; None until then)
             "winner": getattr(self, "winner", None) if self._frozen else None,
             "match_screen": self.match_screen,   # the overlays hide while False (see MATCH_SCREEN_HIDE_S)
+            "set_counter": getattr(self, "set_counter", None),   # the set's WIN counter (set_stats.py)
             "paused": self._paused and not self._frozen,
             # A possible next match is waiting for GO!. The overlays show
             # 試合終了 first while frozen, so on the set-end menu (which can

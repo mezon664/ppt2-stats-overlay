@@ -371,6 +371,23 @@ def rated_match(you_seen_recently, club):
     return bool(you_seen_recently) and club is not True
 
 
+SET = {"tracker": None, "history": [], "mtime": None}
+
+
+def set_state(state):
+    import opener_stats
+    import set_stats
+    if SET["tracker"] is None:
+        SET["tracker"] = set_stats.SetTracker()
+    try:
+        mtime = opener_stats.HISTORY_PATH.stat().st_mtime
+    except OSError:
+        mtime = None
+    if mtime != SET["mtime"]:
+        SET["mtime"], SET["history"] = mtime, opener_stats.load()
+    return SET["tracker"].update(state, SET["history"])
+
+
 def session_state():
     """state["session"]: the summary and its lines in both languages, or None.
     Worked out again only when the game session or a kept file changes."""
@@ -638,6 +655,11 @@ async def broadcaster():
         except Exception:
             log.exception("working out the session's results failed")
             state["session"] = None
+        try:   # 連戦平均: the set's averages for the summary (scripts/set_stats.py)
+            state["set"] = set_state(state)
+        except Exception:
+            log.exception("working out the set's averages failed")
+            state["set"] = None
         payload = json.dumps(state, ensure_ascii=False)
         dead = set()
         # A copy: each send awaits, and a client disconnecting meanwhile is

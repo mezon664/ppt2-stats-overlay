@@ -126,6 +126,9 @@ DISPLAY_DEFAULTS = {
     # (VS SCORE can be added, off at first: user's request)
     "summary_items": ["opener", "apm", "pps", "app", "lines_sent", "pieces", "max_ren", "tetris", "tspin",
                       "perfect_clear"],
+    # 連戦平均 (a user's request): each number's average over the set, under
+    # it in the summary (scripts/set_stats.py). Off until switched on.
+    "summary_set_average": False,
     "show_opener": True,         # show the recognized opener (開幕テンプレ)
     # where: "board"   big over the player's own board, for a few seconds (A)
     #        "hold"    small under the HOLD box, for a few seconds (B)

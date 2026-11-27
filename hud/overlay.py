@@ -109,7 +109,8 @@ UI_TEXT = {
     "ja": {"frozen": "試合終了", "paused": "試合中断中", "waiting": "スタート待ち",
            "capture_down": "認識不可",
            "summary": "試合結果", "s_opener": "開幕", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
-           "s_vs": "VS SCORE", "s_lines": "送った段数", "s_pieces": "置いたミノ", "s_max_ren": "最大REN",
+           "s_vs": "VS SCORE", "s_lines": "送った段数",
+           "set_title": "連戦 {n}試合の平均（{l}-{r}）", "set_avg": "平均 {v}", "s_pieces": "置いたミノ", "s_max_ren": "最大REN",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "パーフェクト",
            "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
            "edit_hint": "位置調整中：黄色い枠をドラッグで移動、マウスホイールで大きさ変更（設定画面の「完了」で終了）",
@@ -118,7 +119,8 @@ UI_TEXT = {
     "en": {"frozen": "Match over", "paused": "Paused", "waiting": "Waiting for start",
            "capture_down": "Can't read the game",
            "summary": "Match summary", "s_opener": "Opener", "s_apm": "APM", "s_pps": "PPS", "s_app": "APP",
-           "s_vs": "VS SCORE", "s_lines": "Lines sent", "s_pieces": "Pieces", "s_max_ren": "Max combo",
+           "s_vs": "VS SCORE", "s_lines": "Lines sent",
+           "set_title": "Set average, {n} matches ({l}-{r})", "set_avg": "avg {v}", "s_pieces": "Pieces", "s_max_ren": "Max combo",
            "s_tetris": "TETRIS", "s_tspin": "T-SPIN", "s_pc": "Perfect clear",
            "s_tss": "T-SPIN Single", "s_tsd": "T-SPIN Double", "s_tst": "T-SPIN Triple", "s_tsm": "T-SPIN Mini",
            "edit_hint": "Adjusting: drag a yellow box to move it, use the mouse wheel to resize it (press Done in the settings to finish)",
@@ -1530,6 +1532,13 @@ SUMMARY_ROWS = (   # (key in the row data, label key in UI_TEXT, format; None = 
 )   # shown: the ones in display.summary_items (same order as config_store.SUMMARY_ITEMS)
 
 
+# 連戦平均 in the summary (display.summary_set_average): a small line under
+# each number and under the title, from two matches in the set
+SET_MIN_MATCHES = 2
+SET_AVG_H = 12      # the extra room a number row takes for its average
+SET_TITLE_H = 14
+SET_AVG_PX = 10
+
 # a finished match is kept once its result is complete (state["result_final"]),
 # or after this long all the same (frames stopped coming right at the end)
 KEEP_WAIT_S = 3.0
@@ -1571,17 +1580,29 @@ class SummaryBlock(Band):
         self.duration = 0.0
         self.sides = {"left": summary_side(None), "right": summary_side(None)}
         self.rows = list(SUMMARY_ROWS)
+        self.set_average = False    # display.summary_set_average
+        self.set = None             # state["set"] (scripts/set_stats.py)
 
-    def configure(self, style, language, u, items=None):
+    def configure(self, style, language, u, items=None, set_average=False):
         """items: display.summary_items (None = every row)."""
         self.style, self.language, self.u = style, language, u
         self.rows = [r for r in SUMMARY_ROWS if items is None or r[0] in items]
+        self.set_average = set_average
         self._resize()
 
     def update_match(self, state):
         self.duration = state.get("match_elapsed_s", 0) or 0
         self.sides = {"left": summary_side(state.get("left")), "right": summary_side(state.get("right"))}
+        self.set = state.get("set")
         self._resize()
+
+    def _has_avg(self, key):
+        """This row has a set average to show (a number row, either side)."""
+        return any((self.set.get(sd) or {}).get(key) is not None for sd in ("left", "right"))
+
+    def _set_shown(self):
+        """連戦平均 under the numbers: asked for, and two matches or more in the set."""
+        return bool(self.set_average and self.set and (self.set.get("matches") or 0) >= SET_MIN_MATCHES)
 
     def _text_lines(self, side, key):
         """A text row's (opener's) lines in its column, or None for none."""
@@ -1597,16 +1618,20 @@ class SummaryBlock(Band):
 
     def _row_heights(self):
         out = []
+        shown = self._set_shown()
         for key, _, fmt in self.rows:
             n = 1
             if fmt is None:
                 n = max([len(self._text_lines(sd, key) or []) for sd in ("left", "right")] + [1])
-            out.append(self.ROW_H + (n - 1) * self.TEXT_LINE_H)
+            out.append(self.ROW_H + (n - 1) * self.TEXT_LINE_H + (SET_AVG_H if shown and self._has_avg(key) else 0))
         return out
+
+    def _title_h(self):
+        return self.TITLE_H + (SET_TITLE_H if self._set_shown() else 0)
 
     def _resize(self):
         u = self.u
-        size = (int(self.WIDTH * u), int((self.TITLE_H + sum(self._row_heights()) + 8) * u))
+        size = (int(self.WIDTH * u), int((self._title_h() + sum(self._row_heights()) + 8) * u))
         if (self.width(), self.height()) != size:
             self.setFixedSize(*size)
         self.update()
@@ -1652,10 +1677,17 @@ class SummaryBlock(Band):
         W = r.width()
         title = f"{ui['summary']}  {fmt_clock(self.duration)}"
         draw_text(p, W / 2, 20 * u, title, self.TITLE_PX * u, BOLD, WHITE, "center", outline, a)
-        top = self.TITLE_H + 4
+        shown = self._set_shown()
+        if shown:
+            wins = self.set.get("wins") or {}
+            sub = ui["set_title"].format(n=self.set["matches"], l=wins.get("left", 0), r=wins.get("right", 0))
+            draw_text(p, W / 2, (20 + SET_TITLE_H) * u, sub, SET_AVG_PX * u, SEMI, SOFT, "center", outline, a)
+        top = self._title_h() + 4
         for (key, label_key, fmt), row_h in zip(self.rows, self._row_heights()):
             base = (top + 15) * u
             extra = (row_h - self.ROW_H) * u    # a text row of several lines
+            if shown and fmt is not None:
+                extra = 0       # (the room below, if any, is the average's)
             draw_text(p, W / 2, base + extra / 2, ui[label_key], self.LABEL_PX * u, SEMI, SOFT, "center", outline, a)
             top += row_h
             # each player's column centered on its own side (user's request)
@@ -1672,6 +1704,13 @@ class SummaryBlock(Band):
                     continue
                 text = "--" if v is None else fmt.format(v)
                 draw_text(p, x, base, text, self.VALUE_PX * u, BOLD, PLAYER_TEXT_COLORS[side], "center", outline, a)
+                if shown:
+                    avg = (self.set.get(side) or {}).get(key)
+                    if avg is not None:
+                        # (counts: one decimal on their average)
+                        v_text = f"{avg:.1f}" if fmt == "{:d}" else fmt.format(avg)
+                        draw_text(p, x, base + SET_AVG_H * u, ui["set_avg"].format(v=v_text), SET_AVG_PX * u,
+                                  SEMI, SOFT, "center", outline, a)
 
 
 class OpenerBadge(Band):
@@ -2376,7 +2415,8 @@ class HudWindow(QtWidgets.QWidget):
         self.session.configure(d["style"], pu("clock"))
         look(self.summary, "summary")
         self.summary.opener_language = opener_language(d)
-        self.summary.configure(d["style"], d["language"], pu("summary"), d["summary_items"])
+        self.summary.configure(d["style"], d["language"], pu("summary"), d["summary_items"],
+                               d.get("summary_set_average", False))
         for badge in self.badges.values():
             look(badge, "opener")
             # (with the cat the boxes aren't used: kept set up as the big one)

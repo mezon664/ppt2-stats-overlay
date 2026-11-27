@@ -405,6 +405,12 @@ TEXT = {
     "sum.opener": {"ja": "開幕テンプレ", "en": "Opener"},
     "sum.apm": {"ja": "APM", "en": "APM"}, "sum.pps": {"ja": "PPS", "en": "PPS"}, "sum.app": {"ja": "APP", "en": "APP"},
     "sum.vs": {"ja": "VS SCORE", "en": "VS SCORE"},
+    "summary_set_average": {"ja": "連戦の平均も出す（数値の下に小さく）", "en": "Also show the set's averages (small, under each number)"},
+    "summary_set_average_tip": {
+        "ja": "画面下の WIN の星が 0-0 の試合から、連戦の平均を数え直します。星が読めないときは、前の試合から10分以上空いたら数え直します。",
+        "en": "The set's averages start over at a match whose WIN stars read 0-0 (or, with no stars to read, after a 10-minute break)."},
+    "set_reset": {"ja": "連戦の平均をリセット", "en": "Reset the set's averages"},
+    "set_reset_done": {"ja": "リセットしました（次の試合から数えます）", "en": "Reset (counting from the next match)"},
     "sum.lines_sent": {"ja": "送った段数", "en": "Lines sent"},
     "sum.pieces": {"ja": "置いたミノ", "en": "Pieces"},
     "sum.max_ren": {"ja": "最大REN", "en": "Max combo"},
@@ -1186,6 +1192,16 @@ class SettingsWindow(QtWidgets.QWidget):
             return True
         return super().eventFilter(obj, event)
 
+    def _reset_set(self):
+        """連戦平均 from zero: the server counts from the next match (set_stats.reset_now)."""
+        import set_stats
+        try:
+            set_stats.reset_now()
+            self.set_reset.setText(self.tr_("set_reset_done"))
+            QtCore.QTimer.singleShot(2500, lambda: self.set_reset.setText(self.tr_("set_reset")))
+        except OSError:
+            logging.getLogger("hud").exception("couldn't reset the set's averages")
+
     def _row(self, key, widget, label_w=110):
         """A labeled row (the label's text set by retranslate from TEXT[key])."""
         lab = QtWidgets.QLabel()
@@ -1546,6 +1562,12 @@ class SettingsWindow(QtWidgets.QWidget):
             self.summary_items.addItem(it)
         self.summary_items.itemChanged.connect(self._changed)
         self.summary_card.add(self.summary_items)
+        # 連戦平均: under each number, its average over the set (scripts/set_stats.py)
+        self.summary_set_average = QtWidgets.QCheckBox()
+        self.summary_set_average.toggled.connect(self._changed)
+        self.set_reset = QtWidgets.QPushButton()
+        self.set_reset.clicked.connect(self._reset_set)
+        self.summary_card.add(_hbox(self.summary_set_average, self.set_reset))
 
         self.show_opener = ui.Switch()
         self.opener_card = ui.Card(self.show_opener)
@@ -2598,6 +2620,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.event_log_count.setSuffix(t("count_suffix"))
         self.summary_card.setTitle(t("card.summary"))
         self.summary_card.setDescription(t("card.summary_desc"))
+        self.summary_set_average.setText(t("summary_set_average"))
+        self.summary_set_average.setToolTip(t("summary_set_average_tip"))
+        self.set_reset.setText(t("set_reset"))
         self.summary_items.blockSignals(True)   # renaming rows isn't an edit
         for i in range(self.summary_items.count()):
             it = self.summary_items.item(i)
@@ -3121,6 +3146,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.opener_seconds.setValue(d["opener_seconds"])
         self.show_event_log.setChecked(d["show_event_log"])
         self.show_summary.setChecked(d["show_summary"])
+        self.summary_set_average.setChecked(d["summary_set_average"])
         self.show_session.setChecked(d["show_session"])
         self.next_switch.setChecked(d["challenge_next"] != "off")
         self.challenge_next.setCurrentIndex(max(0, self.challenge_next.findData(
@@ -3214,6 +3240,7 @@ class SettingsWindow(QtWidgets.QWidget):
             "opener_language": self.opener_language.currentData(),
             "show_event_log": self.show_event_log.isChecked(),
             "show_summary": self.show_summary.isChecked(),
+            "summary_set_average": self.summary_set_average.isChecked(),
             "show_session": self.show_session.isChecked(),
             "challenge_next": self.challenge_next.currentData() if self.next_switch.isChecked() else "off",
             "challenge_cats": self.challenge_cats.isChecked(),
@@ -3324,7 +3351,7 @@ class SettingsWindow(QtWidgets.QWidget):
             (self.clock_card, ("show_clock",)),
             (self.session_card, ("show_session",)),
             (self.events_card, ("show_event_log", "event_log_count")),
-            (self.summary_card, ("show_summary", "summary_items")),
+            (self.summary_card, ("show_summary", "summary_items", "summary_set_average")),
             (self.opener_card, ("show_opener", "opener_display", "opener_seconds", "opener_language")),
             (self.ch_target_card, ("challenge_side", "challenge_off_in_rated")),
             (self.ch_next_card, ("challenge_next",)),

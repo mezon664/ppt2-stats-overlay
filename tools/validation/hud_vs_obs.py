@@ -47,9 +47,16 @@ def state_for(display, frozen=False):
         st = state_for({k: v for k, v in display.items() if k != "_vs_puyo"}, frozen)
         st["right"] = {"puyo": True}
         return st
-    return {"match_elapsed_s": 86.6, "frozen": frozen, "display": display, "match_screen": True,
-            "left": json.loads(json.dumps(LEFT)), "right": json.loads(json.dumps(RIGHT)),
-            "capture": {"ok": True}}
+    st = {"match_elapsed_s": 86.6, "frozen": frozen, "display": display, "match_screen": True,
+          "left": json.loads(json.dumps(LEFT)), "right": json.loads(json.dumps(RIGHT)),
+          "capture": {"ok": True}, "result_final": True}
+    if display.get("summary_set_average"):   # 連戦平均 (scripts/set_stats.py)
+        st["set"] = {"matches": 3, "wins": {"left": 2, "right": 1},
+                     "left": {"apm": 70.1, "pps": 1.95, "app": 0.6, "lines_sent": 98.3, "max_ren": 4.3, "tetris": 5.0,
+                              "tspin": 7.7, "perfect_clear": 0.3},
+                     "right": {"apm": 51.0, "pps": 1.8, "app": 0.47, "lines_sent": 70.0, "max_ren": 2.0, "tetris": 2.0,
+                               "tspin": 3.3, "perfect_clear": 0.0}}
+    return st
 
 
 def hud_image(app, display, frozen):
@@ -170,6 +177,7 @@ def main():
         cases.append((name, dict(DISPLAY_DEFAULTS, style=st, show_event_log=True, **extra), False))
         cases.append((f"{name}_summary", dict(DISPLAY_DEFAULTS, style=st, **extra), True))
     cases.append(("vs_puyo", dict(DISPLAY_DEFAULTS, _vs_puyo=True), False))
+    cases.append(("set_summary", dict(DISPLAY_DEFAULTS, summary_set_average=True), True))
     for om in ("hold", "namebar", "top"):
         cases.append((f"opener_{om}", dict(DISPLAY_DEFAULTS, opener_display=om), False))
     for name, display, frozen in cases:
