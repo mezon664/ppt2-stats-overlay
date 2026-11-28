@@ -1,5 +1,6 @@
 """Updates from GitHub releases (scripts/updater.py): only newer versions,
 only GitHub addresses, nothing outside the app, the user's own files kept."""
+import json
 import subprocess
 import sys
 import time
@@ -90,64 +91,117 @@ def test_release_info_from_atom_skips_non_version_tags_and_builds_code_zip_url()
     assert updater._allowed(info["url"])
 
 
-def test_check_latest_falls_back_when_github_api_is_rate_limited(monkeypatch):
-    import io
+class _Resp:
+    def __init__(self, body=b"", final=None):
+        self.body, self.final = body, final
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self.body
+
+    def geturl(self):
+        return self.final
+
+
+FEED = b"""<feed xmlns=\"http://www.w3.org/2005/Atom\">
+  <entry><title>nightly</title></entry>
+  <entry><title>v9.9.9</title></entry>
+</feed>"""
+
+
+def _fake(monkeypatch, answers):
+    """answers: url -> a _Resp or an exception (raised); calls are counted."""
+    calls = []
+    monkeypatch.setattr(updater, "RETRY_WAIT_S", 0)
+
+    def fake_open(url, accept="application/octet-stream"):
+        calls.append(url)
+        a = answers[url]
+        a = a(len(calls)) if callable(a) else a
+        if isinstance(a, Exception):
+            raise a
+        return a
+    monkeypatch.setattr(updater, "_open", fake_open)
+    return calls
+
+
+def test_check_latest_uses_the_latest_page_when_the_api_is_rate_limited(monkeypatch):
+    """User report: now and then the new version wasn't found. The API has an
+    hourly limit per network; github.com's latest page has none."""
     from urllib.error import HTTPError
-
-    class Resp(io.BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    feed = b"""<feed xmlns=\"http://www.w3.org/2005/Atom\">
-      <entry><title>nightly</title></entry>
-      <entry><title>v9.9.9</title></entry>
-    </feed>"""
-
-    def fake_open(url, accept="application/octet-stream"):
-        if url == updater.LATEST_URL:
-            raise HTTPError(url, 403, "rate limit exceeded", None, None)
-        assert url == updater.RELEASES_ATOM_URL
-        return Resp(feed)
-
-    monkeypatch.setattr(updater, "_open", fake_open)
+    calls = _fake(monkeypatch, {
+        updater.LATEST_URL: HTTPError(updater.LATEST_URL, 403, "rate limit exceeded", None, None),
+        updater.LATEST_PAGE_URL: _Resp(final="https://github.com/mezon664/ppt2-stats-overlay/releases/tag/v9.9.9"),
+        updater.RELEASES_ATOM_URL: AssertionError("the feed isn't needed"),
+    })
     info = updater.check_latest()
-    assert info["version"] == "9.9.9"
+    assert info["version"] == "9.9.9" and info["url"].endswith("/v9.9.9/PPTetrics-v9.9.9.zip")
     assert info["page"].endswith("/releases/tag/v9.9.9")
+    assert calls.count(updater.LATEST_URL) == 2          # (asked again before moving on)
 
 
-def test_check_latest_falls_back_when_api_has_no_usable_asset(monkeypatch):
-    import io
-    import json
-
-    class Resp(io.BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    def fake_open(url, accept="application/octet-stream"):
-        if url == updater.LATEST_URL:
-            return Resp(json.dumps(release(name="source.zip")).encode())
-        assert url == updater.RELEASES_ATOM_URL
-        return Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>v9.9.9</title></entry></feed>')
-
-    monkeypatch.setattr(updater, "_open", fake_open)
+def test_check_latest_falls_back_to_the_feed_last(monkeypatch):
+    from urllib.error import HTTPError, URLError
+    _fake(monkeypatch, {
+        updater.LATEST_URL: HTTPError(updater.LATEST_URL, 403, "rate limit exceeded", None, None),
+        updater.LATEST_PAGE_URL: URLError("timed out"),
+        updater.RELEASES_ATOM_URL: _Resp(FEED),
+    })
     assert updater.check_latest()["version"] == "9.9.9"
 
 
-def test_check_latest_reports_both_failures(monkeypatch):
+def test_a_slow_moment_is_asked_again(monkeypatch):
     from urllib.error import URLError
+    calls = _fake(monkeypatch, {
+        updater.LATEST_URL: lambda n: URLError("timed out") if n == 1 else _Resp(json.dumps(release()).encode()),
+    })
+    assert updater.check_latest()["version"] == "9.9.9" and len(calls) == 2
 
-    def fake_open(url, accept="application/octet-stream"):
-        raise URLError("offline")
 
-    monkeypatch.setattr(updater, "_open", fake_open)
-    with pytest.raises(RuntimeError, match="API check failed.*release feed fallback failed"):
+def test_check_latest_falls_back_when_api_has_no_usable_asset(monkeypatch):
+    _fake(monkeypatch, {
+        updater.LATEST_URL: _Resp(json.dumps(release(name="source.zip")).encode()),
+        updater.LATEST_PAGE_URL: _Resp(final="https://github.com/mezon664/ppt2-stats-overlay/releases"),  # no tag
+        updater.RELEASES_ATOM_URL: _Resp(FEED),
+    })
+    assert updater.check_latest()["version"] == "9.9.9"
+
+
+def test_check_latest_reports_every_failure(monkeypatch):
+    from urllib.error import URLError
+    _fake(monkeypatch, {u: URLError("offline") for u in
+                        (updater.LATEST_URL, updater.LATEST_PAGE_URL, updater.RELEASES_ATOM_URL)})
+    with pytest.raises(RuntimeError, match="GitHub API.*latest page.*release feed"):
         updater.check_latest()
+
+
+def test_a_broken_download_is_tried_again(tmp_path, monkeypatch):
+    class Body(_Resp):
+        headers = {"Content-Length": "3"}
+
+        def __init__(self):
+            super().__init__()
+            self.left = [b"zip", b""]
+
+        def read(self, n=-1):
+            return self.left.pop(0)
+    _fake(monkeypatch, {"https://github.com/x.zip": lambda n: ConnectionResetError() if n == 1 else Body()})
+    assert updater.download("https://github.com/x.zip", tmp_path / "u.zip").read_bytes() == b"zip"
+
+
+def test_the_failure_message_links_the_download_page():
+    sys.path.insert(0, str(ROOT / "hud"))
+    from settings_window import TEXT
+    for lang in ("ja", "en"):
+        assert "{page}" in TEXT["up.failed"][lang] and "{why}" in TEXT["up.failed"][lang]
+        assert "{page}" in TEXT["up.install_failed"][lang]
+    wf = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "--draft " in wf and "--draft=false" in wf     # published once the zips are up
 
 
 def test_no_downloads_from_elsewhere():

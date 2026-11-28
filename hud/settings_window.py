@@ -305,13 +305,16 @@ TEXT = {
     "up.checking": {"ja": "確認しています…", "en": "Checking…"},
     "up.latest": {"ja": "最新の版です。", "en": "You have the latest version."},
     "up.found": {"ja": "新しい版 v{} があります。", "en": "Version v{} is available."},
-    "up.failed": {"ja": "確認できませんでした（インターネットにつながっているか確認してください）。",
-                  "en": "Couldn't check (is the internet connection up?)."},
+    "up.failed": {"ja": "確認できませんでした（インターネットにつながっているか確認してください）。<br>"
+                        "<a href=\"{page}\">ダウンロードページ</a>から手動でも入れられます。<br><small>理由: {why}</small>",
+                  "en": "Couldn't check (is the internet connection up?).<br>"
+                        "You can also get it by hand from the <a href=\"{page}\">download page</a>.<br><small>Reason: {why}</small>"},
     "up.install": {"ja": "更新して再起動", "en": "Update and restart"},
     "up.confirm": {"ja": "v{} に更新して、アプリを再起動します。よろしいですか？\n（設定や読み込んだフォントはそのまま残ります）",
                    "en": "Update to v{} and restart the app?\n(Your settings and loaded fonts are kept.)"},
     "up.downloading": {"ja": "ダウンロードしています… {}", "en": "Downloading… {}"},
-    "up.install_failed": {"ja": "更新できませんでした: {}", "en": "Couldn't update: {}"},
+    "up.install_failed": {"ja": "更新できませんでした: {}<br><a href=\"{page}\">ダウンロードページ</a>から手動でも入れられます。",
+                          "en": "Couldn't update: {}<br>You can also get it by hand from the <a href=\"{page}\">download page</a>."},
     "up.notes": {"ja": "この版の変更点", "en": "What's new"},
     "up.note": {"ja": "更新しても、設定・読み込んだフォント・プリセットはそのまま残ります。勝手に更新されることはありません。\n\n"
                       "PPTetrics は非公式のファンツールです。セガ・The Tetris Company とは関係ありません。\n"
@@ -2017,6 +2020,8 @@ class SettingsWindow(QtWidgets.QWidget):
         card.add(_hbox(self.up_check, self.up_install))
         self.up_status = QtWidgets.QLabel()
         self.up_status.setWordWrap(True)
+        self.up_status.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.up_status.setOpenExternalLinks(True)   # (the download page, when a check fails)
         card.add(self.up_status)
         self.up_notes_title = QtWidgets.QLabel()
         self.up_notes_title.setStyleSheet("font-weight: 700;")
@@ -2125,7 +2130,12 @@ class SettingsWindow(QtWidgets.QWidget):
             if self._update_silent:
                 self.update_available.emit(info)
         elif not self._update_silent:
-            self.up_status.setText(self.tr_("up.failed") if error else self.tr_("up.latest"))
+            if error:
+                import html
+                self.up_status.setText(self.tr_("up.failed").format(page=self._updater.RELEASES_PAGE_URL,
+                                                                     why=html.escape(error)))
+            else:
+                self.up_status.setText(self.tr_("up.latest"))
             self.up_install.setVisible(False)
 
     def show_update_tab(self):
@@ -2159,7 +2169,9 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _on_update_prepared(self, cmd, error):
         if not cmd:
-            self.up_status.setText(self.tr_("up.install_failed").format(error))
+            import html
+            page = (self._update_info or {}).get("page") or self._updater.RELEASES_PAGE_URL
+            self.up_status.setText(self.tr_("up.install_failed").format(html.escape(str(error)), page=page))
             self.up_install.setEnabled(True)
             self.up_check.setEnabled(True)
             return

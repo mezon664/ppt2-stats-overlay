@@ -33,6 +33,12 @@ ROOT = Path(__file__).resolve().parent.parent
 UPDATE_REPO = "mezon664/ppt2-stats-overlay"
 LATEST_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 RELEASES_ATOM_URL = f"https://github.com/{UPDATE_REPO}/releases.atom"
+# github.com's own "latest release" page: it redirects to .../releases/tag/vX.Y.Z.
+# Not under the API's hourly limit (60 a network, shared by everyone behind
+# it) and, unlike the feed, never an old copy (user report: now and then the
+# new version wasn't found).
+LATEST_PAGE_URL = f"https://github.com/{UPDATE_REPO}/releases/latest"
+RELEASES_PAGE_URL = f"https://github.com/{UPDATE_REPO}/releases"
 # the release zip: PPTetrics-v1.2.3.zip (the app was "ppt2-stats-overlay" up to
 # v0.1.0; releases carry a copy under that name too, for copies that old)
 ASSET_PREFIXES = ("PPTetrics", "ppt2-stats-overlay")
@@ -43,7 +49,10 @@ ALLOWED_HOSTS = {"github.com", "api.github.com", "objects.githubusercontent.com"
 PRESERVE = ("config/overlay_settings.json", "config/opener_history.json", "config/rating_history.json",
             "config/practice_deck.json", "config/practice_rates", "assets/user_fonts", "debug_frames", "logs", ".venv", "samples", ".git",
             "runtime")   # the full package's bundled Python (tools/build_full.py)
-TIMEOUT_S = 10
+TIMEOUT_S = 20
+# each source is asked again after a short wait before the next one is tried
+ATTEMPTS = 2
+RETRY_WAIT_S = 2.0
 log = logging.getLogger("pptetrics.updater")
 
 
@@ -98,51 +107,98 @@ def release_info_from_atom(payload):
     root = ElementTree.fromstring(payload)
     ns = "{http://www.w3.org/2005/Atom}"
     for entry in root.findall(f"{ns}entry"):
-        tag = (entry.findtext(f"{ns}title") or "").strip()
-        version_parts = parse_version(tag)
-        if version_parts is None:
-            continue  # skip prerelease or non-version tags
-        version = ".".join(str(part) for part in version_parts)
-        tag = f"v{version}"
-        return {
-            "version": version,
-            "url": f"https://github.com/{UPDATE_REPO}/releases/download/{tag}/PPTetrics-{tag}.zip",
-            "notes": "",
-            "page": f"https://github.com/{UPDATE_REPO}/releases/tag/{tag}",
-        }
+        info = _release_from_tag((entry.findtext(f"{ns}title") or "").strip())
+        if info is not None:   # (prerelease / non-version tags skipped)
+            return info
     return None
 
 
-def check_latest():
-    """The newest release if newer than this copy; falls back to GitHub's feed."""
-    api_error = None
-    try:
-        with _open(LATEST_URL, accept="application/vnd.github+json") as resp:
-            info = release_info(json.loads(resp.read().decode("utf-8")))
-        if info is not None:
-            return info if is_newer(info["version"]) else None
-    except Exception as exc:
-        api_error = exc
+def _release_from_tag(tag):
+    """A release known only by its tag: the code-only zip's stable name."""
+    version_parts = parse_version(tag)
+    if version_parts is None:
+        return None
+    version = ".".join(str(part) for part in version_parts)
+    tag = f"v{version}"
+    return {
+        "version": version,
+        "url": f"https://github.com/{UPDATE_REPO}/releases/download/{tag}/PPTetrics-{tag}.zip",
+        "notes": "",
+        "page": f"https://github.com/{UPDATE_REPO}/releases/tag/{tag}",
+    }
 
-    try:
-        with _open(RELEASES_ATOM_URL, accept="application/atom+xml") as resp:
-            info = release_info_from_atom(resp.read())
-        if info is None:
-            raise ValueError("GitHub releases feed contains no stable version tag")
-        if api_error is not None:
-            log.warning("GitHub API update check failed; release feed fallback succeeded: %s", api_error)
-        return info if is_newer(info["version"]) else None
-    except Exception as feed_error:
-        if api_error is not None:
-            message = (f"GitHub API check failed ({api_error}); "
-                       f"release feed fallback failed ({feed_error})")
-            log.error("Update check failed: %s", message)
-            raise RuntimeError(message) from feed_error
-        raise
+
+def _from_api():
+    with _open(LATEST_URL, accept="application/vnd.github+json") as resp:
+        info = release_info(json.loads(resp.read().decode("utf-8")))
+    if info is None:
+        raise ValueError("the latest release has no app zip")
+    return info
+
+
+def _from_latest_page():
+    with _open(LATEST_PAGE_URL, accept="text/html") as resp:
+        final = resp.geturl()
+    m = re.search(r"/releases/tag/([^/?#]+)", final or "")
+    info = _release_from_tag(m.group(1)) if m else None
+    if info is None:
+        raise ValueError(f"the latest page led to {final}")
+    return info
+
+
+def _from_feed():
+    with _open(RELEASES_ATOM_URL, accept="application/atom+xml") as resp:
+        info = release_info_from_atom(resp.read())
+    if info is None:
+        raise ValueError("GitHub releases feed contains no stable version tag")
+    return info
+
+
+SOURCES = (("GitHub API", _from_api), ("latest page", _from_latest_page), ("release feed", _from_feed))
+
+
+def _short(exc):
+    return str(exc) or exc.__class__.__name__
+
+
+def check_latest():
+    """The newest release if newer than this copy, else None. Asks GitHub's
+    API first, then its latest-release page, then its releases feed, each
+    twice (a slow network, a busy moment); raises with every reason when none
+    answers."""
+    import time
+    errors = []
+    for name, source in SOURCES:
+        for attempt in range(ATTEMPTS):
+            try:
+                info = source()
+            except Exception as exc:
+                errors.append(f"{name}: {_short(exc)}")
+                if attempt + 1 < ATTEMPTS:
+                    time.sleep(RETRY_WAIT_S)
+                continue
+            if errors:
+                log.warning("Update check: %s answered after %s", name, "; ".join(errors))
+            return info if is_newer(info["version"]) else None
+    message = "; ".join(errors)
+    log.error("Update check failed: %s", message)
+    raise RuntimeError(message)
 
 
 def download(url, dest, progress=None):
-    """Saves the release zip to dest; progress(done_bytes, total_bytes or 0)."""
+    """Saves the release zip to dest; progress(done_bytes, total_bytes or 0).
+    A broken download is tried once more after a short wait."""
+    import time
+    for attempt in range(ATTEMPTS):
+        try:
+            return _download_once(url, dest, progress)
+        except Exception:
+            if attempt + 1 >= ATTEMPTS:
+                raise
+            time.sleep(RETRY_WAIT_S)
+
+
+def _download_once(url, dest, progress):
     with _open(url) as resp, open(dest, "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
