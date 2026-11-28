@@ -64,3 +64,45 @@ def test_a_big_game_window_is_shrunk_to_the_reference_width():
     assert frame.shape[1] == REFERENCE_W and profile.ok and abs(profile.scale_x - 1.0) < 0.01
     small, p2 = shrink_for_recognition(np.zeros((692, 1232, 3), np.uint8))
     assert small.shape[:2] == (692, 1232) and p2.ok
+
+
+def test_a_recognition_error_says_where_and_keeps_the_capture_open():
+    """A user's stream showed only "認識処理でエラーが発生しました: error" and the
+    numbers stopped; no log could be had. The message now says where, and the
+    capture (a camera takes a while to open again) stays open."""
+    import cv2
+    stopped = threading.Event()
+    created, calls = [], []
+
+    class Capture:
+        closed = False
+
+        def grab(self):
+            return object(), True, None, type("Profile", (), {"client_w": 1232, "client_h": 692, "scale_x": 1.0})()
+
+        def close(self):
+            self.closed = True
+
+    def factory():
+        created.append(Capture())
+        return created[-1]
+
+    def process(*_):
+        calls.append(1)
+        if len(calls) == 1:
+            raise cv2.error("OpenCV(4.x) error: (-215:Assertion failed)")
+        calls.append(created[0].closed)
+        stopped.set()
+    seen = []
+    pipeline = Mock()
+    pipeline.process_frame.side_effect = lambda *a: (seen.append(dict(data_server.CAPTURE_STATUS)), process(*a))
+    original_pipeline, original_status = data_server.PIPELINE, data_server.CAPTURE_STATUS
+    try:
+        data_server.PIPELINE = pipeline
+        with patch.object(data_server.log, "exception"):
+            data_server.capture_loop_live(fps_target=1000, stop_event=stopped, capture_factory=factory)
+        assert len(created) == 1 and calls[-1] is False            # (not closed and opened again)
+        msg = seen[1]["message"]
+        assert msg.startswith("認識処理でエラーが発生しました: error (") and "test_live_capture_recovery.py:" in msg
+    finally:
+        data_server.PIPELINE, data_server.CAPTURE_STATUS = original_pipeline, original_status

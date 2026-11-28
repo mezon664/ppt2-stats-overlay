@@ -2314,8 +2314,9 @@ function render(state) {
   clock.stateText = state.frozen ? ui.frozen : state.paused ? ui.paused : state.waiting_start ? ui.waiting : "";
   const cap = state.capture || {}, stale = cap.ok === false;
   const msg = (display.language === "en" && cap.message_en) || cap.message;
+  const notice = (display.language === "en" && cap.notice_en) || cap.notice;
   clock.statusText = stale ? `⚠ ${msg || ui.capture_down}`
-    : !connected ? (everConnected ? ui.disconnected : ui.connecting) : "";
+    : !connected ? (everConnected ? ui.disconnected : ui.connecting) : notice ? `⚠ ${notice}` : "";
   for (const side of ["left", "right"]) statUpdate(stats[side], state[side], state.match_elapsed_s);
   versus.values = { left: sideValues(state.left), right: sideValues(state.right) };
   versus.puyo = { left: isPuyo(state.left), right: isPuyo(state.right) };

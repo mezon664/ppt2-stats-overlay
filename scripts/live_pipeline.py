@@ -6,6 +6,7 @@ PPS comes from NEXT-queue advances (queue_tracker.py), not board tracking —
 board_tracker.py was shelved after phase 2's line-clear-cascade problems.
 """
 import os
+import sys
 import time
 import logging
 from collections import deque
@@ -38,6 +39,9 @@ log = logging.getLogger("live_pipeline")
 # ("認識処理でエラーが発生しました: error", the match clock back to 0:00).
 # Now a failing step is left out on that frame and the rest goes on.
 FAILURES = {}
+# the latest failure: {"name", "error", "where", "t" (monotonic)}, shown on
+# screen for a moment by the server (data_server: a part failing, numbers going on)
+LAST_FAILURE = {}
 
 
 def _guard(name, fn, *args, default=None):
@@ -47,6 +51,11 @@ def _guard(name, fn, *args, default=None):
         return fn(*args)
     except Exception:
         n = FAILURES[name] = FAILURES.get(name, 0) + 1
+        import traceback
+        tb = traceback.extract_tb(sys.exc_info()[2])
+        last = tb[-1] if tb else None
+        LAST_FAILURE.update(name=name, error=sys.exc_info()[0].__name__, t=time.monotonic(),
+                            where=f"{os.path.basename(last.filename)}:{last.lineno}" if last else "?")
         if n == 1 or n % 300 == 0:
             log.exception("%s failed (%d times so far); the rest goes on", name, n)
         return default

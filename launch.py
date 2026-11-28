@@ -6,6 +6,14 @@ Double-click start.bat (no console window), or: python launch.py
 Server output goes to logs/server.log.
 """
 
+import os
+# numpy's maths library keeps a work area for each thread it might use, one a
+# CPU core, and claims it as soon as numpy loads: 750 MB on a 28-core PC, in
+# each of the HUD and the server, for maths this app doesn't do (no matrix
+# products). A user's streaming PC ran out of memory ("認識処理でエラーが
+# 発生しました: error", OpenCV's "Insufficient memory"). One thread: 25 MB.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 import atexit
 import json
 import os

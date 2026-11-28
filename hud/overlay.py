@@ -21,6 +21,14 @@ read 100% in the capture before, 0% after), so it can overlap the game's own
 badges without affecting recognition. Side effect: it also won't appear in
 screenshots or OBS display capture — use the OBS browser source for that.
 """
+import os
+# numpy's maths library keeps a work area for each thread it might use, one a
+# CPU core, and claims it as soon as numpy loads: 750 MB on a 28-core PC, in
+# each of the HUD and the server, for maths this app doesn't do (no matrix
+# products). A user's streaming PC ran out of memory ("認識処理でエラーが
+# 発生しました: error", OpenCV's "Insufficient memory"). One thread: 25 MB.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 import asyncio
 import contextlib
 import ctypes
@@ -2840,8 +2848,9 @@ class HudWindow(QtWidgets.QWidget):
         cap = state.get("capture", {})
         stale = cap.get("ok") is False
         msg = (cap.get("message_en") if self.display["language"] == "en" else None) or cap.get("message")
+        notice = (cap.get("notice_en") if self.display["language"] == "en" else None) or cap.get("notice")
         self.clock.set_texts(fmt_clock(state.get("match_elapsed_s", 0)), text,
-                             f"⚠ {msg or ui['capture_down']}" if stale else "")
+                             f"⚠ {msg or ui['capture_down']}" if stale else f"⚠ {notice}" if notice else "")
         for side in ("left", "right"):
             self.stats[side].update_side(state.get(side), state.get("match_elapsed_s"))
         self.versus.update_sides(state.get("left"), state.get("right"))

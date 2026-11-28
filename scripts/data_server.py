@@ -6,6 +6,14 @@ Usage:
   python data_server.py --source video --path "<video file>" --speed 1.0
   python data_server.py --source live
 """
+import os
+# numpy's maths library keeps a work area for each thread it might use, one a
+# CPU core, and claims it as soon as numpy loads: 750 MB on a 28-core PC, in
+# each of the HUD and the server, for maths this app doesn't do (no matrix
+# products). A user's streaming PC ran out of memory ("認識処理でエラーが
+# 発生しました: error", OpenCV's "Insufficient memory"). One thread: 25 MB.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 import argparse
 import asyncio
 import json
@@ -32,7 +40,7 @@ cv2.setNumThreads(1)
 # the import path (its ._pth file fixes the path), so do it here.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from live_pipeline import MatchPipeline, VideoReplaySource, _guard  # noqa: E402
+from live_pipeline import MatchPipeline, VideoReplaySource, _guard, LAST_FAILURE  # noqa: E402
 from config_store import load_settings, display_settings, CONFIG_PATH, PRACTICE_READY
 from i18n import capture_message_en
 from server_control import handle_control_message
@@ -198,6 +206,20 @@ def ours_in_capture(cap):
         return True
     win32gui.EnumWindows(check, None)
     return bool(found)
+
+
+# a failing part is said on screen this long after its last failure
+FAILURE_SHOWN_S = 10.0
+
+
+def error_place(exc):
+    """"board_tracker.py:123": this app's own line where exc came from (the
+    last one of ours in its traceback), for the error shown on screen."""
+    import traceback
+    ours = [f for f in traceback.extract_tb(exc.__traceback__)
+            if Path(f.filename).resolve().is_relative_to(_ROOT) and ".venv" not in f.filename]
+    f = (ours or traceback.extract_tb(exc.__traceback__) or [None])[-1]
+    return f"{Path(f.filename).name}:{f.lineno}" if f else "?"
 
 
 def follow_overlay(cap):
@@ -499,7 +521,11 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
             if cap is None:
                 made_for = wanted() if capture_factory is None else None
                 cap = make_capture()
-            frame, ok, reason, profile = cap.grab()
+            try:
+                frame, ok, reason, profile = cap.grab()
+            except Exception as e:
+                e.from_capture = True   # (only then is the capture opened again: below)
+                raise
             # (the extras below: one failing is logged and left out, the numbers go on)
             _guard("session", follow_session, cap)   # (also when the game is gone: the session ends)
             _guard("overlay window", follow_overlay, cap)
@@ -514,6 +540,12 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                     "picture": list(getattr(cap, "last_picture", None) or ()),
                     "client_size": f"{profile.client_w}x{profile.client_h}", "scale": round(profile.scale_x, 3),
                 }
+                # a part of the reading failing (left out, the rest going on):
+                # said on screen with where, while it keeps failing
+                if LAST_FAILURE and time.monotonic() - LAST_FAILURE["t"] < FAILURE_SHOWN_S:
+                    f = LAST_FAILURE
+                    CAPTURE_STATUS["notice"] = f"一部の認識でエラー: {f['name']} {f['error']} ({f['where']})"
+                    CAPTURE_STATUS["notice_en"] = f"Part of the reading failed: {f['name']} {f['error']} ({f['where']})"
                 consecutive_errors = 0
                 last_error = None
             elif reason is None:
@@ -529,23 +561,30 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                 _guard("diagnostic", lambda: diag.write(frame if ok else None, diag.lines(CAPTURE_STATUS, PIPELINE, cap)))
         except Exception as e:
             consecutive_errors += 1
+            # where it failed, on screen: a user's stream showed only
+            # "認識処理でエラーが発生しました: error" and no log could be had
+            where = error_place(e)
             CAPTURE_STATUS = {
                 "ok": False,
-                "message": f"認識処理でエラーが発生しました: {type(e).__name__}",
-                "message_en": f"Capture/recognition error ({type(e).__name__}); retrying",
+                "message": f"認識処理でエラーが発生しました: {type(e).__name__} ({where})",
+                "message_en": f"Capture/recognition error ({type(e).__name__}, {where}); retrying",
             }
             error_key = (type(e).__name__, str(e))
             now = time.monotonic()
             if error_key != last_error or now - last_error_log_t >= 30:
                 log.exception("live capture/recognition iteration failed; retrying")
                 last_error, last_error_log_t = error_key, now
-            close = getattr(cap, "close", None) if cap is not None else None
-            if close:
-                try:
-                    close()
-                except Exception:
-                    log.debug("failed to close capture backend after error", exc_info=True)
-            cap = None
+            # The capture is opened again only when it was the one failing: a
+            # camera takes a while to open (and sometimes won't), and the
+            # numbers stayed stopped meanwhile, the error still on screen.
+            if getattr(e, "from_capture", False):
+                close = getattr(cap, "close", None) if cap is not None else None
+                if close:
+                    try:
+                        close()
+                    except Exception:
+                        log.debug("failed to close capture backend after error", exc_info=True)
+                cap = None
             retry_delay = min(period * (2 ** min(consecutive_errors - 1, 6)), 5.0)
             if stop_event is not None and stop_event.wait(retry_delay):
                 break
