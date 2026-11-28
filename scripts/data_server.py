@@ -32,7 +32,7 @@ cv2.setNumThreads(1)
 # the import path (its ._pth file fixes the path), so do it here.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from live_pipeline import MatchPipeline, VideoReplaySource  # noqa: E402
+from live_pipeline import MatchPipeline, VideoReplaySource, _guard  # noqa: E402
 from config_store import load_settings, display_settings, CONFIG_PATH, PRACTICE_READY
 from i18n import capture_message_en
 from server_control import handle_control_message
@@ -500,13 +500,14 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                 made_for = wanted() if capture_factory is None else None
                 cap = make_capture()
             frame, ok, reason, profile = cap.grab()
-            follow_session(cap)   # (also when the game is gone: the session ends)
-            follow_overlay(cap)
+            # (the extras below: one failing is logged and left out, the numbers go on)
+            _guard("session", follow_session, cap)   # (also when the game is gone: the session ends)
+            _guard("overlay window", follow_overlay, cap)
             if ok:
                 PIPELINE.rebuild_for_profile(profile)
                 PIPELINE.process_frame(frame, time.monotonic() - t0)
                 LAST_FRAME["frame"] = frame   # (縛りプレイのモザイク: mosaic_state)
-                read_rating(frame, cap)
+                _guard("rating", read_rating, frame, cap)
                 CAPTURE_STATUS = {
                     "ok": True, "message": "capturing",
                     # the game's picture inside the window (black bars cut off), for the HUD
@@ -525,7 +526,7 @@ def capture_loop_live(fps_target=15, stop_event=None, capture_factory=None):
                         close()
                     cap = None  # recreate the capture backend before retrying
             if diag.due():   # logs/last_seen.jpg + last_status.txt, for "the numbers don't move" reports
-                diag.write(frame if ok else None, diag.lines(CAPTURE_STATUS, PIPELINE, cap))
+                _guard("diagnostic", lambda: diag.write(frame if ok else None, diag.lines(CAPTURE_STATUS, PIPELINE, cap)))
         except Exception as e:
             consecutive_errors += 1
             CAPTURE_STATUS = {

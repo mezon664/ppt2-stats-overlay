@@ -32,6 +32,25 @@ from mosaic import DigCounter, GRID as GARBAGE_GRID
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("live_pipeline")
 
+
+# How often each guarded step failed (_guard). A user's stream: one step
+# failing with an OpenCV error on every frame stopped all the numbers
+# ("認識処理でエラーが発生しました: error", the match clock back to 0:00).
+# Now a failing step is left out on that frame and the rest goes on.
+FAILURES = {}
+
+
+def _guard(name, fn, *args, default=None):
+    """fn(*args), or default if it raises: logged (with its traceback) the
+    first time and then every 300th, never stopping the frame."""
+    try:
+        return fn(*args)
+    except Exception:
+        n = FAILURES[name] = FAILURES.get(name, 0) + 1
+        if n == 1 or n % 300 == 0:
+            log.exception("%s failed (%d times so far); the rest goes on", name, n)
+        return default
+
 CLEAR_TYPE_LABEL_JA = {
     "clear_1": "1ライン",
     "clear_2": "2ライン",
@@ -441,7 +460,8 @@ class PlayerPipeline:
         if flash_edge:
             self._last_flash_t = t
         real = flash_edge and 1 <= (self.flash_detector.last_edge_row_count or 0) <= MAX_LINES_PER_EVENT
-        self.dig.update(frame, self.flash_detector.last_edge_rows if real else None, self.flash_detector._active)
+        _guard(f"[{self.side}] dig", self.dig.update, frame,
+               self.flash_detector.last_edge_rows if real else None, self.flash_detector._active)
         if flash_edge and (self.flash_detector.last_edge_row_count or 0) >= 3:
             self._last_big_flash_t = t
         self.tracker.update(frame, t, clears=self._clears_lately(t), big_clears=self._big_clears_lately(t))
@@ -515,8 +535,8 @@ class PlayerPipeline:
         if self._first_t is None:
             self._first_t = t
         start = self.clock_start_t if self.clock_start_t is not None else self._first_t
-        opener = self.opener_detector.on_frame(frame, t - start, len(placements),
-                                               hold=self.hold_tracker.piece(frame))
+        opener = _guard(f"[{self.side}] opener", lambda: self.opener_detector.on_frame(
+            frame, t - start, len(placements), hold=self.hold_tracker.piece(frame)))
         if opener:
             self.opener_t = t
             self.event_log.insert(0, format_opener_entry(t, opener, self.opener_detector.name_en))
@@ -1306,16 +1326,17 @@ class MatchPipeline:
         # of their time is OpenCV's, which lets go of Python's lock: read at the
         # same time, a frame takes about the longer side's time, not the sum
         sides = [getattr(self, sd) for sd in ("left", "right") if not self.puyo[sd]]
+        # (one side failing leaves the other side and the match clock going)
         if len(sides) == 2:
-            other = _side_pool().submit(sides[1].process_frame, frame, t)
-            sides[0].process_frame(frame, t)
+            other = _side_pool().submit(_guard, f"[{sides[1].side}] reading", sides[1].process_frame, frame, t)
+            _guard(f"[{sides[0].side}] reading", sides[0].process_frame, frame, t)
             other.result()
         else:
             for side in sides:
-                side.process_frame(frame, t)
+                _guard(f"[{side.side}] reading", side.process_frame, frame, t)
         self._last_t = t
         self.frame_count += 1
-        self._read_set_counter(frame, t)
+        _guard("set counter", self._read_set_counter, frame, t)
         now_wall = time.time()
         if self._last_fps_t is None:
             self._last_fps_t = now_wall
